@@ -226,7 +226,7 @@ def generate_launch_description():
             DeclareLaunchArgument("global_path_topic", default_value="/pct_path"),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom_body"),
-            DeclareLaunchArgument("body_scan_min_height", default_value="0.1"),
+            DeclareLaunchArgument("body_scan_min_height", default_value="-0.1"),
             DeclareLaunchArgument("body_scan_max_height", default_value="0.55"),
             DeclareLaunchArgument("pct_root", default_value=default_pct_root),
             DeclareLaunchArgument(
