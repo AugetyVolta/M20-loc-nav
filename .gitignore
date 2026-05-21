@@ -1,0 +1,52 @@
+# ROS 2 workspace build artifacts
+build/
+install/
+log/
+
+# Rosbag recordings and runtime data
+bags/
+*.bag
+*.db3
+*.mcap
+
+# Python / editor / OS noise
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Runtime logs and generated diagnostics
+*.log
+*.csv
+*.tmp
+core
+core.*
+
+# Large ML checkpoints / exports. Use Git LFS or external storage if needed.
+*.pt
+*.pth
+*.onnx
+*.engine
+*.pkl
+
+# Python packaging/build metadata copied into source trees
+*.egg-info/
+src/**/hook/
+
+# Runtime model checkpoints. Use Git LFS or external storage if needed.
+src/move/ckpts/
+
+# Large upstream demo/doc assets; not needed for robot deployment.
+src/fast_lio/doc/
+src/fast_lio_map/doc/
+
+# Generated map/debug outputs. Keep checked-in map YAML/PGM/PCD only when
+# intentionally added with `git add -f`.
+*.ply
+PCD/
