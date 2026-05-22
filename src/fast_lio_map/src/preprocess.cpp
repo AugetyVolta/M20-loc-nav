@@ -85,8 +85,52 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, Po
       mid360_handler(msg);
       break;
 
+    case RSM1:
+    case RSM1_BREAK:
+    {
+      double start_time, end_time;
+      robosenseM1_handler(msg, 0, 1, start_time, end_time);
+      break;
+    }
+
     default:
       default_handler(msg);
+      break;
+  }
+  *pcl_out = pl_surf;
+}
+
+void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out,
+                         int i_sub_cloud, int num_sub_cloud, double & start_time, double & end_time)
+{
+  switch (time_unit)
+  {
+    case SEC:
+      time_unit_scale = 1.e3f;
+      break;
+    case MS:
+      time_unit_scale = 1.f;
+      break;
+    case US:
+      time_unit_scale = 1.e-3f;
+      break;
+    case NS:
+      time_unit_scale = 1.e-6f;
+      break;
+    default:
+      time_unit_scale = 1.f;
+      break;
+  }
+
+  switch (lidar_type)
+  {
+    case RSM1:
+    case RSM1_BREAK:
+      robosenseM1_handler(msg, i_sub_cloud, num_sub_cloud, start_time, end_time);
+      break;
+
+    default:
+      std::cerr << "Error: lidar_type " << lidar_type << " does not support sub_cloud processing" << std::endl;
       break;
   }
   *pcl_out = pl_surf;
@@ -180,9 +224,9 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
           pl_full[i].curvature = msg->points[i].offset_time /
                                  float(1000000);  // use curvature as time of each laser points, curvature unit: ms
 
-          if(((abs(pl_full[i].x - pl_full[i-1].x) > 1e-7)
-              || (abs(pl_full[i].y - pl_full[i-1].y) > 1e-7)
-              || (abs(pl_full[i].z - pl_full[i-1].z) > 1e-7))
+          if (((abs(pl_full[i].x - pl_full[i - 1].x) > 1e-7)
+              || (abs(pl_full[i].y - pl_full[i - 1].y) > 1e-7)
+              || (abs(pl_full[i].z - pl_full[i - 1].z) > 1e-7))
               && (pl_full[i].x * pl_full[i].x + pl_full[i].y * pl_full[i].y + pl_full[i].z * pl_full[i].z > (blind * blind)))
           {
             pl_surf.push_back(pl_full[i]);
@@ -479,7 +523,7 @@ void Preprocess::mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
   pl_corn.clear();
   pl_full.clear();
 
-  pcl::PointCloud<livox_ros::LivoxPointXyzitl> pl_orig;
+  pcl::PointCloud<livox_ros::LivoxPointXyzrtl> pl_orig;
   pcl::fromROSMsg(*msg, pl_orig);
   int plsize = pl_orig.points.size();
   if (plsize == 0)
@@ -516,7 +560,7 @@ void Preprocess::mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
     added_pt.x = pl_orig.points[i].x;
     added_pt.y = pl_orig.points[i].y;
     added_pt.z = pl_orig.points[i].z;
-    added_pt.intensity = pl_orig.points[i].intensity;
+    added_pt.intensity = pl_orig.points[i].reflectivity;
     added_pt.curvature = 0.;
 
     int layer = pl_orig.points[i].line;
@@ -1067,3 +1111,460 @@ bool Preprocess::edge_jump_judge(const PointCloudXYZI& pl, vector<orgtype>& type
 
   return true;
 }
+
+void Preprocess::robosenseM1_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg,
+                                     int i_sub_cloud, int num_sub_cloud, double & start_time, double & end_time)
+{
+    pl_surf.clear();
+    pl_corn.clear();
+    pl_full.clear();
+
+    // 检查点云消息是否包含 ring 和 timestamp 字段
+    bool has_ring = false;
+    bool has_timestamp = false;
+    for (const auto& field : msg->fields) {
+        if (field.name == "ring") has_ring = true;
+        if (field.name == "timestamp") has_timestamp = true;
+    }
+
+    int plsize = 0;
+    double msg_time = rclcpp::Time(msg->header.stamp).seconds();
+
+    // 如果点云没有 ring 和 timestamp 字段，使用标准 PointXYZI 处理
+    if (!has_ring || !has_timestamp) {
+        pcl::PointCloud<pcl::PointXYZI> pl_orig;
+        try {
+            pcl::fromROSMsg(*msg, pl_orig);
+            plsize = pl_orig.size();
+            if (plsize == 0) return;
+
+            // 使用消息头时间戳作为所有点的时间戳
+            start_time = msg_time;
+            end_time = msg_time;
+
+            if (feature_enabled) {
+                // 特征提取模式：需要按行组织点云
+                for (int i = 0; i < N_SCANS; i++) {
+                    pl_buff[i].clear();
+                    pl_buff[i].reserve(plsize);
+                }
+
+                // 根据高度计算 ring（假设点云按行组织）
+                int points_per_scan = (msg->height > 0) ? (plsize / msg->height) : (plsize / N_SCANS);
+                if (points_per_scan == 0) points_per_scan = 1;
+
+                for (int i = 0; i < plsize; i++) {
+                    if (i % point_filter_num != 0) continue;
+
+                    double range = pl_orig.points[i].x * pl_orig.points[i].x +
+                                   pl_orig.points[i].y * pl_orig.points[i].y +
+                                   pl_orig.points[i].z * pl_orig.points[i].z;
+                    if (sqrt(range) < 150 && sqrt(range) > blind) {
+                        PointType added_pt;
+                        added_pt.x = pl_orig.points[i].x;
+                        added_pt.y = pl_orig.points[i].y;
+                        added_pt.z = pl_orig.points[i].z;
+                        added_pt.intensity = pl_orig.points[i].intensity;
+                        added_pt.normal_x = 0;
+                        added_pt.normal_y = 0;
+                        added_pt.normal_z = 0;
+                        added_pt.curvature = 0.0; // 没有时间戳，设为0
+
+                        // 根据索引估算 ring
+                        int estimated_ring = (points_per_scan > 0) ? ((i / points_per_scan) % N_SCANS) : (i % N_SCANS);
+                        if (estimated_ring < N_SCANS) {
+                            pl_buff[estimated_ring].push_back(added_pt);
+                        }
+                    }
+                }
+
+                for (int j = 0; j < N_SCANS; j++) {
+                    PointCloudXYZI &pl = pl_buff[j];
+                    int linesize = pl.size();
+                    if (linesize < 2) continue;
+                    vector<orgtype> &types = typess[j];
+                    types.clear();
+                    types.resize(linesize);
+                    linesize--;
+                    for (uint i = 0; i < linesize; i++) {
+                        types[i].range = sqrt(pl[i].x * pl[i].x + pl[i].y * pl[i].y);
+                        vx = pl[i].x - pl[i + 1].x;
+                        vy = pl[i].y - pl[i + 1].y;
+                        vz = pl[i].z - pl[i + 1].z;
+                        types[i].dista = vx * vx + vy * vy + vz * vz;
+                    }
+                    types[linesize].range = sqrt(pl[linesize].x * pl[linesize].x + pl[linesize].y * pl[linesize].y);
+                    give_feature(pl, types);
+                }
+            } else {
+                // 非特征提取模式
+                for (int i = 0; i < plsize; i++) {
+                    if (i % point_filter_num != 0) continue;
+
+                    double range = sqrt(pl_orig.points[i].x * pl_orig.points[i].x +
+                                       pl_orig.points[i].y * pl_orig.points[i].y +
+                                       pl_orig.points[i].z * pl_orig.points[i].z);
+                    if (range < 150 && range > blind) {
+                        PointType added_pt;
+                        added_pt.x = pl_orig.points[i].x;
+                        added_pt.y = pl_orig.points[i].y;
+                        added_pt.z = pl_orig.points[i].z;
+                        added_pt.intensity = pl_orig.points[i].intensity;
+                        added_pt.normal_x = 0;
+                        added_pt.normal_y = 0;
+                        added_pt.normal_z = 0;
+                        added_pt.curvature = 0.0; // 没有时间戳，设为0
+                        pl_surf.points.push_back(added_pt);
+                    }
+                }
+                // std::cout << " point_size_downsample: " << pl_surf.size() << std::endl;
+            }
+            return;
+        } catch (const std::exception& e) {
+            std::cerr << "Error converting point cloud: " << e.what() << std::endl;
+            return;
+        }
+    }
+
+    // 如果有 ring 和 timestamp 字段，使用原始处理方式
+    pcl::PointCloud<robosenseM1_ros::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    plsize = pl_orig.size();
+    pl_corn.reserve(plsize);
+    pl_surf.reserve(plsize);
+    if (feature_enabled)
+    {
+        for (int i = 0; i < N_SCANS; i++)
+        {
+            pl_buff[i].clear();
+            pl_buff[i].reserve(plsize);//too large?
+        }
+        int num_point_each_sub_cloud = plsize/pl_orig.width/num_sub_cloud;
+        robosenseM1_ros::Point first_point = pl_orig.points[num_point_each_sub_cloud * i_sub_cloud];
+        for(int i_ori_width = 0; i_ori_width < pl_orig.width; i_ori_width ++){
+            for(int i_ori_height = num_point_each_sub_cloud * i_sub_cloud;
+                    i_ori_height < num_point_each_sub_cloud * (i_sub_cloud+1); i_ori_height ++) {
+
+                robosenseM1_ros::Point & ori_point = pl_orig.at(i_ori_width, i_ori_height);
+                if(i_ori_height == num_point_each_sub_cloud * i_sub_cloud){//record time of the first point
+                    start_time = ori_point.timestamp;
+                }else if(i_ori_height == num_point_each_sub_cloud * (i_sub_cloud+1) - 1){//record time of the last point
+                    end_time = ori_point.timestamp;
+                }
+                if (i_ori_height % point_filter_num != 0) {continue;}
+
+                double range = ori_point.x * ori_point.x + ori_point.y * ori_point.y + ori_point.z * ori_point.z;
+                if(sqrt(range) < 150 && sqrt(range) > blind){
+
+                    Eigen::Vector3d pt_vec;
+                    PointType added_pt;
+                    added_pt.x = ori_point.x;
+                    added_pt.y = ori_point.y;
+                    added_pt.z = ori_point.z;
+                    added_pt.intensity = ori_point.intensity;
+                    added_pt.normal_x = 0;
+                    added_pt.normal_y = 0;
+                    added_pt.normal_z = 0;
+                    added_pt.curvature = (ori_point.timestamp-start_time) * time_unit_scale; // curvature unit: ms  time_unit_scale
+                    if(i_ori_width < N_SCANS){
+                        pl_buff[i_ori_width].push_back(added_pt);
+                    }
+                }
+            }
+        }
+        for (int j = 0; j < N_SCANS; j++)
+        {
+            PointCloudXYZI &pl = pl_buff[j];
+            int linesize = pl.size();
+            vector<orgtype> &types = typess[j];
+            types.clear();
+            types.resize(linesize);
+            linesize--;
+            for (uint i = 0; i < linesize; i++)
+            {
+                types[i].range = sqrt(pl[i].x * pl[i].x + pl[i].y * pl[i].y);
+                vx = pl[i].x - pl[i + 1].x;
+                vy = pl[i].y - pl[i + 1].y;
+                vz = pl[i].z - pl[i + 1].z;
+                types[i].dista = vx * vx + vy * vy + vz * vz;
+            }
+            types[linesize].range = sqrt(pl[linesize].x * pl[linesize].x + pl[linesize].y * pl[linesize].y);
+            give_feature(pl, types);
+        }
+    }
+    else
+    {
+        double time_stamp = rclcpp::Time(msg->header.stamp).seconds();
+        std::vector<double> time_stamp_of_points;
+
+        //reordered
+        int num_point_each_sub_cloud = plsize/pl_orig.width/num_sub_cloud;
+        robosenseM1_ros::Point first_point = pl_orig.points[num_point_each_sub_cloud * i_sub_cloud];
+        for(int i_ori_width = 0; i_ori_width < pl_orig.width; i_ori_width ++){
+            for(int i_ori_height = num_point_each_sub_cloud * i_sub_cloud;
+                    i_ori_height < num_point_each_sub_cloud * (i_sub_cloud+1); i_ori_height ++) {
+
+                robosenseM1_ros::Point & ori_point = pl_orig.at(i_ori_width, i_ori_height);
+                if(i_ori_height == num_point_each_sub_cloud * i_sub_cloud){//record time of the first point
+                    start_time = ori_point.timestamp;
+                }else if(i_ori_height == num_point_each_sub_cloud * (i_sub_cloud+1) - 1){//record time of the last point
+                    end_time = ori_point.timestamp;
+                }
+                if (i_ori_height % point_filter_num != 0) {continue;}
+
+                double range = sqrt(ori_point.x * ori_point.x + ori_point.y * ori_point.y + ori_point.z * ori_point.z);
+                if(range < 150 && range > blind){
+
+                    Eigen::Vector3d pt_vec;
+                    PointType added_pt;
+                    added_pt.x = ori_point.x;
+                    added_pt.y = ori_point.y;
+                    added_pt.z = ori_point.z;
+                    added_pt.intensity = ori_point.intensity;
+                    added_pt.normal_x = 0;
+                    added_pt.normal_y = 0;
+                    added_pt.normal_z = 0;
+                    added_pt.curvature = (ori_point.timestamp-start_time) * time_unit_scale; // curvature unit: ms  time_unit_scale
+                    time_stamp_of_points.push_back(added_pt.curvature);
+                    pl_surf.points.push_back(added_pt);
+                }
+
+            }
+        }
+        std::sort(time_stamp_of_points.begin(), time_stamp_of_points.end());
+        // std::cout << " point_size_downsample: "<< pl_surf.size()<<std::endl;
+    }
+}
+
+
+// void Preprocess::robosenseM1_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg,
+//                                      int i_sub_cloud, int num_sub_cloud, double & start_time, double & end_time)
+// {
+//     pl_surf.clear();
+//     pl_corn.clear();
+//     pl_full.clear();
+
+//     // 检查点云消息是否包含 ring 和 timestamp 字段
+//     bool has_ring = false;
+//     bool has_timestamp = false;
+//     for (const auto& field : msg->fields) {
+//         if (field.name == "ring") has_ring = true;
+//         if (field.name == "timestamp") has_timestamp = true;
+//     }
+
+//     int plsize = 0;
+//     double msg_time = rclcpp::Time(msg->header.stamp).seconds();
+
+//     // 如果点云没有 ring 和 timestamp 字段，使用标准 PointXYZI 处理
+//     if (!has_ring || !has_timestamp) {
+//         pcl::PointCloud<pcl::PointXYZI> pl_orig;
+//         try {
+//             pcl::fromROSMsg(*msg, pl_orig);
+//             plsize = pl_orig.size();
+//             if (plsize == 0) return;
+
+//             // 使用消息头时间戳作为所有点的时间戳
+//             start_time = msg_time;
+//             end_time = msg_time;
+
+//             if (feature_enabled) {
+//                 // 特征提取模式：需要按行组织点云
+//                 for (int i = 0; i < N_SCANS; i++) {
+//                     pl_buff[i].clear();
+//                     pl_buff[i].reserve(plsize);
+//                 }
+
+//                 // 根据高度计算 ring（假设点云按行组织）
+//                 int points_per_scan = (msg->height > 0) ? (plsize / msg->height) : (plsize / N_SCANS);
+//                 if (points_per_scan == 0) points_per_scan = 1;
+
+//                 for (int i = 0; i < plsize; i++) {
+//                     if (i % point_filter_num != 0) continue;
+
+//                     double range = pl_orig.points[i].x * pl_orig.points[i].x +
+//                                    pl_orig.points[i].y * pl_orig.points[i].y +
+//                                    pl_orig.points[i].z * pl_orig.points[i].z;
+//                     if (sqrt(range) < 150 && sqrt(range) > blind) {
+//                         PointType added_pt;
+//                         added_pt.x = pl_orig.points[i].x;
+//                         added_pt.y = pl_orig.points[i].y;
+//                         added_pt.z = pl_orig.points[i].z;
+//                         added_pt.intensity = pl_orig.points[i].intensity;
+//                         added_pt.normal_x = 0;
+//                         added_pt.normal_y = 0;
+//                         added_pt.normal_z = 0;
+//                         added_pt.curvature = 0.0; // 没有时间戳，设为0
+
+//                         // 根据索引估算 ring
+//                         int estimated_ring = (points_per_scan > 0) ? ((i / points_per_scan) % N_SCANS) : (i % N_SCANS);
+//                         if (estimated_ring < N_SCANS) {
+//                             pl_buff[estimated_ring].push_back(added_pt);
+//                         }
+//                     }
+//                 }
+
+//                 for (int j = 0; j < N_SCANS; j++) {
+//                     PointCloudXYZI &pl = pl_buff[j];
+//                     int linesize = pl.size();
+//                     if (linesize < 2) continue;
+//                     vector<orgtype> &types = typess[j];
+//                     types.clear();
+//                     types.resize(linesize);
+//                     linesize--;
+//                     for (uint i = 0; i < linesize; i++) {
+//                         types[i].range = sqrt(pl[i].x * pl[i].x + pl[i].y * pl[i].y);
+//                         vx = pl[i].x - pl[i + 1].x;
+//                         vy = pl[i].y - pl[i + 1].y;
+//                         vz = pl[i].z - pl[i + 1].z;
+//                         types[i].dista = vx * vx + vy * vy + vz * vz;
+//                     }
+//                     types[linesize].range = sqrt(pl[linesize].x * pl[linesize].x + pl[linesize].y * pl[linesize].y);
+//                     give_feature(pl, types);
+//                 }
+//             } else {
+//                 // 非特征提取模式
+//                 for (int i = 0; i < plsize; i++) {
+//                     if (i % point_filter_num != 0) continue;
+
+//                     double range = sqrt(pl_orig.points[i].x * pl_orig.points[i].x +
+//                                        pl_orig.points[i].y * pl_orig.points[i].y +
+//                                        pl_orig.points[i].z * pl_orig.points[i].z);
+//                     if (range < 150 && range > blind) {
+//                         PointType added_pt;
+//                         added_pt.x = pl_orig.points[i].x;
+//                         added_pt.y = pl_orig.points[i].y;
+//                         added_pt.z = pl_orig.points[i].z;
+//                         added_pt.intensity = pl_orig.points[i].intensity;
+//                         added_pt.normal_x = 0;
+//                         added_pt.normal_y = 0;
+//                         added_pt.normal_z = 0;
+//                         added_pt.curvature = 0.0; // 没有时间戳，设为0
+//                         pl_surf.points.push_back(added_pt);
+//                     }
+//                 }
+//                 std::cout << " point_size_downsample: " << pl_surf.size() << std::endl;
+//             }
+//             return;
+//         } catch (const std::exception& e) {
+//             std::cerr << "Error converting point cloud: " << e.what() << std::endl;
+//             return;
+//         }
+//     }
+
+//     // 如果有 ring 和 timestamp 字段，使用原始处理方式
+//     pcl::PointCloud<robosenseM1_ros::Point> pl_orig;
+//     pcl::fromROSMsg(*msg, pl_orig);
+//     plsize = pl_orig.size();
+//     pl_corn.reserve(plsize);
+//     pl_surf.reserve(plsize);
+
+//     if (feature_enabled)
+//     {
+//         for (int i = 0; i < N_SCANS; i++)
+//         {
+//             pl_buff[i].clear();
+//             pl_buff[i].reserve(plsize);
+//         }
+
+//         // 改为 1D 索引访问
+//         int num_point_each_sub_cloud = plsize / num_sub_cloud;
+//         int start_idx = num_point_each_sub_cloud * i_sub_cloud;
+//         int end_idx = num_point_each_sub_cloud * (i_sub_cloud + 1);
+
+//         for(int i = start_idx; i < end_idx; i++) {
+//             robosenseM1_ros::Point & ori_point = pl_orig.points[i];
+
+//             if(i == start_idx) {  // 记录第一个点的时间
+//                 start_time = ori_point.timestamp;
+//             } else if(i == end_idx - 1) {  // 记录最后一个点的时间
+//                 end_time = ori_point.timestamp;
+//             }
+
+//             if ((i - start_idx) % point_filter_num != 0) {
+//                 continue;
+//             }
+
+//             double range = ori_point.x * ori_point.x + ori_point.y * ori_point.y + ori_point.z * ori_point.z;
+//             if(sqrt(range) < 150 && sqrt(range) > blind) {
+//                 Eigen::Vector3d pt_vec;
+//                 PointType added_pt;
+//                 added_pt.x = ori_point.x;
+//                 added_pt.y = ori_point.y;
+//                 added_pt.z = ori_point.z;
+//                 added_pt.intensity = ori_point.intensity;
+//                 added_pt.normal_x = 0;
+//                 added_pt.normal_y = 0;
+//                 added_pt.normal_z = 0;
+//                 added_pt.curvature = (ori_point.timestamp - start_time) * time_unit_scale;
+
+//                 // 使用保留的 ring 字段
+//                 if(ori_point.ring < N_SCANS) {
+//                     pl_buff[ori_point.ring].push_back(added_pt);
+//                 }
+//             }
+//         }
+
+//         for (int j = 0; j < N_SCANS; j++)
+//         {
+//             PointCloudXYZI &pl = pl_buff[j];
+//             int linesize = pl.size();
+//             vector<orgtype> &types = typess[j];
+//             types.clear();
+//             types.resize(linesize);
+//             linesize--;
+//             for (uint i = 0; i < linesize; i++)
+//             {
+//                 types[i].range = sqrt(pl[i].x * pl[i].x + pl[i].y * pl[i].y);
+//                 vx = pl[i].x - pl[i + 1].x;
+//                 vy = pl[i].y - pl[i + 1].y;
+//                 vz = pl[i].z - pl[i + 1].z;
+//                 types[i].dista = vx * vx + vy * vy + vz * vz;
+//             }
+//             types[linesize].range = sqrt(pl[linesize].x * pl[linesize].x + pl[linesize].y * pl[linesize].y);
+//             give_feature(pl, types);
+//         }
+//     }
+//     else
+//     {
+//         double time_stamp = rclcpp::Time(msg->header.stamp).seconds();
+//         std::vector<double> time_stamp_of_points;
+
+//         // 改为 1D 索引访问
+//         int num_point_each_sub_cloud = plsize / num_sub_cloud;
+//         int start_idx = num_point_each_sub_cloud * i_sub_cloud;
+//         int end_idx = num_point_each_sub_cloud * (i_sub_cloud + 1);
+
+//         for(int i = start_idx; i < end_idx; i++) {
+//             robosenseM1_ros::Point & ori_point = pl_orig.points[i];
+
+//             if(i == start_idx) {  // 记录第一个点的时间
+//                 start_time = ori_point.timestamp;
+//             } else if(i == end_idx - 1) {  // 记录最后一个点的时间
+//                 end_time = ori_point.timestamp;
+//             }
+
+//             if ((i - start_idx) % point_filter_num != 0) {
+//                 continue;
+//             }
+
+//             double range = sqrt(ori_point.x * ori_point.x + ori_point.y * ori_point.y + ori_point.z * ori_point.z);
+//             if(range < 150 && range > blind) {
+//                 Eigen::Vector3d pt_vec;
+//                 PointType added_pt;
+//                 added_pt.x = ori_point.x;
+//                 added_pt.y = ori_point.y;
+//                 added_pt.z = ori_point.z;
+//                 added_pt.intensity = ori_point.intensity;
+//                 added_pt.normal_x = 0;
+//                 added_pt.normal_y = 0;
+//                 added_pt.normal_z = 0;
+//                 added_pt.curvature = (ori_point.timestamp - start_time) * time_unit_scale;
+//                 time_stamp_of_points.push_back(added_pt.curvature);
+//                 pl_surf.points.push_back(added_pt);
+//             }
+//         }
+
+//         std::sort(time_stamp_of_points.begin(), time_stamp_of_points.end());
+//         std::cout << " point_size_downsample: " << pl_surf.size() << std::endl;
+//     }
+// }

@@ -3,8 +3,8 @@
     feature_extract_enable: false
     point_filter_num: 3
     max_iteration: 3
-    filter_size_surf: 0.5
-    filter_size_map: 0.5
+    filter_size_surf: 0.3
+    filter_size_map: 0.3
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
     map_file_path: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map.pcd"
@@ -18,19 +18,20 @@
       bag_switch_wall_gap_sec: 1.5
 
     preprocess:
-      lidar_type: 4
-      scan_line: 4
+      lidar_type: 5
+      scan_line: 96
       blind: 0.5
-      timestamp_unit: 3
+      timestamp_unit: 0
       scan_rate: 10
 
     mapping:
+      num_sub_cloud: 1
       acc_cov: 0.1
       gyr_cov: 0.1
       b_acc_cov: 0.0001
       b_gyr_cov: 0.0001
       fov_degree: 360.0
-      det_range: 100.0
+      det_range: 200.0
       extrinsic_est_en: false
       extrinsic_T: [-0.011, -0.02329, 0.04412]
       extrinsic_R: [1.0, 0.0, 0.0,
@@ -42,7 +43,7 @@
       effect_map_en: false
       map_en: false
       scan_publish_en: true
-      dense_publish_en: false
+      dense_publish_en: true
       scan_bodyframe_pub_en: true
 
     pcd_save:

@@ -1,7 +1,7 @@
 image: m20_2d_map.pgm
 mode: trinary
 resolution: 0.05
-origin: [-53.6, -31.7, 0]
+origin: [-52.8, -59.1, 0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.25

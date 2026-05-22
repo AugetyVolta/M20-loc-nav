@@ -50,3 +50,7 @@ src/fast_lio_map/doc/
 # intentionally added with `git add -f`.
 *.ply
 PCD/
+maps/fastlio/Scans/
+maps/fastlio/odom_poses.txt
+maps/fastlio/optimized_poses.txt
+maps/fastlio/times.txt

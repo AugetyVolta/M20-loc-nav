@@ -1,0 +1,18 @@
+/**:
+  ros__parameters:
+    keyframe_meter_gap: 1.0
+    keyframe_deg_gap: 10.0
+    sc_dist_thres: 0.4
+    sc_max_radius: 40.0
+    historyKeyframeSearchRadius: 20.0
+    historyKeyframeSearchTimeDiff: 60.0
+    historyKeyframeSearchNum: 40
+    loopNoiseScore: 0.1
+    graphUpdateTimes: 5
+    loopFitnessScoreThreshold: 0.6
+    speedFactor: 1.0
+    loopClosureFrequency: 2.0
+    graphUpdateFrequency: 2.0
+    vizmapFrequency: 0.5
+    vizPathFrequency: 10.0
+    mapviz_filter_size: 0.1

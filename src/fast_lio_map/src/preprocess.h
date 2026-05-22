@@ -16,8 +16,10 @@ enum LID_TYPE
   AVIA = 1,
   VELO16,
   OUST64,
-  MID360
-};  //{1, 2, 3}
+  MID360,
+  RSM1,
+  RSM1_BREAK
+};  //{1, 2, 3} RSM1: robosense M1 lidar, RSM1_BREAK: break the scan into smaller sub-scan
 enum TIME_UNIT
 {
   SEC = 0,
@@ -122,15 +124,6 @@ typedef struct {
   uint8_t tag;        /**< Livox point tag   */
   uint8_t line;       /**< Laser line id     */
 } LivoxPointXyzrtl;
-
-typedef struct {
-  float x;            /**< X axis, Unit:m */
-  float y;            /**< Y axis, Unit:m */
-  float z;            /**< Z axis, Unit:m */
-  float intensity;    /**< Intensity   */
-  uint8_t tag;        /**< Livox point tag   */
-  uint8_t line;       /**< Laser line id     */
-} LivoxPointXyzitl;
 }
 POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzrtl,
     (float, x, x)
@@ -141,13 +134,24 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzrtl,
     (uint8_t, line, line)
 )
 
-POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzitl,
-    (float, x, x)
-    (float, y, y)
-    (float, z, z)
-    (float, intensity, intensity)
-    (uint8_t, tag, tag)
-    (uint8_t, line, line)
+// RoboSense M1/Airy point type
+namespace robosenseM1_ros {
+    struct Point {
+        PCL_ADD_POINT4D
+        PCL_ADD_INTENSITY;
+        uint16_t ring;
+        double timestamp;
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    } EIGEN_ALIGN16;
+}
+POINT_CLOUD_REGISTER_POINT_STRUCT (
+        robosenseM1_ros::Point,
+        (float, x, x)
+        (float, y, y)
+        (float, z, z)
+        (float, intensity, intensity)
+        (uint16_t, ring, ring)
+        (double, timestamp, timestamp)
 )
 
 class Preprocess
@@ -160,6 +164,8 @@ class Preprocess
   
   void process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out);
   void process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out);
+  void process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out,
+               int i_sub_cloud, int num_sub_cloud, double & start_time, double & end_time);
   void set(bool feat_en, int lid_type, double bld, int pfilt_num);
 
   // sensor_msgs::PointCloud2::ConstPtr pointcloud;
@@ -175,6 +181,8 @@ class Preprocess
 private:
   void avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg);
   void oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
+  void robosenseM1_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg,
+                           int i_sub_cloud, int num_sub_cloud, double & start_time, double & end_time);
   void velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
