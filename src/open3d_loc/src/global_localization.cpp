@@ -17,6 +17,8 @@
 #include <queue>
 #include <cmath>
 #include <atomic>
+#include <chrono>
+#include <thread>
 // #include <pcl/common/transforms.h>
 
 #include <Eigen/Core>
@@ -131,6 +133,13 @@ public:
 
     void ReinitializeLocalization();
 
+    bool WallGapResetNeeded(std::chrono::steady_clock::time_point &last_wall_time,
+                            bool &have_wall_time,
+                            const std::string &reason,
+                            bool request_fastlio);
+
+    void ScheduleRelocalizationReset(const std::string &reason, bool request_fastlio);
+
 private:
     /// @brief 订阅baselink2odom,即fast_lio的里程计信息
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_baselink2odom_;
@@ -211,6 +220,12 @@ private:
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr fastlio_reset_client_;
     bool reset_fastlio_on_initialpose_ = true;
     std::string fastlio_reset_service_ = "/fastlio_localization_odom/reset_localization";
+    bool reset_on_sensor_wall_gap_ = true;
+    double bag_switch_wall_gap_sec_ = 1.5;
+    bool have_odom_wall_time_ = false;
+    bool have_scan_wall_time_ = false;
+    std::chrono::steady_clock::time_point last_odom_wall_time_;
+    std::chrono::steady_clock::time_point last_scan_wall_time_;
 
     std::shared_ptr<tf2_ros::TransformBroadcaster> br_odom2map_;
     std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_broadcaster_;
@@ -356,6 +371,8 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
     this->declare_parameter<double>("dis_updatemap", 1);
     this->declare_parameter<bool>("reset_fastlio_on_initialpose", true);
     this->declare_parameter<std::string>("fastlio_reset_service", "/fastlio_localization_odom/reset_localization");
+    this->declare_parameter<bool>("reset_on_sensor_wall_gap", true);
+    this->declare_parameter<double>("bag_switch_wall_gap_sec", 1.5);
 
     this->get_parameter("pcd_queue_maxsize", queue_maxsize_);
     this->get_parameter("save_scan", save_scan_);
@@ -392,6 +409,8 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
     this->get_parameter("dis_updatemap", dis_updatemap_);
     this->get_parameter("reset_fastlio_on_initialpose", reset_fastlio_on_initialpose_);
     this->get_parameter("fastlio_reset_service", fastlio_reset_service_);
+    this->get_parameter("reset_on_sensor_wall_gap", reset_on_sensor_wall_gap_);
+    this->get_parameter("bag_switch_wall_gap_sec", bag_switch_wall_gap_sec_);
     fastlio_reset_client_ = this->create_client<std_srvs::srv::Trigger>(fastlio_reset_service_);
 
     for (auto i : initialpose_)
@@ -577,9 +596,64 @@ bool GloabalLocalization::GetTfTransformToMatrix(std::string frame_id, std::stri
     return true;
 }
 
+void GloabalLocalization::ScheduleRelocalizationReset(const std::string &reason, bool request_fastlio)
+{
+    {
+        std::lock_guard<std::mutex> reset_lock(lock_reinit_);
+        reinit_requested_ = true;
+    }
+    loc_initialized_.store(false);
+    loc_fitness_.store(0.0);
+    localization_3d_confidence_.data = 0.0f;
+    pub_localization_3d_confidence_->publish(localization_3d_confidence_);
+    last_loc_ = Eigen::Vector3d(0, 0, -5000);
+
+    {
+        std::lock_guard<std::mutex> scan_guard(lock_scan_);
+        pcd_scan_cur_->Clear();
+        while (!que_pcd_scan_.empty())
+        {
+            que_pcd_scan_.pop();
+        }
+    }
+
+    if (request_fastlio)
+    {
+        RequestFastLioReset(reason);
+    }
+    RCLCPP_WARN(this->get_logger(), "%s, scheduling Open3D relocalization reset", reason.c_str());
+}
+
+bool GloabalLocalization::WallGapResetNeeded(std::chrono::steady_clock::time_point &last_wall_time,
+                                             bool &have_wall_time,
+                                             const std::string &reason,
+                                             bool request_fastlio)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (reset_on_sensor_wall_gap_ && have_wall_time)
+    {
+        const double gap_sec = std::chrono::duration<double>(now - last_wall_time).count();
+        if (gap_sec > bag_switch_wall_gap_sec_)
+        {
+            last_wall_time = now;
+            ScheduleRelocalizationReset(reason + " (wall gap " + std::to_string(gap_sec) + "s)", request_fastlio);
+            return true;
+        }
+    }
+    last_wall_time = now;
+    have_wall_time = true;
+    return false;
+}
+
 void GloabalLocalization::CallbackBaselink2Odom(const nav_msgs::msg::Odometry::SharedPtr baselink2odom)
 {
     auto odom_cbk_s = std::chrono::high_resolution_clock::now();
+    if (WallGapResetNeeded(last_odom_wall_time_, have_odom_wall_time_,
+                           "/Odometry_loc stream wall-time gap / possible rosbag switch",
+                           true))
+    {
+        return;
+    }
     const auto & pose = baselink2odom->pose.pose;
     if (!(std::isfinite(pose.position.x) && std::isfinite(pose.position.y) &&
           std::isfinite(pose.position.z) && std::isfinite(pose.orientation.x) &&
@@ -590,16 +664,19 @@ void GloabalLocalization::CallbackBaselink2Odom(const nav_msgs::msg::Odometry::S
                              "Received invalid /Odometry_loc pose, skip motion_link/map TF publish");
         return;
     }
+    bool timestamp_moved_backwards = false;
     {
         std::lock_guard<std::mutex> lock(lock_timestamp_);
         const double incoming_stamp_sec = rclcpp::Time(baselink2odom->header.stamp).seconds();
         if (timestamp_odom_.seconds() > 0.0 &&
             incoming_stamp_sec + 0.5 < timestamp_odom_.seconds())
         {
-            std::lock_guard<std::mutex> reset_lock(lock_reinit_);
-            reinit_requested_ = true;
-            RCLCPP_WARN(this->get_logger(), "Odometry_loc timestamp moved backwards, scheduling relocalization reset");
+            timestamp_moved_backwards = true;
         }
+    }
+    if (timestamp_moved_backwards)
+    {
+        ScheduleRelocalizationReset("Odometry_loc timestamp moved backwards", false);
     }
     lock_timestamp_.lock();
     timestamp_odom_ = baselink2odom->header.stamp;
@@ -769,6 +846,12 @@ void GloabalLocalization::CallbackScan(
     const sensor_msgs::msg::PointCloud2::SharedPtr scan_in_baselink)
 {
     auto cbk_s = std::chrono::high_resolution_clock::now();
+    if (WallGapResetNeeded(last_scan_wall_time_, have_scan_wall_time_,
+                           "/cloud_registered_1 stream wall-time gap / possible rosbag switch",
+                           false))
+    {
+        return;
+    }
     open3d::geometry::PointCloud pcd_recieved;
     // 单帧转换为open3d，几百us
     sensor_msgs::msg::PointCloud2::ConstSharedPtr const_scan_ptr = scan_in_baselink;

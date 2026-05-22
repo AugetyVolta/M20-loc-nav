@@ -94,6 +94,7 @@ string map_file_path, lid_topic, imu_topic;
 
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
+double bag_switch_wall_gap_sec = 1.5;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
 double filter_size_corner_min = 0, filter_size_surf_min = 0, filter_size_map_min = 0, fov_deg = 0;
 double cube_len = 0, HALF_FOV_COS = 0, FOV_DEG = 0, total_distance = 0, lidar_end_time = 0, first_lidar_time = 0.0;
@@ -103,6 +104,9 @@ bool point_selected_surf[100000] = {0};
 bool lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 bool is_first_lidar = true;
+bool reset_on_sensor_wall_gap = true;
+bool have_lidar_wall_time = false, have_imu_wall_time = false;
+std::chrono::steady_clock::time_point last_lidar_wall_time, last_imu_wall_time;
 
 vector<vector<int>> pointSearchInd_surf;
 vector<BoxPointType> cub_needrm;
@@ -150,6 +154,7 @@ shared_ptr<ImuProcess> p_imu(new ImuProcess());
 
 void reset_localization_state(const char *reason);
 void request_localization_reset(const char *reason);
+void clear_measurement_buffers_for_reset();
 
 void SigHandle(int sig)
 {
@@ -173,6 +178,37 @@ inline void dump_lio_state_to_log(FILE *fp)
     fprintf(fp, "%lf %lf %lf ", state_point.grav[0], state_point.grav[1], state_point.grav[2]); // Bias_a
     fprintf(fp, "\r\n");
     fflush(fp);
+}
+
+void clear_measurement_buffers_for_reset()
+{
+    lidar_buffer.clear();
+    time_buffer.clear();
+    imu_buffer.clear();
+    lidar_pushed = false;
+    last_timestamp_lidar = 0.0;
+    last_timestamp_imu = -1.0;
+    is_first_lidar = true;
+}
+
+bool sensor_wall_gap_requires_reset(std::chrono::steady_clock::time_point &last_wall_time,
+                                    bool &have_wall_time,
+                                    const char *reason)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (reset_on_sensor_wall_gap && have_wall_time)
+    {
+        const double gap_sec = std::chrono::duration<double>(now - last_wall_time).count();
+        if (gap_sec > bag_switch_wall_gap_sec)
+        {
+            last_wall_time = now;
+            request_localization_reset(reason);
+            return true;
+        }
+    }
+    last_wall_time = now;
+    have_wall_time = true;
+    return false;
 }
 
 void pointBodyToWorld_ikfom(PointType const *const pi, PointType *const po, state_ikfom &s)
@@ -301,16 +337,19 @@ void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 {
     mtx_buffer.lock();
     scan_count++;
+    if (sensor_wall_gap_requires_reset(last_lidar_wall_time, have_lidar_wall_time,
+                                       "standard_pcl_cbk lidar wall-time gap / possible rosbag switch"))
+    {
+        clear_measurement_buffers_for_reset();
+        mtx_buffer.unlock();
+        sig_buffer.notify_all();
+        return;
+    }
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
     if (!is_first_lidar && cur_time < last_timestamp_lidar)
     {
-        lidar_buffer.clear();
-        time_buffer.clear();
-        imu_buffer.clear();
-        lidar_pushed = false;
-        last_timestamp_lidar = 0.0;
-        last_timestamp_imu = -1.0;
+        clear_measurement_buffers_for_reset();
         request_localization_reset("standard_pcl_cbk lidar loop back");
     }
     if (is_first_lidar)
@@ -337,17 +376,20 @@ void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
 // void livox_pcl_cbk(const livox_interfaces::msg::CustomMsg::UniquePtr msg)
 {
     mtx_buffer.lock();
+    if (sensor_wall_gap_requires_reset(last_lidar_wall_time, have_lidar_wall_time,
+                                       "livox_pcl_cbk lidar wall-time gap / possible rosbag switch"))
+    {
+        clear_measurement_buffers_for_reset();
+        mtx_buffer.unlock();
+        sig_buffer.notify_all();
+        return;
+    }
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
     scan_count++;
     if (!is_first_lidar && cur_time < last_timestamp_lidar)
     {
-        lidar_buffer.clear();
-        time_buffer.clear();
-        imu_buffer.clear();
-        lidar_pushed = false;
-        last_timestamp_lidar = 0.0;
-        last_timestamp_imu = -1.0;
+        clear_measurement_buffers_for_reset();
         request_localization_reset("livox_pcl_cbk lidar loop back");
     }
     if (is_first_lidar)
@@ -398,14 +440,18 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
 
     mtx_buffer.lock();
 
+    if (sensor_wall_gap_requires_reset(last_imu_wall_time, have_imu_wall_time,
+                                       "imu_cbk wall-time gap / possible rosbag switch"))
+    {
+        clear_measurement_buffers_for_reset();
+        mtx_buffer.unlock();
+        sig_buffer.notify_all();
+        return;
+    }
+
     if (timestamp < last_timestamp_imu)
     {
-        lidar_buffer.clear();
-        time_buffer.clear();
-        imu_buffer.clear();
-        lidar_pushed = false;
-        last_timestamp_lidar = 0.0;
-        last_timestamp_imu = -1.0;
+        clear_measurement_buffers_for_reset();
         request_localization_reset("imu_cbk timestamp loop back");
     }
 
@@ -556,6 +602,8 @@ void reset_localization_state(const char *reason)
     timediff_lidar_wrt_imu = 0.0;
     last_timestamp_lidar = 0.0;
     last_timestamp_imu = -1.0;
+    have_lidar_wall_time = false;
+    have_imu_wall_time = false;
     lidar_end_time = 0.0;
     first_lidar_time = 0.0;
     scan_num = 0;
@@ -929,6 +977,8 @@ public:
         this->declare_parameter<string>("common.imu_topic", "/livox/imu");
         this->declare_parameter<bool>("common.time_sync_en", false);
         this->declare_parameter<double>("common.time_offset_lidar_to_imu", 0.0);
+        this->declare_parameter<bool>("common.reset_on_sensor_wall_gap", true);
+        this->declare_parameter<double>("common.bag_switch_wall_gap_sec", 1.5);
         this->declare_parameter<double>("filter_size_corner", 0.5);
         this->declare_parameter<double>("filter_size_surf", 0.5);
         this->declare_parameter<double>("filter_size_map", 0.5);
@@ -965,6 +1015,8 @@ public:
         this->get_parameter_or<string>("common.imu_topic", imu_topic, "/livox/imu");
         this->get_parameter_or<bool>("common.time_sync_en", time_sync_en, false);
         this->get_parameter_or<double>("common.time_offset_lidar_to_imu", time_diff_lidar_to_imu, 0.0);
+        this->get_parameter_or<bool>("common.reset_on_sensor_wall_gap", reset_on_sensor_wall_gap, true);
+        this->get_parameter_or<double>("common.bag_switch_wall_gap_sec", bag_switch_wall_gap_sec, 1.5);
         this->get_parameter_or<double>("filter_size_corner", filter_size_corner_min, 0.5);
         this->get_parameter_or<double>("filter_size_surf", filter_size_surf_min, 0.5);
         this->get_parameter_or<double>("filter_size_map", filter_size_map_min, 0.5);

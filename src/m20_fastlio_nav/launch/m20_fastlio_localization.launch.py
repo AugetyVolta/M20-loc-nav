@@ -99,6 +99,8 @@ def generate_launch_description():
                 "base_frame": "base_link",
                 "nav_base_frame": "base_footprint",
                 "publish_tf": True,
+                "reset_on_wall_time_gap": True,
+                "bag_switch_wall_gap_sec": 1.5,
                 "base_to_body_translation": [0.32713234, 0.01413551, 0.31238696],
                 "base_to_body_quaternion": [
                     -0.00394028,

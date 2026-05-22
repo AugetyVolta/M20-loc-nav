@@ -1,4 +1,5 @@
 import math
+import time
 from typing import Iterable, Tuple
 
 import rclpy
@@ -134,6 +135,8 @@ class FastLioOdomBridge(Node):
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("nav_base_frame", "base_footprint")
         self.declare_parameter("publish_tf", True)
+        self.declare_parameter("reset_on_wall_time_gap", True)
+        self.declare_parameter("bag_switch_wall_gap_sec", 1.5)
         self.declare_parameter(
             "base_to_body_translation",
             [0.32713234, 0.01413551, 0.31238696],
@@ -151,6 +154,8 @@ class FastLioOdomBridge(Node):
         self.base_frame = str(self.get_parameter("base_frame").value)
         self.nav_base_frame = str(self.get_parameter("nav_base_frame").value)
         self.publish_tf = bool(self.get_parameter("publish_tf").value)
+        self.reset_on_wall_time_gap = bool(self.get_parameter("reset_on_wall_time_gap").value)
+        self.bag_switch_wall_gap_sec = float(self.get_parameter("bag_switch_wall_gap_sec").value)
 
         self.t_base_body = vector_param(
             self.get_parameter("base_to_body_translation").value,
@@ -180,6 +185,8 @@ class FastLioOdomBridge(Node):
         self.prev_yaw = None
         self.last_odom_stamp_ns = None
         self.last_clock_stamp_ns = None
+        self.last_odom_wall_time = None
+        self.last_clock_wall_time = None
         self.invalid_odom_count = 0
         self.invalid_tf_count = 0
 
@@ -203,9 +210,24 @@ class FastLioOdomBridge(Node):
         self.prev_pos = None
         self.prev_yaw = None
         self.reset_tf_buffer()
-        self.get_logger().warn(f"Detected time jump backwards ({reason}); reset bridge TF buffer/state")
+        self.get_logger().warn(f"Detected time discontinuity ({reason}); reset bridge TF buffer/state")
+
+    def wall_gap_detected(self, attr_name: str, reason: str) -> bool:
+        now = time.monotonic()
+        last = getattr(self, attr_name)
+        setattr(self, attr_name, now)
+        if (
+            self.reset_on_wall_time_gap
+            and last is not None
+            and now - last > self.bag_switch_wall_gap_sec
+        ):
+            self.reset_temporal_state(f"{reason}; wall gap {now - last:.2f}s")
+            self.last_odom_stamp_ns = None
+            return True
+        return False
 
     def clock_callback(self, msg: Clock) -> None:
+        self.wall_gap_detected("last_clock_wall_time", "/clock stream gap")
         clock_ns = self.stamp_to_ns(msg.clock)
         if self.last_clock_stamp_ns is not None and clock_ns + 100_000_000 < self.last_clock_stamp_ns:
             self.reset_temporal_state("/clock moved backwards")
@@ -240,6 +262,8 @@ class FastLioOdomBridge(Node):
         return position, orientation, transform_map_odom.header.stamp
 
     def odom_callback(self, msg: Odometry) -> None:
+        if self.wall_gap_detected("last_odom_wall_time", "/Odometry_loc stream gap"):
+            return
         stamp = msg.header.stamp
         if stamp.sec == 0 and stamp.nanosec == 0:
             stamp = self.get_clock().now().to_msg()
