@@ -146,8 +146,9 @@ class FastLioOdomBridge(Node):
             [-0.00394028, 0.24367785, 0.00970223, 0.96979969],
         )
 
-        source_topic = self.get_parameter("source_odom_topic").value
-        output_topic = self.get_parameter("output_odom_topic").value
+        source_topic = str(self.get_parameter("source_odom_topic").value)
+        output_topic = str(self.get_parameter("output_odom_topic").value)
+        self.source_topic = source_topic
         self.map_frame = str(self.get_parameter("map_frame").value)
         self.odom_frame = str(self.get_parameter("odom_frame").value)
         self.nav_odom_frame = str(self.get_parameter("nav_odom_frame").value)
@@ -262,14 +263,14 @@ class FastLioOdomBridge(Node):
         return position, orientation, transform_map_odom.header.stamp
 
     def odom_callback(self, msg: Odometry) -> None:
-        if self.wall_gap_detected("last_odom_wall_time", "/Odometry_loc stream gap"):
+        if self.wall_gap_detected("last_odom_wall_time", f"{self.source_topic} stream gap"):
             return
         stamp = msg.header.stamp
         if stamp.sec == 0 and stamp.nanosec == 0:
             stamp = self.get_clock().now().to_msg()
         stamp_ns = self.stamp_to_ns(stamp)
         if self.last_odom_stamp_ns is not None and stamp_ns + 100_000_000 < self.last_odom_stamp_ns:
-            self.reset_temporal_state("/Odometry_loc moved backwards")
+            self.reset_temporal_state(f"{self.source_topic} moved backwards")
         self.last_odom_stamp_ns = stamp_ns
 
         src_pose = msg.pose.pose
@@ -288,7 +289,7 @@ class FastLioOdomBridge(Node):
             self.invalid_odom_count += 1
             if self.invalid_odom_count == 1 or self.invalid_odom_count % 50 == 0:
                 self.get_logger().warn(
-                    "Ignoring invalid /Odometry_loc pose; not publishing /odom or TF "
+                    f"Ignoring invalid {self.source_topic} pose; not publishing /odom or TF "
                     f"(count={self.invalid_odom_count})"
                 )
             return
