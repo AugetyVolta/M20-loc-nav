@@ -11,8 +11,10 @@ from drdds.msg import NavCmd
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import FollowPath
 from nav_msgs.msg import Path
+from std_msgs.msg import Float32
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
@@ -45,6 +47,10 @@ class PriestMppiAdapterNavCmd(Node):
         self.declare_parameter("min_path_points", 4)
         self.declare_parameter("publish_mppi_path", True)
         self.declare_parameter("mppi_path_topic", "mppi_path")
+        self.declare_parameter("require_localization_confidence", False)
+        self.declare_parameter("localization_confidence_topic", "/localization_3d_confidence")
+        self.declare_parameter("localization_confidence_threshold", 0.65)
+        self.declare_parameter("localization_confidence_timeout", 1.5)
 
         self.declare_parameter("follow_path_action", "follow_path")
         self.declare_parameter("controller_id", "FollowPath")
@@ -73,6 +79,10 @@ class PriestMppiAdapterNavCmd(Node):
         self.min_path_points = int(self.get_parameter("min_path_points").value)
         self.publish_mppi_path = bool(self.get_parameter("publish_mppi_path").value)
         self.mppi_path_topic = self.get_parameter("mppi_path_topic").value
+        self.require_localization_confidence = bool(self.get_parameter("require_localization_confidence").value)
+        self.localization_confidence_topic = self.get_parameter("localization_confidence_topic").value
+        self.localization_confidence_threshold = float(self.get_parameter("localization_confidence_threshold").value)
+        self.localization_confidence_timeout = float(self.get_parameter("localization_confidence_timeout").value)
 
         self.follow_path_action = self.get_parameter("follow_path_action").value
         self.controller_id = self.get_parameter("controller_id").value
@@ -99,6 +109,9 @@ class PriestMppiAdapterNavCmd(Node):
 
         self.path_sub = self.create_subscription(Path, self.priest_path_topic, self._on_path, qos_path)
         self.cmd_vel_sub = self.create_subscription(Twist, self.cmd_vel_topic, self._on_cmd_vel, 10)
+        self.localization_conf_sub = self.create_subscription(
+            Float32, self.localization_confidence_topic, self._on_localization_confidence, 10
+        )
 
         self.mppi_path_pub = self.create_publisher(Path, self.mppi_path_topic, 10) if self.publish_mppi_path else None
         self.nav_cmd_pub = self.create_publisher(NavCmd, self.nav_cmd_topic, 10)
@@ -123,6 +136,10 @@ class PriestMppiAdapterNavCmd(Node):
         self._pending_goal = False
         self._cancel_requested = False
         self._last_goal_send_time = None
+        self.localization_confidence = 0.0
+        self.localization_ready = not self.require_localization_confidence
+        self.localization_confidence_time = None
+        self._localization_timeout_active = False
 
         send_period = 1.0 / max(1e-3, self.goal_send_hz)
         self.goal_timer = self.create_timer(send_period, self._on_goal_timer)
@@ -138,6 +155,10 @@ class PriestMppiAdapterNavCmd(Node):
             f"  controller_id={self.controller_id}\n"
             f"  min_goal_resend_interval={self.min_goal_resend_interval}\n"
             f"  mppi_path_topic={self.mppi_path_topic} (publish={self.publish_mppi_path})\n"
+            f"  require_localization_confidence={self.require_localization_confidence}\n"
+            f"  localization_confidence_topic={self.localization_confidence_topic}\n"
+            f"  localization_confidence_threshold={self.localization_confidence_threshold}\n"
+            f"  localization_confidence_timeout={self.localization_confidence_timeout}\n"
             f"  cmd_vel_topic={self.cmd_vel_topic} -> nav_cmd_topic={self.nav_cmd_topic}\n"
             f"  nav_cmd_publish_hz={self.nav_cmd_publish_hz}, cmd_timeout={self.cmd_timeout}"
         )
@@ -160,6 +181,46 @@ class PriestMppiAdapterNavCmd(Node):
         self.latest_cmd_vel = msg
         self.latest_cmd_time = self.get_clock().now()
         self._cmd_timeout_active = False
+
+    def _set_localization_ready(self, ready: bool, reason: str = ""):
+        if self.localization_ready == ready:
+            return
+        self.localization_ready = ready
+        if ready:
+            self._localization_timeout_active = False
+            self.get_logger().info(
+                f"Localization confidence recovered to {self.localization_confidence:.3f}, navigation output enabled"
+            )
+        else:
+            self.last_sent_seq = -1
+            self.get_logger().warn(
+                f"Localization not ready ({reason}), freeze navigation output"
+            )
+
+    def _refresh_localization_state(self):
+        if not self.require_localization_confidence:
+            if not self.localization_ready:
+                self._set_localization_ready(True, "confidence gate disabled")
+            return
+        if self.localization_confidence_time is None:
+            self._set_localization_ready(False, "no confidence message received")
+            return
+        age = (self.get_clock().now() - self.localization_confidence_time).nanoseconds * 1e-9
+        if age > self.localization_confidence_timeout:
+            if not self._localization_timeout_active:
+                self._localization_timeout_active = True
+                self._set_localization_ready(False, f"confidence timeout {age:.2f}s")
+            return
+        ready = math.isfinite(self.localization_confidence) and (
+            self.localization_confidence >= self.localization_confidence_threshold
+        )
+        self._set_localization_ready(ready, f"confidence {self.localization_confidence:.3f}")
+
+    def _on_localization_confidence(self, msg: Float32):
+        self.localization_confidence = float(msg.data)
+        self.localization_confidence_time = self.get_clock().now()
+        self._localization_timeout_active = False
+        self._refresh_localization_state()
 
     def _lookup_tf(self, target: str, source: str):
         try:
@@ -239,11 +300,12 @@ class PriestMppiAdapterNavCmd(Node):
         self.nav_cmd_pub.publish(msg)
 
     def _on_cmd_bridge_timer(self):
+        self._refresh_localization_state()
         x_vel = 0.0
         y_vel = 0.0
         yaw_vel = 0.0
 
-        if self.latest_cmd_time is not None:
+        if self.localization_ready and self.latest_cmd_time is not None:
             age = (self.get_clock().now() - self.latest_cmd_time).nanoseconds * 1e-9
             if age <= self.cmd_timeout:
                 x_vel = clamp_abs(self.latest_cmd_vel.linear.x * self.scale_x, self.max_x_vel)
@@ -254,10 +316,18 @@ class PriestMppiAdapterNavCmd(Node):
                 self.get_logger().warn(
                     f"/cmd_vel timeout ({age:.2f}s > {self.cmd_timeout:.2f}s), publish zero NAV_CMD"
                 )
+        elif not self.localization_ready:
+            self._cmd_timeout_active = False
 
         self._publish_nav_cmd(x_vel, y_vel, yaw_vel)
 
     def _on_goal_timer(self):
+        self._refresh_localization_state()
+        if not self.localization_ready:
+            if self._active_goal_handle is not None and not self._cancel_requested:
+                self._cancel_requested = True
+                self._active_goal_handle.cancel_goal_async()
+            return
         if self.latest_path is None or self.latest_path_time is None or self._pending_goal:
             return
 
@@ -365,11 +435,12 @@ def main(args=None):
     node = PriestMppiAdapterNavCmd()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

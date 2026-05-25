@@ -19,7 +19,7 @@ class GlobalPlannerNode(Node):
         # 设置目标点（可以改成参数或订阅接口）
         # -2.02258, -29.2049
         # -3.0,-19
-        self.goal_xy = np.array([-3.0,-19])  # [x, y] 目标位置
+        self.goal_xy = np.array([3.73781, -44.5877])  # [x, y] 目标位置
         self.timer = self.create_timer(1.0, self.plan_and_publish_path)
 
     def plan_and_publish_path(self):

@@ -62,7 +62,7 @@ class PurePursuitNode(Node):
 
         # ---------------- Parameters ----------------
         self.declare_parameter('lookahead', 1.8)
-        self.declare_parameter('rate', 20.0)
+        self.declare_parameter('rate', 10.0)
         self.declare_parameter('goal_margin', 0.45)
 
         self.declare_parameter('wheel_base', 0.23)
