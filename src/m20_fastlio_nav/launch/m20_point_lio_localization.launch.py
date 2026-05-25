@@ -34,6 +34,8 @@ def generate_launch_description():
     map_pcd = LaunchConfiguration("map_pcd")
     raw_cloud_topic = LaunchConfiguration("raw_cloud_topic")
     imu_topic = LaunchConfiguration("imu_topic")
+    normalized_cloud_topic = LaunchConfiguration("normalized_cloud_topic")
+    normalized_imu_topic = LaunchConfiguration("normalized_imu_topic")
     twist_topic = LaunchConfiguration("twist_topic")
     scan_topic = LaunchConfiguration("scan_topic")
     output_odom_topic = LaunchConfiguration("output_odom_topic")
@@ -76,6 +78,22 @@ def generate_launch_description():
         arguments=["0", "0", "0", "0", "0", "0", "1", "base_link", "motion_link"],
     )
 
+    stamp_republisher = Node(
+        package="m20_fastlio_nav",
+        executable="stamp_republisher",
+        name="pointlio_stamp_republisher",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": use_sim_time,
+                "cloud_in_topic": raw_cloud_topic,
+                "cloud_out_topic": normalized_cloud_topic,
+                "imu_in_topic": imu_topic,
+                "imu_out_topic": normalized_imu_topic,
+            }
+        ],
+    )
+
     point_lio_odom = Node(
         package="point_lio",
         executable="pointlio_mapping",
@@ -85,6 +103,8 @@ def generate_launch_description():
             point_lio_config,
             {
                 "use_sim_time": use_sim_time,
+                "common.lid_topic": normalized_cloud_topic,
+                "common.imu_topic": normalized_imu_topic,
                 "use_imu_as_input": use_imu_as_input,
                 "prop_at_freq_of_imu": True,
                 "check_satu": True,
@@ -149,8 +169,8 @@ def generate_launch_description():
             },
         ],
         remappings=[
-            ("/cloud", raw_cloud_topic),
-            ("/imu", imu_topic),
+            ("/cloud", normalized_cloud_topic),
+            ("/imu", normalized_imu_topic),
             ("/twist", twist_topic),
             ("/pcl_pose", "/localization/pose_with_covariance"),
         ],
@@ -193,7 +213,7 @@ def generate_launch_description():
         name="pointlio_pointcloud_to_laserscan",
         output="screen",
         remappings=[
-            ("cloud_in", raw_cloud_topic),
+            ("cloud_in", normalized_cloud_topic),
             ("scan", scan_topic),
         ],
         parameters=[
@@ -237,6 +257,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("raw_cloud_topic", default_value="/livox/lidar"),
             DeclareLaunchArgument("imu_topic", default_value="/livox/imu"),
+            DeclareLaunchArgument("normalized_cloud_topic", default_value="/livox/lidar_stamped"),
+            DeclareLaunchArgument("normalized_imu_topic", default_value="/livox/imu_stamped"),
             DeclareLaunchArgument("twist_topic", default_value="/cmd_vel"),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom"),
@@ -247,6 +269,7 @@ def generate_launch_description():
             base_to_livox,
             base_to_imu,
             base_to_motion,
+            stamp_republisher,
             point_lio_odom,
             odom_bridge,
             lidar_localization,

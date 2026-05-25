@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "fastlio_odom_bridge = m20_fastlio_nav.fastlio_odom_bridge:main",
+            "stamp_republisher = m20_fastlio_nav.stamp_republisher:main",
         ],
     },
 )

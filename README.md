@@ -259,7 +259,8 @@ Livox:      ~/liv_ws
 工作空间:   /mnt/nvme/workspace/fast_lio_ws
 ```
 
-`point_lio_ros2`、`ndt_omp_ros2`、`lidar_localization_ros2` 已经直接放进本分支 `src/` 下。不要再次 clone 同名目录。
+`point_lio_ros2`、`ndt_omp_ros2`、`lidar_localization_ros2` 已经直接放进本分支 `src/` 下。不要再去
+`third_party/` 里按补丁流程 clone，也不要再次 clone 同名目录。拿到这个分支后，源码已经齐全，直接按下面命令编译。
 
 ### 构建建图和主包
 
@@ -294,6 +295,16 @@ colcon build \
   --executor sequential \
   --parallel-workers 1 \
   --cmake-args -DCMAKE_BUILD_TYPE=Release
+```
+
+如果你只改了 M20 launch、bridge 或时间戳 republisher，不需要重新编三个 C++ 第三方包，只编 glue 包即可：
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws
+source /opt/ros/humble/setup.bash
+source ~/liv_ws/install/setup.bash
+
+colcon build --packages-select m20_fastlio_nav --symlink-install
 ```
 
 这台机器上的 `CMake 4.3 + OpenMPI + PCL/VTK` 兼容性处理已经写进三个第三方包的 `CMakeLists.txt`。如果换机器或系统版本，先保留这些修改，除非确认系统 CMake/PCL/MPI 不再有同样问题。
@@ -811,7 +822,58 @@ rosbag 重播时所有定位/导航/RViz 节点都要 `use_sim_time:=true`，并
 ros2 bag play /path/to/bag --clock
 ```
 
-### 7. Point-LIO 占用高或频率低
+### 7. RViz / costmap 报 `timestamp ... earlier than all the data in the transform cache`
+
+如果看到类似：
+
+```text
+Message Filter dropping message: frame 'livox_frame' ... earlier than all the data in the transform cache
+Message Filter dropping message: frame 'base_footprint' ... earlier than all the data in the transform cache
+```
+
+优先判断时间线是否混了。你贴出来的日志里：
+
+- TF / Point-LIO / RViz 在 `17797248xx`
+- Livox 点云和 costmap 输入在 `17793464xx`
+
+两者差了几天，所以 TF cache 里不可能找到对应时间的变换。
+
+本分支的 `m20_point_lio_localization.launch.py` 默认会启动：
+
+```text
+m20_fastlio_nav/stamp_republisher
+```
+
+它会把：
+
+```text
+/livox/lidar -> /livox/lidar_stamped
+/livox/imu   -> /livox/imu_stamped
+```
+
+并把 header stamp 改成当前 ROS 时间。Point-LIO、NDT 和 `pointcloud_to_laserscan` 都订阅 `_stamped`
+话题，不再直接吃硬件时间戳。
+
+检查：
+
+```bash
+ros2 topic hz /livox/lidar_stamped
+ros2 topic hz /livox/imu_stamped
+ros2 topic echo /livox/lidar_stamped --once | grep -A3 stamp
+ros2 topic echo /odom_corrected --once | grep -A3 stamp
+ros2 topic echo /scan --once | grep -A3 stamp
+```
+
+这些时间戳应该都接近当前系统时间。如果 `_stamped` 话题没有数据，先检查原始 `/livox/lidar` 和 `/livox/imu`。
+
+rosbag 重播时不要同时跑实车 Livox 驱动；如果要用 bag 的时间线，启动 launch 时传：
+
+```bash
+ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py use_sim_time:=true
+ros2 bag play /path/to/bag --clock
+```
+
+### 8. Point-LIO 占用高或频率低
 
 优先降低输出和地图维护开销：
 
@@ -830,7 +892,7 @@ filter_size_map: 0.5
 odom_only: true
 ```
 
-### 8. NDT 占用高或定位抖
+### 9. NDT 占用高或定位抖
 
 优先调：
 
@@ -843,7 +905,7 @@ odom_only: true
 
 建议先从 `voxel_leaf_size: 0.25 -> 0.4` 和 `local_map_radius: 60 -> 40` 测起，看 CPU 和定位稳定性变化。
 
-### 9. 2D 地图歪或导航坐标不匹配
+### 10. 2D 地图歪或导航坐标不匹配
 
 通常是 PCD 没摆正，或者 3D 定位和 2D map 使用了不同版本地图。
 
@@ -854,7 +916,7 @@ odom_only: true
 3. `lidar_localization_ros2` 使用 `m20_map_leveled.pcd`
 4. `pcd2pgm` 也使用同一个 `m20_map_leveled.pcd`
 
-### 10. Git 仍显示 maps 改动
+### 11. Git 仍显示 maps 改动
 
 本分支已经取消跟踪历史地图文件。如果仍显示：
 
