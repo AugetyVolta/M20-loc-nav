@@ -23,6 +23,7 @@
   <exec_depend>nav2_map_server</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>open3d_loc</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

@@ -171,6 +171,7 @@ ros2 launch m20_fastlio_nav m20_fastlio_localization.launch.py \
 - `fast_lio` 输出 `/Odometry_loc`
 - `open3d_loc` 用 3D 地图做全局校正
 - `fastlio_odom_bridge` 负责 `/odom` 和 Nav2 所需 TF
+- `slam_mapping/sc_relocalizer` 在置信度低时读取 `sc_database.txt` 自动发布最佳 `/initialpose`
 
 如果播包测试：
 
@@ -182,6 +183,16 @@ ros2 bag play <bag目录> --clock
 
 ```bash
 use_sim_time:=true
+```
+
+如果你不想启用 ScanContext 自动拉回，可以显式关闭：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_localization.launch.py \
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
+  sc_db_path:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/sc_database.txt \
+  enable_sc_relocalizer:=false \
+  rviz:=true
 ```
 
 如果切换 bag 之间停顿较大，现在已经加了自动 reset 逻辑；必要时也可以手动 reset：

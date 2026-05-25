@@ -22,15 +22,20 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     start_livox = LaunchConfiguration("start_livox")
     map_pcd = LaunchConfiguration("map_pcd")
+    sc_db_path = LaunchConfiguration("sc_db_path")
     scan_topic = LaunchConfiguration("scan_topic")
     output_odom_topic = LaunchConfiguration("output_odom_topic")
     rviz = LaunchConfiguration("rviz")
+    enable_sc_relocalizer = LaunchConfiguration("enable_sc_relocalizer")
 
     fastlio_config = PathJoinSubstitution(
         [FindPackageShare("m20_fastlio_nav"), "config", "fastlio_localization_mid360.yaml"]
     )
     open3d_config = PathJoinSubstitution(
         [FindPackageShare("m20_fastlio_nav"), "config", "open3d_localization_m20.yaml"]
+    )
+    sc_relocalizer_config = PathJoinSubstitution(
+        [FindPackageShare("m20_fastlio_nav"), "config", "sc_relocalizer_m20.yaml"]
     )
 
     open3d_lib_path = "/home/orin/drivers/Open3D/install/lib"
@@ -130,6 +135,22 @@ def generate_launch_description():
         ],
     )
 
+    sc_relocalizer = Node(
+        package="slam_mapping",
+        executable="sc_relocalizer",
+        name="sc_relocalizer",
+        output="screen",
+        additional_env={"LD_PRELOAD": "/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0"},
+        parameters=[
+            sc_relocalizer_config,
+            {
+                "sc_db_path": sc_db_path,
+                "use_sim_time": use_sim_time,
+            },
+        ],
+        condition=IfCondition(enable_sc_relocalizer),
+    )
+
     pointcloud_to_scan = Node(
         package="pointcloud_to_laserscan",
         executable="pointcloud_to_laserscan_node",
@@ -182,8 +203,13 @@ def generate_launch_description():
                 "map_pcd",
                 default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd",
             ),
+            DeclareLaunchArgument(
+                "sc_db_path",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/sc_database.txt",
+            ),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom"),
+            DeclareLaunchArgument("enable_sc_relocalizer", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="false"),
             SetEnvironmentVariable(
                 "LD_LIBRARY_PATH",
@@ -197,6 +223,7 @@ def generate_launch_description():
             fast_lio_loc,
             odom_bridge,
             open3d_loc,
+            sc_relocalizer,
             pointcloud_to_scan,
             rviz_node,
         ]

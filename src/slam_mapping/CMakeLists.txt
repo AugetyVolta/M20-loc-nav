@@ -93,9 +93,16 @@ target_include_directories(alaserPGO PRIVATE ${LIBUSB_INCLUDE_DIRS})
 target_link_libraries(alaserPGO ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} ${OpenMP_CXX_FLAGS} gtsam -Wl,--no-as-needed ${LIBUSB_LIBRARIES} -Wl,--as-needed)
 ament_target_dependencies(alaserPGO ${ros2_dependencies})
 
+add_executable(sc_relocalizer src/sc_relocalizer.cpp include/scancontext/Scancontext.cpp)
+target_include_directories(sc_relocalizer PUBLIC ${PCL_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
+target_include_directories(sc_relocalizer PRIVATE ${LIBUSB_INCLUDE_DIRS})
+target_link_libraries(sc_relocalizer ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} -Wl,--no-as-needed ${LIBUSB_LIBRARIES} -Wl,--as-needed)
+ament_target_dependencies(sc_relocalizer ${ros2_dependencies})
+
 # ============== 安装 ==============
 install(TARGETS 
   alaserPGO
+  sc_relocalizer
   DESTINATION lib/${PROJECT_NAME}
 )
 
