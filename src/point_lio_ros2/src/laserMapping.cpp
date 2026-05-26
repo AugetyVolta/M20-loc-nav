@@ -1,4 +1,6 @@
 #include <omp.h>
+#include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <cmath>
 #include <thread>
@@ -19,6 +21,7 @@
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/vector3.hpp>
 // #include <livox_ros_driver2/msg/custom_msg.hpp>
@@ -33,6 +36,7 @@
 const float MOV_THRESHOLD = 1.5f;
 
 mutex mtx_buffer;
+mutex mtx_reset_reason;
 condition_variable sig_buffer;
 
 string root_dir = ROOT_DIR;
@@ -51,6 +55,8 @@ double T1[MAXN], s_plot[MAXN], s_plot2[MAXN], s_plot3[MAXN], s_plot11[MAXN];
 double match_time = 0, solve_time = 0, propag_time = 0, update_time = 0;
 
 bool lidar_pushed = false, flg_reset = false, flg_exit = false;
+std::atomic_bool reset_requested(false);
+std::string reset_reason = "unknown";
 
 vector<BoxPointType> cub_needrm;
 
@@ -77,6 +83,12 @@ nav_msgs::msg::Odometry odomAftMapped;
 geometry_msgs::msg::PoseStamped msg_body_pose;
 
 auto logger = rclcpp::get_logger("laserMapping");
+
+void request_localization_reset(const char *reason);
+void reset_localization_state(const char *reason);
+extern bool Localmap_Initialized;
+extern PointCloudXYZI::Ptr pcl_wait_pub;
+extern PointCloudXYZI::Ptr pcl_wait_save;
 
 void SigHandle(int sig) {
     flg_exit = true;
@@ -141,6 +153,101 @@ void points_cache_collect() // seems for debug
     PointVector points_history;
     ikdtree.acquire_removed_points(points_history);
     points_cache_size = points_history.size();
+}
+
+void request_localization_reset(const char *reason) {
+    {
+        std::lock_guard<std::mutex> lock(mtx_reset_reason);
+        reset_reason = reason != nullptr ? reason : "unknown";
+    }
+    reset_requested.store(true);
+    sig_buffer.notify_all();
+}
+
+void reset_localization_state(const char *reason) {
+    RCLCPP_WARN(logger, "Reset Point-LIO localization state: %s", reason != nullptr ? reason : "unknown");
+
+    lidar_buffer.clear();
+    time_buffer.clear();
+    imu_deque.clear();
+    lidar_pushed = false;
+    flg_reset = false;
+    flg_first_scan = true;
+    init_map = false;
+    Localmap_Initialized = false;
+    is_first_frame = true;
+
+    lidar_end_time = 0.0;
+    first_lidar_time = 0.0;
+    time_con = 0.0;
+    last_timestamp_lidar = -1.0;
+    last_timestamp_imu = -1.0;
+    time_update_last = 0.0;
+    time_current = 0.0;
+    time_predict_last_const = 0.0;
+    t_last = 0.0;
+    feats_down_size = 0;
+    time_log_counter = 0;
+    scan_count = 0;
+    publish_count = 0;
+    frame_ct = 0;
+    match_time = 0.0;
+    solve_time = 0.0;
+    propag_time = 0.0;
+    update_time = 0.0;
+    points_cache_size = 0;
+    effct_feat_num = 0;
+    idx = 0;
+    k = 0;
+
+    PointVector empty_points;
+    ikdtree.Build(empty_points);
+    cub_needrm.clear();
+    time_seq.clear();
+    pbody_list.clear();
+    Nearest_Points.clear();
+    crossmat_list.clear();
+    pointSearchSqDis.assign(pointSearchSqDis.size(), 0.0f);
+    std::fill_n(point_selected_surf, 100000, false);
+
+    ptr_con->clear();
+    feats_undistort->clear();
+    feats_down_body_space->clear();
+    init_feats_world->clear();
+    feats_down_body->clear();
+    feats_down_world->clear();
+    normvec->clear();
+    pcl_wait_pub->clear();
+    pcl_wait_save->clear();
+    path.poses.clear();
+
+    p_imu->Reset();
+
+    state_in = state_input();
+    state_out = state_output();
+    state_in.offset_R_L_I = Lidar_R_wrt_IMU;
+    state_in.offset_T_L_I = Lidar_T_wrt_IMU;
+    state_out.offset_R_L_I = Lidar_R_wrt_IMU;
+    state_out.offset_T_L_I = Lidar_T_wrt_IMU;
+    kf_input.change_x(state_in);
+    kf_output.change_x(state_out);
+
+    Eigen::Matrix<double, 24, 24> P_init = Eigen::Matrix<double, 24, 24>::Identity() * 0.01;
+    P_init.block<3, 3>(15, 15) = 0.0001 * Eigen::Matrix3d::Identity();
+    P_init.block<3, 3>(18, 18) = 0.0001 * Eigen::Matrix3d::Identity();
+    P_init.block<3, 3>(21, 21) = 0.0001 * Eigen::Matrix3d::Identity();
+    Eigen::Matrix<double, 30, 30> P_init_output = Eigen::Matrix<double, 30, 30>::Identity() * 0.01;
+    P_init_output.block<3, 3>(24, 24) = 0.0001 * Eigen::Matrix3d::Identity();
+    P_init_output.block<3, 3>(27, 27) = 0.0001 * Eigen::Matrix3d::Identity();
+    kf_input.change_P(P_init);
+    kf_output.change_P(P_init_output);
+
+    euler_cur = Zero3d;
+    imu_last = sensor_msgs::msg::Imu();
+    imu_next = sensor_msgs::msg::Imu();
+    imu_last_ptr.reset();
+    odomAftMapped = nav_msgs::msg::Odometry();
+    msg_body_pose = geometry_msgs::msg::PoseStamped();
 }
 
 BoxPointType LocalMap_Points;
@@ -781,6 +888,16 @@ int main(int argc, char **argv) {
     sub_pcl = nh->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, rclcpp::SensorDataQoS(), standard_pcl_cbk);
     // }
     auto sub_imu = nh->create_subscription<sensor_msgs::msg::Imu>(imu_topic, 200000, imu_cbk);
+    auto reset_localization_srv = nh->create_service<std_srvs::srv::Trigger>(
+            "reset_localization",
+            [](const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+               std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+                (void)request;
+                request_localization_reset("reset_localization service");
+                response->success = true;
+                response->message = "Point-LIO localization reset requested.";
+                RCLCPP_WARN(logger, "Point-LIO localization reset requested by service");
+            });
 
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFullRes;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFullRes_body;
@@ -823,6 +940,18 @@ int main(int argc, char **argv) {
         rclcpp::executors::SingleThreadedExecutor executor;
         executor.add_node(nh);
         executor.spin_some(); // 处理当前可用的回调
+
+        if (reset_requested.exchange(false)) {
+            std::string reason_copy;
+            {
+                std::lock_guard<std::mutex> lock(mtx_reset_reason);
+                reason_copy = reset_reason;
+            }
+            std::lock_guard<std::mutex> buffer_lock(mtx_buffer);
+            reset_localization_state(reason_copy.c_str());
+            rate.sleep();
+            continue;
+        }
 
         if (sync_packages(Measures)) {
             if (flg_first_scan) {
@@ -933,8 +1062,8 @@ int main(int argc, char **argv) {
             t2 = omp_get_wtime();
 
             /*** iterated state estimation ***/
-            crossmat_list.reserve(feats_down_size);
-            pbody_list.reserve(feats_down_size);
+            crossmat_list.resize(feats_down_size);
+            pbody_list.resize(feats_down_size);
             // pbody_ext_list.reserve(feats_down_size);
 
             for (size_t i = 0; i < feats_down_body->size(); i++) {

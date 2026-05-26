@@ -1,7 +1,7 @@
-# M20 MID360 Point-LIO + NDT 定位导航系统
+# M20 MID360 Point-LIO + Open3D 定位导航系统
 
 这个分支是 `point-lio-lidar-localization`，用于把 MID360 的 Point-LIO 局部里程计和
-`lidar_localization_ros2` 的 NDT 点云地图匹配接入 Nav2，并继续运行当前工作区里的
+`open3d_loc` 的全局点云地图匹配接入 Nav2，并继续运行当前工作区里的
 RL local path + Nav2 DWB adapter。
 
 当前工作空间是独立工作空间，不依赖 `m20_ws/src` 里的软链接。
@@ -13,24 +13,22 @@ RL local path + Nav2 DWB adapter。
 | 分支 | 定位前端 | 全局点云定位 | 目标 |
 |---|---|---|---|
 | `main` | `fast_lio` | `open3d_loc` | 保留上一版定位链路和导航 glue |
-| `point-lio-lidar-localization` | `point_lio_ros2` | `lidar_localization_ros2` + `ndt_omp_ros2` | 新方案实验，重点看实时性和稳定性 |
+| `point-lio-lidar-localization` | `point_lio_ros2` | `open3d_loc` | 新方案实验，重点看实时性和稳定性 |
 
 本分支保留完整第三方源码：
 
 - `src/point_lio_ros2`
-- `src/lidar_localization_ros2`
-- `src/ndt_omp_ros2`
 
-这样后续不需要重新 clone 或再手工打补丁。第三方包已经包含当前 Jetson/CMake/OpenMPI 环境需要的编译兼容修改，以及 Point-LIO 对 MID360 `PointCloud2` 的处理改动。
+这样后续不需要重新 clone 或再手工打补丁。Point-LIO 包已经包含当前 Jetson/CMake/OpenMPI 环境需要的编译兼容修改，以及对 MID360 `PointCloud2` 的处理改动。
 
 ## 系统目标
 
 原定位链路的问题是 Open3D 全局定位和 Fast-LIO 组合在当前机器上实时性差，Nav2 的 `/local_path` 已经掉到很低频率。这个分支尝试替换为：
 
 - MID360 `/livox/lidar` + `/livox/imu` 进入 `point_lio_ros2`。
-- Point-LIO 发布局部 LIO odom：`/odom_corrected`。
-- `lidar_localization_ros2` 加载摆正后的 3D PCD 地图，用 NDT_OMP 做 `map -> odom` 校正。
-- `fastlio_odom_bridge` 复用原 bridge，把 `/odom_corrected` 转成 Nav2 标准 `/odom`，并发布 `map -> odom_nav -> base_footprint`。
+- Point-LIO 发布局部 LIO odom：`/aft_mapped_to_init`。
+- `open3d_loc` 加载摆正后的 3D PCD 地图，用 ICP 做 `map -> odom` 校正。
+- `fastlio_odom_bridge` 复用原 bridge，把 `/aft_mapped_to_init` 转成 Nav2 标准 `/odom`，并发布 `map -> odom_nav -> base_footprint`。
 - Nav2 不启动 AMCL，直接使用 3D 定位链路提供的 `map -> odom_nav -> base_footprint`。
 
 不要同时运行旧的：
@@ -48,7 +46,7 @@ MID360
   ├── /livox/lidar  ─┐
   └── /livox/imu    ─┴──> point_lio_ros2 / pointlio_mapping
                               │
-                              ├── /odom_corrected
+                              ├── /aft_mapped_to_init
                               └── TF: odom -> body
                                       │
                                       ▼
@@ -59,11 +57,12 @@ MID360
                               ├── TF: odom_nav -> base_footprint
                               └── TF: odom -> base_link
 
-MID360 /livox/lidar ───────> lidar_localization_ros2
-3D PCD map ─────────────────> lidar_localization_ros2
+MID360 /livox/lidar ───────> open3d_loc
+3D PCD map ─────────────────> open3d_loc
                               │
-                              ├── /localization/pose_with_covariance
-                              ├── /alignment_status
+                              ├── /baselink2map
+                              ├── /odom2map
+                              ├── /localization_3d_confidence
                               └── TF: map -> odom
 
 MID360 /livox/lidar ───────> pointcloud_to_laserscan
@@ -80,7 +79,7 @@ Nav2 DWB:
 
 ```text
 map
- ├── odom                 lidar_localization_ros2 动态发布（3D 原始定位帧）
+ ├── odom                 open3d_loc 动态发布（3D 原始定位帧）
  │    └── base_link       fastlio_odom_bridge 动态发布（3D 调试帧）
  │         ├── livox_frame
  │         └── imu_link
@@ -88,7 +87,7 @@ map
       └── base_footprint  fastlio_odom_bridge 动态发布
 ```
 
-`body` 是 Point-LIO 内部机体帧，`base_link` 是机器狗 3D 机体帧，`base_footprint` 是 Nav2 使用的平面帧。桥接节点会把 NDT 的 `map -> odom` 压成 `map -> odom_nav`，同时保留 `odom -> base_link` 方便 3D 调试。
+`body` 是 Point-LIO 内部机体帧，`base_link` 是机器狗 3D 机体帧，`base_footprint` 是 Nav2 使用的平面帧。桥接节点会把 Open3D 的 `map -> odom` 压成 `map -> odom_nav`，同时保留 `odom -> base_link` 方便 3D 调试。
 
 ## 工作空间结构
 
@@ -108,11 +107,9 @@ map
     ├── fast_lio/                 # main 分支原定位前端，当前分支保留备用
     ├── fast_lio_map/             # 建图前端
     ├── slam_mapping/             # 建图后端 PGO
-    ├── open3d_loc/               # main 分支原全局定位，当前分支保留备用
+    ├── open3d_loc/               # Open3D 全局点云定位
     ├── pcd2pgm/                  # PCD 转 Nav2 2D OccupancyGrid
     ├── m20_fastlio_nav/          # M20 专用 launch、参数、odom bridge
-    ├── ndt_omp_ros2/             # NDT_OMP/GICP 加速库，已 vendored
-    ├── lidar_localization_ros2/  # NDT 点云地图定位，已 vendored
     └── point_lio_ros2/           # Point-LIO 局部 LIO odom，已 vendored
 ```
 
@@ -132,11 +129,10 @@ map
 |---|---|---|
 | `fast_lio_map` | Fast-LIO2 建图前端，保存原始 PCD | 建图 |
 | `slam_mapping` | 建图后端 PGO，保存 `global_map.pcd` 和 `sc_database.txt` | 建图 |
-| `point_lio` | Point-LIO ROS2 包，发布 `/odom_corrected` | 替代定位/导航 |
-| `ndt_omp_ros2` | NDT_OMP/GICP 注册库，供 `lidar_localization_ros2` 链接 | 替代定位/导航 |
-| `lidar_localization_ros2` | NDT/GICP 点云地图定位，发布 `map -> odom` | 替代定位/导航 |
+| `point_lio` | Point-LIO ROS2 包，发布 `/aft_mapped_to_init` | 替代定位/导航 |
+| `open3d_loc` | Open3D ICP 全局点云定位，发布 `map -> odom` 并支持 `/initialpose` 重定位 | 替代定位/导航 |
 | `pcd2pgm` | 3D PCD 转 2D 占据栅格 | 地图转换 |
-| `m20_fastlio_nav` | M20 glue 包：TF、参数、launch、`/odom_corrected` -> `/odom` | 全流程 |
+| `m20_fastlio_nav` | M20 glue 包：TF、参数、launch、`/aft_mapped_to_init` -> `/odom` | 全流程 |
 | `move` | 当前拷贝进工作区的 global path、RL local path 和 adapter | 导航执行 |
 
 ## 关键文件
@@ -150,7 +146,6 @@ src/m20_fastlio_nav/launch/m20_point_lio_nav.launch.py
 src/m20_fastlio_nav/config/fastlio_mapping_mid360.yaml
 src/m20_fastlio_nav/config/slam_mapping_mid360.yaml
 src/m20_fastlio_nav/config/point_lio_mid360_m20.yaml
-src/m20_fastlio_nav/config/lidar_localization_m20.yaml
 src/m20_fastlio_nav/config/nav2_dwb_fastlio.yaml
 src/m20_fastlio_nav/config/m20_nav3d.rviz
 
@@ -159,8 +154,6 @@ src/m20_fastlio_nav/m20_fastlio_nav/fastlio_odom_bridge.py
 src/point_lio_ros2/CMakeLists.txt
 src/point_lio_ros2/src/preprocess.cpp
 src/point_lio_ros2/src/preprocess.h
-src/lidar_localization_ros2/CMakeLists.txt
-src/ndt_omp_ros2/CMakeLists.txt
 
 level_pcd.py
 ```
@@ -177,7 +170,7 @@ Euler:       roll -0.2 deg, pitch 28.2 deg, yaw 1.1 deg
 
 这个倾角导致建图坐标系的 Z 轴不是真正垂直。因此 PCD 必须摆正后再用于：
 
-- `lidar_localization_ros2` 的 3D 地图匹配
+- `open3d_loc` 的 3D 地图匹配
 - `pcd2pgm` 的 2D 栅格地图生成
 
 外参当前同步出现在：
@@ -218,36 +211,33 @@ src/m20_fastlio_nav/config/point_lio_mid360_m20.yaml
 
 `point_lio_ros2` 原始代码对 ROS2 `PointCloud2` 的 MID360 点类型支持不完整。本分支已经在 `src/point_lio_ros2/src/preprocess.cpp` 和 `src/point_lio_ros2/src/preprocess.h` 里增加了 `x/y/z/intensity/tag/line` 点类型处理，避免必须依赖 Livox `CustomMsg`。
 
-## lidar_localization_ros2 配置要点
+## Open3D 全局定位配置要点
 
 配置文件：
 
 ```text
-src/m20_fastlio_nav/config/lidar_localization_m20.yaml
+src/m20_fastlio_nav/config/open3d_localization_m20.yaml
 ```
 
 关键参数：
 
 | 参数 | 当前值 | 说明 |
 |---|---:|---|
-| `registration_method` | `NDT_OMP` | 使用 NDT_OMP |
-| `ndt_resolution` | `1.0` | NDT 栅格分辨率 |
-| `ndt_num_threads` | `4` | 线程数，Jetson 上不要盲目拉高 |
-| `ndt_max_iterations` | `30` | 单帧最大迭代 |
-| `voxel_leaf_size` | `0.25` | 实时 scan 下采样 |
-| `scan_max_range` | `80.0` | 远点过滤 |
-| `scan_min_range` | `0.5` | 近点过滤 |
-| `use_pcd_map` | `true` | 从 PCD 文件加载地图 |
-| `map_path` | `m20_map_leveled.pcd` | 默认地图，可由 launch 参数覆盖 |
-| `set_initial_pose` | `false` | 默认等 RViz 初始位姿 |
-| `use_odom` | `false` | 当前不使用 odom 预测，先降低耦合 |
-| `use_imu` | `false` | 当前不使用 IMU 预测，先降低耦合 |
-| `enable_local_map_crop` | `true` | 使用局部地图裁剪降低计算量 |
-| `local_map_radius` | `60.0` | 局部地图半径 |
-| `reject_above_score_threshold` | `true` | 分数过差时拒绝更新 |
-| `enable_map_odom_tf` | `true` | 发布 `map -> odom` |
+| `path_map` | `m20_map_leveled.pcd` | 由 launch 的 `map_pcd` 覆盖，必须和 2D map 来自同一张摆正地图 |
+| `pcd_queue_maxsize` | `6` | 累积最近 6 帧点云，优先降低墙面抖动 |
+| `voxelsize_coarse` | `0.04` | 初始化/粗匹配地图体素 |
+| `voxelsize_fine` | `0.25` | 在线 ICP 体素，兼顾 CPU 和稳定性 |
+| `threshold_fitness_init` | `0.45` | 初始化接受阈值 |
+| `threshold_fitness` | `0.45` | 在线修正接受阈值 |
+| `loc_frequence` | `1.5` | Open3D 修正间隔，单位秒；比 1 秒更平滑，比旧 2 秒拉回更快 |
+| `maxpoints_source` | `80000` | 单次匹配输入点上限 |
+| `maxpoints_target` | `300000` | 局部地图点上限 |
+| `confidence_loc_th` | `0.65` | 输出定位置信度参考阈值 |
+| `dis_updatemap` | `3.0` | 移动超过该距离后更新局部地图裁剪 |
+| `reset_fastlio_on_initialpose` | `true` | RViz `2D Pose Estimate` 时同步请求 Point-LIO reset |
 
-启动后建议用 RViz 的 `2D Pose Estimate` 给一次初始位姿。`lidar_localization_ros2` 默认需要收到初始位姿后才开始稳定处理点云。
+`enable_lidar_localizer:=true` 时会启动 `open3d_loc/global_localization_node`。
+`enable_lidar_localizer:=false` 时只跑 Point-LIO 里程计，并发布一个静态 `map -> odom_nav`，用于调试，不建议用于正式导航。
 
 ## 编译
 
@@ -259,8 +249,7 @@ Livox:      ~/liv_ws
 工作空间:   /mnt/nvme/workspace/fast_lio_ws
 ```
 
-`point_lio_ros2`、`ndt_omp_ros2`、`lidar_localization_ros2` 已经直接放进本分支 `src/` 下。不要再去
-`third_party/` 里按补丁流程 clone，也不要再次 clone 同名目录。拿到这个分支后，源码已经齐全，直接按下面命令编译。
+`point_lio_ros2` 已经直接放进本分支 `src/` 下；`open3d_loc` 使用本仓库原有包。当前分支已经删除不用的 `lidar_localization_ros2` 和 `ndt_omp_ros2`，不要再 clone 那套旧 NDT 方案。
 
 ### 构建建图和主包
 
@@ -280,7 +269,7 @@ colcon build --packages-select fast_lio fast_lio_map slam_mapping open3d_loc pcd
 
 ### 构建 Point-LIO 替代定位
 
-Jetson 上建议限制并行度，避免 `lidar_localization_ros2` 大模板文件编译时拖慢或吃满内存：
+Jetson 上建议限制并行度，避免 Point-LIO / Open3D 相关 C++ 编译时吃满内存：
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws
@@ -290,7 +279,7 @@ export CMAKE_BUILD_PARALLEL_LEVEL=1
 export MAKEFLAGS=-j1
 
 colcon build \
-  --packages-select ndt_omp_ros2 lidar_localization_ros2 point_lio m20_fastlio_nav \
+  --packages-select open3d_loc point_lio m20_fastlio_nav \
   --symlink-install \
   --executor sequential \
   --parallel-workers 1 \
@@ -307,7 +296,7 @@ source ~/liv_ws/install/setup.bash
 colcon build --packages-select m20_fastlio_nav --symlink-install
 ```
 
-这台机器上的 `CMake 4.3 + OpenMPI + PCL/VTK` 兼容性处理已经写进三个第三方包的 `CMakeLists.txt`。如果换机器或系统版本，先保留这些修改，除非确认系统 CMake/PCL/MPI 不再有同样问题。
+这台机器上的 Point-LIO 编译兼容处理已经写进 `src/point_lio_ros2/CMakeLists.txt`。如果换机器或系统版本，先保留这些修改，除非确认系统 CMake/PCL/MPI 不再有同样问题。
 
 ### 验证构建
 
@@ -317,8 +306,7 @@ source ~/liv_ws/install/setup.bash
 source /mnt/nvme/workspace/fast_lio_ws/install/setup.bash
 
 ros2 pkg prefix point_lio
-ros2 pkg prefix ndt_omp_ros2
-ros2 pkg prefix lidar_localization_ros2
+ros2 pkg prefix open3d_loc
 ros2 pkg prefix m20_fastlio_nav
 
 ros2 launch m20_fastlio_nav m20_point_lio_localization.launch.py --show-args
@@ -442,7 +430,7 @@ maps/fastlio/sc_database.txt
 
 ## Step 3: 摆正 PCD
 
-MID360 前倾约 28 度，原始 PCD 坐标系通常是歪的。直接转 2D 地图或给 NDT 定位会让地图和 Nav2 坐标系不一致。
+MID360 前倾约 28 度，原始 PCD 坐标系通常是歪的。直接转 2D 地图或给 Open3D 定位会让地图和 Nav2 坐标系不一致。
 
 处理前端原始图：
 
@@ -506,7 +494,7 @@ src/m20_fastlio_nav/config/pcd2pgm_m20.yaml
 
 ## Step 5: 启动 Point-LIO 纯定位
 
-用于先确认 Point-LIO 和 NDT 定位本身是否能工作：
+用于先确认 Point-LIO 和 Open3D 全局定位本身是否能工作：
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws
@@ -520,7 +508,7 @@ ros2 launch m20_fastlio_nav m20_point_lio_localization.launch.py \
   rviz:=true
 ```
 
-如果只看 Point-LIO odom，不跑 NDT 地图匹配：
+如果只看 Point-LIO odom，不跑 Open3D 地图匹配：
 
 ```bash
 ros2 launch m20_fastlio_nav m20_point_lio_localization.launch.py \
@@ -528,14 +516,15 @@ ros2 launch m20_fastlio_nav m20_point_lio_localization.launch.py \
   rviz:=true
 ```
 
-启动后用 RViz 的 `2D Pose Estimate` 给一次大概初始位姿。NDT 成功后应看到：
+启动后用 RViz 的 `2D Pose Estimate` 给一次大概初始位姿。Open3D 成功后应看到：
 
-- `/odom_corrected` 稳定输出
+- `/aft_mapped_to_init` 稳定输出
 - `/odom` 稳定输出
 - `map -> odom` 存在
 - `map -> odom_nav -> base_footprint` 连通
-- `/localization/pose_with_covariance` 有输出
-- `/alignment_status` 的状态逐步变好
+- `/baselink2map` 有输出
+- `/odom2map` 有输出
+- `/localization_3d_confidence` 大多数时候高于 0.45
 
 ## Step 6: 启动 Point-LIO 定位 + Nav2
 
@@ -559,6 +548,17 @@ ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py \
   map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
   map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml \
   rviz:=true
+
+cd /mnt/nvme/workspace/fast_lio_ws
+source /opt/ros/humble/setup.bash
+source ~/liv_ws/install/setup.bash
+source install/setup.bash
+export LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0
+
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
+  map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml \
+  rviz:=true
 ```
 
 这条命令是实车模式，和旧 Fast-LIO 链路保持一致：不改写 `/livox/lidar`、`/livox/imu` 的 header stamp。
@@ -570,7 +570,7 @@ ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py \
 1. `m20_point_lio_localization.launch.py`
 2. `point_lio/pointlio_mapping`
 3. `m20_fastlio_nav/fastlio_odom_bridge`
-4. `lidar_localization_ros2/lidar_localization_node`
+4. `open3d_loc/global_localization_node`
 5. `pointcloud_to_laserscan_node`
 6. Nav2 `map_server`
 7. Nav2 `navigation_launch.py`
@@ -612,7 +612,7 @@ source install/setup.bash
 python src/move/move/priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py
 ```
 
-这个 adapter 当前支持定位置信度门控。默认参数里 `require_localization_confidence` 是 `False`，如果后续给 `lidar_localization_ros2` 接一个稳定的置信度 Float32 话题，可以打开：
+这个 adapter 当前支持定位置信度门控。默认参数里 `require_localization_confidence` 是 `False`，如果后续给 `open3d_loc` 接一个稳定的置信度 Float32 话题，可以打开：
 
 ```bash
 python src/move/move/priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py --ros-args \
@@ -621,7 +621,7 @@ python src/move/move/priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py --ros-
   -p localization_confidence_threshold:=0.65
 ```
 
-注意：当前 `lidar_localization_ros2` 原生主要输出 `/alignment_status`，不等价于旧 `open3d_loc` 的 `/localization_3d_confidence`。没有单独桥接前，不要盲目打开该门控。
+注意：当前 当前 `open3d_loc` 会发布 `/localization_3d_confidence`。如果要让 adapter 在定位置信度低时禁用导航输出，可以打开该门控。
 
 ## 远程 RViz
 
@@ -658,16 +658,16 @@ rviz2 -d ~/m20_nav3d.rviz --ros-args -p use_sim_time:=true
 Point-LIO：
 
 ```bash
-ros2 topic hz /odom_corrected
-ros2 topic echo /odom_corrected --once
+ros2 topic hz /aft_mapped_to_init
+ros2 topic echo /aft_mapped_to_init --once
 ros2 run tf2_ros tf2_echo odom body
 ```
 
-NDT 定位：
+Open3D 全局定位：
 
 ```bash
-ros2 topic hz /localization/pose_with_covariance
-ros2 topic echo /alignment_status --once
+ros2 topic hz /baselink2map
+ros2 topic echo /localization_3d_confidence --once
 ros2 run tf2_ros tf2_echo map odom
 ```
 
@@ -693,7 +693,7 @@ ros2 lifecycle nodes
 
 期望现象：
 
-- `/odom_corrected` 有稳定输出。
+- `/aft_mapped_to_init` 有稳定输出。
 - `/odom` 有稳定输出，`header.frame_id` 是 `odom_nav`，`child_frame_id` 是 `base_footprint`。
 - `tf2_echo map odom_nav` 能持续输出，而且基本只有 yaw。
 - `/scan` 有 LaserScan 数据。
@@ -703,12 +703,13 @@ ros2 lifecycle nodes
 
 | 话题 | 类型 | 发布者 | 用途 |
 |---|---|---|---|
-| `/livox/lidar` | `PointCloud2` | Livox driver | Point-LIO、NDT、LaserScan 输入 |
+| `/livox/lidar` | `PointCloud2` | Livox driver | Point-LIO 输入 |
 | `/livox/imu` | `Imu` | Livox driver | Point-LIO 输入 |
-| `/odom_corrected` | `Odometry` | `point_lio` | 局部 LIO odom |
+| `/aft_mapped_to_init` | `Odometry` | `point_lio` | 局部 LIO odom |
 | `/odom` | `Odometry` | `fastlio_odom_bridge` | Nav2 odom |
-| `/localization/pose_with_covariance` | `PoseWithCovarianceStamped` | `lidar_localization_ros2` | NDT 定位结果 |
-| `/alignment_status` | `DiagnosticArray` | `lidar_localization_ros2` | NDT 状态和诊断 |
+| `/baselink2map` | `Odometry` | `open3d_loc` | Open3D 全局定位结果 |
+| `/odom2map` | `Odometry` | `open3d_loc` | Open3D 输出的 map/odom 修正 |
+| `/localization_3d_confidence` | `Float32` | `open3d_loc` | Open3D 匹配置信度 |
 | `/scan` | `LaserScan` | `pointcloud_to_laserscan` | Nav2 costmap 障碍层 |
 | `/map` | `OccupancyGrid` | `map_server` | Nav2 2D 地图 |
 | `/cmd_vel` | `Twist` | Nav2 controller | adapter 输入 |
@@ -744,7 +745,7 @@ export LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0
 
 建议写进 `.bashrc`。
 
-### 2. `point_lio` 没有 `/odom_corrected`
+### 2. `point_lio` 没有 `/aft_mapped_to_init`
 
 先看输入：
 
@@ -763,15 +764,15 @@ ros2 topic echo /livox/lidar --once
 
 如果点云字段不含 `line`，当前 `livox_handler` 会跳过点，Point-LIO 很可能起不来。
 
-### 3. NDT 定位不动或一直等待初始位姿
+### 3. Open3D 定位不动或一直等待初始位姿
 
-`lidar_localization_ros2` 默认需要初始位姿。用 RViz 的 `2D Pose Estimate` 给一次大概位置和朝向。
+`open3d_loc` 支持初始位姿。用 RViz 的 `2D Pose Estimate` 给一次大概位置和朝向，会同时请求重置 Point-LIO。
 
 检查：
 
 ```bash
 ros2 topic echo /initialpose --once
-ros2 topic echo /alignment_status --once
+ros2 topic echo /localization_3d_confidence --once
 ros2 run tf2_ros tf2_echo map odom
 ```
 
@@ -792,12 +793,12 @@ ros2 run tf2_ros tf2_echo map odom_nav
 ros2 run tf2_ros tf2_echo odom_nav base_footprint
 ```
 
-- `map -> odom` 来自 `lidar_localization_ros2`
-- `odom -> base_link` 来自 `fastlio_odom_bridge`，依赖 `/odom_corrected`
+- `map -> odom` 来自 `open3d_loc`
+- `odom -> base_link` 来自 `fastlio_odom_bridge`，依赖 `/aft_mapped_to_init`
 - `map -> odom_nav` 和 `odom_nav -> base_footprint` 来自 `fastlio_odom_bridge`
 
-如果 `map -> odom` 没有，先排查 NDT。  
-如果 `/odom_corrected` 没有，先排查 Point-LIO。
+如果 `map -> odom` 没有，先排查 Open3D。  
+如果 `/aft_mapped_to_init` 没有，先排查 Point-LIO。
 
 ### 5. `/scan` 没有数据
 
@@ -850,7 +851,7 @@ Message Filter dropping message: frame 'base_footprint' ... earlier than all the
 ros2 topic hz /livox/lidar
 ros2 topic hz /livox/imu
 ros2 topic echo /livox/lidar --once | grep -A3 stamp
-ros2 topic echo /odom_corrected --once | grep -A3 stamp
+ros2 topic echo /aft_mapped_to_init --once | grep -A3 stamp
 ros2 topic echo /scan --once | grep -A3 stamp
 ```
 
@@ -875,24 +876,59 @@ ros2 bag play /path/to/bag --clock
 当前 launch 里已经设置：
 
 ```text
-point_filter_num: 3
-filter_size_surf: 0.5
-filter_size_map: 0.5
-odom_only: true
+point_filter_num: 2
+filter_size_surf: 0.4
+filter_size_map: 0.4
+odom_only: false
 ```
 
-### 9. NDT 占用高或定位抖
+
+### 转弯时 `/scan` 抖动的判断
+
+如果 Fast-LIO 过同一个弯时 `/scan` 贴墙很平滑，而 Point-LIO 的 `/scan` 贴墙抖，优先按下面顺序判断：
+
+1. 先看 Point-LIO 前端是否抖：
+
+```bash
+ros2 topic hz /aft_mapped_to_init
+ros2 topic echo /aft_mapped_to_init --once
+ros2 run tf2_ros tf2_echo odom body
+```
+
+2. 再看 Open3D 是否在频繁修正：
+
+```bash
+ros2 topic echo /localization_3d_confidence --once
+ros2 run tf2_ros tf2_echo map odom
+ros2 run tf2_ros tf2_echo map odom_nav
+```
+
+3. 最后看 LaserScan 输入点云和 TF 是否一致：
+
+```bash
+ros2 topic hz /cloud_registered_body
+ros2 topic hz /scan
+ros2 run tf2_ros tf2_echo odom_nav base_footprint
+ros2 run tf2_ros tf2_echo base_link livox_frame
+```
+
+结论判断：
+
+- 如果 `/cloud_registered_body` 已经抖，问题在 Point-LIO 前端；继续调 `point_filter_num`、`filter_size_surf`、`filter_size_map`、IMU 时间偏移和外参。
+- 如果 `/cloud_registered_body` 稳，但 `/scan` 抖，问题在 bridge/TF 或 pointcloud_to_laserscan。
+- 如果 `/localization_3d_confidence` 转弯时掉很低，Open3D 没有可靠拉回，需要降低速度、提高点云匹配密度或提高 Open3D 修正频率。
+
+当前 bridge 对 `map -> odom_nav` 做保守平滑，但 `/odom` 仍保持 Point-LIO 局部里程计视角，避免 Open3D yaw 修正直接注入 LaserScan 投影造成墙面抖动。
+
+### 9. Open3D 占用高、转弯飘或定位抖
 
 优先调：
 
-- `voxel_leaf_size`
-- `ndt_resolution`
-- `ndt_num_threads`
-- `local_map_radius`
-- `score_threshold`
-- `reject_above_score_threshold`
-
-建议先从 `voxel_leaf_size: 0.25 -> 0.4` 和 `local_map_radius: 60 -> 40` 测起，看 CPU 和定位稳定性变化。
+- `pcd_queue_maxsize`：越大越稳但越容易在转弯时滞后；当前设为 `6`，优先降低墙面抖动。
+- `loc_frequence`：单位是秒，越小修正越频繁；当前设为 `1.5`，避免修正过频导致 `/scan` 可见抖动。
+- `voxelsize_fine`：越小越精细但更吃 CPU；当前 `0.25`。
+- `threshold_fitness`：过低会接受错误匹配，过高会不更新；当前 `0.45`。
+- Point-LIO 的 `point_filter_num`、`filter_size_surf`、`filter_size_map`：当前在 launch 里覆盖为 `2 / 0.4 / 0.4`，比之前 `3 / 0.5 / 0.5` 更抗转弯漂移但略增 CPU。
 
 ### 10. 2D 地图歪或导航坐标不匹配
 
@@ -902,7 +938,7 @@ odom_only: true
 
 1. 用建图得到 `global_map.pcd`
 2. 用 `level_pcd.py` 输出 `m20_map_leveled.pcd`
-3. `lidar_localization_ros2` 使用 `m20_map_leveled.pcd`
+3. `open3d_loc` 使用 `m20_map_leveled.pcd`
 4. `pcd2pgm` 也使用同一个 `m20_map_leveled.pcd`
 
 ### 11. Git 仍显示 maps 改动
@@ -943,7 +979,7 @@ ros2 topic info /livox/imu -v
 ```bash
 mkdir -p /mnt/nvme/bags
 ros2 bag record -o /mnt/nvme/bags/m20_point_lio_run \
-  /livox/lidar /livox/imu /tf /tf_static /odom_corrected /odom /scan /alignment_status
+  /livox/lidar /livox/imu /tf /tf_static /aft_mapped_to_init /odom /scan /baselink2map /odom2map /localization_3d_confidence
 ```
 
 重播定位：
@@ -983,7 +1019,7 @@ source install/setup.bash
 ros2 launch livox_ros_driver2 msg_MID360_launch.py
 ```
 
-Terminal 2: Point-LIO + NDT + Nav2
+Terminal 2: Point-LIO + Open3D + Nav2
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws
@@ -1028,10 +1064,10 @@ python src/move/move/priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py
 调试终端：
 
 ```bash
-ros2 topic hz /odom_corrected
+ros2 topic hz /aft_mapped_to_init
 ros2 topic hz /odom
 ros2 topic hz /scan
-ros2 topic echo /alignment_status --once
+ros2 topic echo /localization_3d_confidence --once
 ros2 run tf2_ros tf2_echo map base_link
 ```
 

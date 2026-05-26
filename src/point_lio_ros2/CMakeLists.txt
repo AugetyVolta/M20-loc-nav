@@ -60,6 +60,7 @@ find_package(rclpy REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -93,6 +94,7 @@ ament_target_dependencies(pointlio_mapping
         geometry_msgs
         nav_msgs
         sensor_msgs
+        std_srvs
         pcl_ros
         pcl_conversions
         tf2_ros
@@ -119,6 +121,7 @@ ament_export_dependencies(rclcpp
   geometry_msgs
   nav_msgs
   sensor_msgs
+  std_srvs
   pcl_ros
   pcl_conversions
   tf2_ros

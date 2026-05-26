@@ -16,6 +16,9 @@ def generate_launch_description():
     rviz = LaunchConfiguration("rviz")
     raw_cloud_topic = LaunchConfiguration("raw_cloud_topic")
     imu_topic = LaunchConfiguration("imu_topic")
+    localization_cloud_topic = LaunchConfiguration("localization_cloud_topic")
+    scan_cloud_topic = LaunchConfiguration("scan_cloud_topic")
+    enable_lidar_localizer = LaunchConfiguration("enable_lidar_localizer")
 
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -29,6 +32,9 @@ def generate_launch_description():
             "map_pcd": map_pcd,
             "raw_cloud_topic": raw_cloud_topic,
             "imu_topic": imu_topic,
+            "localization_cloud_topic": localization_cloud_topic,
+            "scan_cloud_topic": scan_cloud_topic,
+            "enable_lidar_localizer": enable_lidar_localizer,
             "scan_topic": "/scan",
             "output_odom_topic": "/odom",
             "rviz": rviz,
@@ -87,6 +93,9 @@ def generate_launch_description():
             DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument("raw_cloud_topic", default_value="/livox/lidar"),
             DeclareLaunchArgument("imu_topic", default_value="/livox/imu"),
+            DeclareLaunchArgument("localization_cloud_topic", default_value="/cloud_registered"),
+            DeclareLaunchArgument("scan_cloud_topic", default_value="/cloud_registered_body"),
+            DeclareLaunchArgument("enable_lidar_localizer", default_value="true"),
             localization,
             TimerAction(period=3.0, actions=[map_server, map_lifecycle]),
             TimerAction(period=8.0, actions=[nav2_navigation]),

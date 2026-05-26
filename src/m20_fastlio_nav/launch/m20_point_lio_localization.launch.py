@@ -1,20 +1,15 @@
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    EmitEvent,
     IncludeLaunchDescription,
-    RegisterEventHandler,
+    SetEnvironmentVariable,
     TimerAction,
 )
-from launch.conditions import IfCondition
-from launch.events import matches_action
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import LifecycleNode, Node
-from launch_ros.event_handlers import OnStateTransition
-from launch_ros.events.lifecycle import ChangeState
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from lifecycle_msgs.msg import Transition
 
 
 BASE_TO_SENSOR = [
@@ -34,19 +29,22 @@ def generate_launch_description():
     map_pcd = LaunchConfiguration("map_pcd")
     raw_cloud_topic = LaunchConfiguration("raw_cloud_topic")
     imu_topic = LaunchConfiguration("imu_topic")
-    twist_topic = LaunchConfiguration("twist_topic")
     scan_topic = LaunchConfiguration("scan_topic")
+    localization_cloud_topic = LaunchConfiguration("localization_cloud_topic")
+    scan_cloud_topic = LaunchConfiguration("scan_cloud_topic")
     output_odom_topic = LaunchConfiguration("output_odom_topic")
     enable_lidar_localizer = LaunchConfiguration("enable_lidar_localizer")
     use_imu_as_input = LaunchConfiguration("use_imu_as_input")
+    time_lag_imu_to_lidar = LaunchConfiguration("time_lag_imu_to_lidar")
     rviz = LaunchConfiguration("rviz")
 
     point_lio_config = PathJoinSubstitution(
         [FindPackageShare("m20_fastlio_nav"), "config", "point_lio_mid360_m20.yaml"]
     )
-    localization_config = PathJoinSubstitution(
-        [FindPackageShare("m20_fastlio_nav"), "config", "lidar_localization_m20.yaml"]
+    open3d_config = PathJoinSubstitution(
+        [FindPackageShare("m20_fastlio_nav"), "config", "open3d_localization_m20.yaml"]
     )
+    open3d_lib_path = "/home/orin/drivers/Open3D/install/lib"
 
     livox_driver = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -75,6 +73,13 @@ def generate_launch_description():
         name="m20_pointlio_base_to_motion_link",
         arguments=["0", "0", "0", "0", "0", "0", "1", "base_link", "motion_link"],
     )
+    identity_map_to_odom_nav = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="m20_pointlio_identity_map_to_odom_nav",
+        arguments=["0", "0", "0", "0", "0", "0", "1", "map", "odom_nav"],
+        condition=UnlessCondition(enable_lidar_localizer),
+    )
 
     point_lio_odom = Node(
         package="point_lio",
@@ -87,17 +92,24 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
                 "common.lid_topic": raw_cloud_topic,
                 "common.imu_topic": imu_topic,
+                "common.time_lag_imu_to_lidar": time_lag_imu_to_lidar,
                 "use_imu_as_input": use_imu_as_input,
                 "prop_at_freq_of_imu": True,
                 "check_satu": True,
                 "init_map_size": 10,
-                "point_filter_num": 3,
+                # Turning used to drift before Open3D could pull the pose back.
+                # Keep slightly denser Point-LIO matching than the upstream MID360
+                # default, but do not make it as heavy as the old Fast-LIO stack.
+                "point_filter_num": 2,
                 "space_down_sample": True,
-                "filter_size_surf": 0.5,
-                "filter_size_map": 0.5,
+                "filter_size_surf": 0.4,
+                "filter_size_map": 0.4,
                 "cube_side_length": 1000.0,
                 "runtime_pos_log_enable": False,
-                "odom_only": True,
+                "odom_only": False,
+                "publish.path_en": False,
+                "publish.scan_publish_en": True,
+                "publish.scan_bodyframe_pub_en": True,
                 "odom_header_frame_id": "odom",
                 "odom_child_frame_id": "body",
             },
@@ -112,7 +124,7 @@ def generate_launch_description():
         parameters=[
             {
                 "use_sim_time": use_sim_time,
-                "source_odom_topic": "/odom_corrected",
+                "source_odom_topic": "/aft_mapped_to_init",
                 "output_odom_topic": output_odom_topic,
                 "map_frame": "map",
                 "odom_frame": "odom",
@@ -129,62 +141,43 @@ def generate_launch_description():
                     0.00970223,
                     0.96979969,
                 ],
+                "smooth_map_to_odom_tf": True,
+                "map_to_odom_smoothing_alpha": 0.12,
+                "map_to_odom_max_translation_step": 0.025,
+                "map_to_odom_max_yaw_step_deg": 0.25,
+                "map_to_odom_snap_translation_threshold": 1.0,
+                "map_to_odom_snap_yaw_threshold_deg": 12.0,
+                # Point-LIO local odom is 20 Hz, but can have high-frequency yaw
+                # jitter in turns. Smooth only the 2D Nav2/RViz pose output; keep
+                # the raw 3D odom->base_link TF untouched for Open3D and debugging.
+                "smooth_nav_pose": True,
+                "nav_pose_smoothing_alpha": 0.45,
+                "nav_pose_max_translation_step": 0.10,
+                "nav_pose_max_yaw_step_deg": 3.0,
+                "nav_pose_snap_translation_threshold": 0.7,
+                "nav_pose_snap_yaw_threshold_deg": 18.0,
             }
         ],
     )
 
-    lidar_localization = LifecycleNode(
-        package="lidar_localization_ros2",
-        executable="lidar_localization_node",
-        name="lidar_localization",
-        namespace="",
+    open3d_loc = Node(
+        package="open3d_loc",
+        executable="global_localization_node",
+        name="global_localization_node",
         output="screen",
+        remappings=[
+            ("/Odometry_loc", "/aft_mapped_to_init"),
+            ("/cloud_registered_1", localization_cloud_topic),
+            ("/map", "/map_3d"),
+            ("/scan", "/scan_3d"),
+        ],
         parameters=[
-            localization_config,
+            open3d_config,
             {
                 "use_sim_time": use_sim_time,
-                "map_path": map_pcd,
-                "enable_map_odom_tf": True,
-                "global_frame_id": "map",
-                "odom_frame_id": "odom",
-                "base_frame_id": "base_link",
+                "path_map": map_pcd,
+                "fastlio_reset_service": "/pointlio_odom/reset_localization",
             },
-        ],
-        remappings=[
-            ("/cloud", raw_cloud_topic),
-            ("/imu", imu_topic),
-            ("/twist", twist_topic),
-            ("/pcl_pose", "/localization/pose_with_covariance"),
-        ],
-        condition=IfCondition(enable_lidar_localizer),
-    )
-
-    activate_localization = RegisterEventHandler(
-        OnStateTransition(
-            target_lifecycle_node=lidar_localization,
-            start_state="configuring",
-            goal_state="inactive",
-            entities=[
-                EmitEvent(
-                    event=ChangeState(
-                        lifecycle_node_matcher=matches_action(lidar_localization),
-                        transition_id=Transition.TRANSITION_ACTIVATE,
-                    )
-                )
-            ],
-        ),
-        condition=IfCondition(enable_lidar_localizer),
-    )
-
-    configure_localization = TimerAction(
-        period=2.0,
-        actions=[
-            EmitEvent(
-                event=ChangeState(
-                    lifecycle_node_matcher=matches_action(lidar_localization),
-                    transition_id=Transition.TRANSITION_CONFIGURE,
-                )
-            )
         ],
         condition=IfCondition(enable_lidar_localizer),
     )
@@ -195,7 +188,7 @@ def generate_launch_description():
         name="pointlio_pointcloud_to_laserscan",
         output="screen",
         remappings=[
-            ("cloud_in", raw_cloud_topic),
+            ("cloud_in", scan_cloud_topic),
             ("scan", scan_topic),
         ],
         parameters=[
@@ -239,21 +232,26 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("raw_cloud_topic", default_value="/livox/lidar"),
             DeclareLaunchArgument("imu_topic", default_value="/livox/imu"),
-            DeclareLaunchArgument("twist_topic", default_value="/cmd_vel"),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
+            DeclareLaunchArgument("localization_cloud_topic", default_value="/cloud_registered"),
+            DeclareLaunchArgument("scan_cloud_topic", default_value="/cloud_registered_body"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom"),
             DeclareLaunchArgument("enable_lidar_localizer", default_value="true"),
             DeclareLaunchArgument("use_imu_as_input", default_value="false"),
+            DeclareLaunchArgument("time_lag_imu_to_lidar", default_value="0.0"),
             DeclareLaunchArgument("rviz", default_value="false"),
+            SetEnvironmentVariable(
+                "LD_LIBRARY_PATH",
+                [open3d_lib_path, ":", EnvironmentVariable("LD_LIBRARY_PATH", default_value="")],
+            ),
             livox_driver,
             base_to_livox,
             base_to_imu,
             base_to_motion,
+            identity_map_to_odom_nav,
             point_lio_odom,
             odom_bridge,
-            lidar_localization,
-            activate_localization,
-            configure_localization,
+            open3d_loc,
             pointcloud_to_scan,
             rviz_node,
         ]

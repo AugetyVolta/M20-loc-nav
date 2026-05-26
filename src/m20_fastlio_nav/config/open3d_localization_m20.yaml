@@ -6,12 +6,17 @@ global_localization_node:
     # with 2D Pose Estimate after the node starts.
     initialpose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-    pcd_queue_maxsize: 8
+    # Prefer stable wall alignment over aggressive correction. A larger queue
+    # makes the scan input less noisy; it may pull back a little slower after
+    # turns, but avoids visible LaserScan jitter.
+    pcd_queue_maxsize: 6
     voxelsize_coarse: 0.04
     voxelsize_fine: 0.25
     threshold_fitness_init: 0.45
     threshold_fitness: 0.45
-    loc_frequence: 2.0
+    # Seconds between Open3D corrections. Too frequent correction makes
+    # map->odom yaw updates visible as wall jitter, so keep this conservative.
+    loc_frequence: 1.5
     save_scan: false
     hidden_removal: false
     maxpoints_source: 80000

@@ -88,6 +88,10 @@ def shortest_angle_delta(now: float, prev: float) -> float:
     return math.atan2(math.sin(now - prev), math.cos(now - prev))
 
 
+def clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
 def compose_transform(
     p_parent_child1: Vector3,
     q_parent_child1: Quaternion,
@@ -137,6 +141,18 @@ class FastLioOdomBridge(Node):
         self.declare_parameter("publish_tf", True)
         self.declare_parameter("reset_on_wall_time_gap", True)
         self.declare_parameter("bag_switch_wall_gap_sec", 1.5)
+        self.declare_parameter("smooth_map_to_odom_tf", False)
+        self.declare_parameter("map_to_odom_smoothing_alpha", 0.2)
+        self.declare_parameter("map_to_odom_max_translation_step", 0.05)
+        self.declare_parameter("map_to_odom_max_yaw_step_deg", 0.5)
+        self.declare_parameter("map_to_odom_snap_translation_threshold", 1.0)
+        self.declare_parameter("map_to_odom_snap_yaw_threshold_deg", 12.0)
+        self.declare_parameter("smooth_nav_pose", False)
+        self.declare_parameter("nav_pose_smoothing_alpha", 0.4)
+        self.declare_parameter("nav_pose_max_translation_step", 0.12)
+        self.declare_parameter("nav_pose_max_yaw_step_deg", 4.0)
+        self.declare_parameter("nav_pose_snap_translation_threshold", 0.7)
+        self.declare_parameter("nav_pose_snap_yaw_threshold_deg", 18.0)
         self.declare_parameter(
             "base_to_body_translation",
             [0.32713234, 0.01413551, 0.31238696],
@@ -157,6 +173,46 @@ class FastLioOdomBridge(Node):
         self.publish_tf = bool(self.get_parameter("publish_tf").value)
         self.reset_on_wall_time_gap = bool(self.get_parameter("reset_on_wall_time_gap").value)
         self.bag_switch_wall_gap_sec = float(self.get_parameter("bag_switch_wall_gap_sec").value)
+        self.smooth_map_to_odom_tf = bool(self.get_parameter("smooth_map_to_odom_tf").value)
+        self.map_to_odom_smoothing_alpha = clamp(
+            float(self.get_parameter("map_to_odom_smoothing_alpha").value),
+            0.0,
+            1.0,
+        )
+        self.map_to_odom_max_translation_step = max(
+            0.0,
+            float(self.get_parameter("map_to_odom_max_translation_step").value),
+        )
+        self.map_to_odom_max_yaw_step = math.radians(
+            max(0.0, float(self.get_parameter("map_to_odom_max_yaw_step_deg").value))
+        )
+        self.map_to_odom_snap_translation_threshold = max(
+            0.0,
+            float(self.get_parameter("map_to_odom_snap_translation_threshold").value),
+        )
+        self.map_to_odom_snap_yaw_threshold = math.radians(
+            max(0.0, float(self.get_parameter("map_to_odom_snap_yaw_threshold_deg").value))
+        )
+        self.smooth_nav_pose = bool(self.get_parameter("smooth_nav_pose").value)
+        self.nav_pose_smoothing_alpha = clamp(
+            float(self.get_parameter("nav_pose_smoothing_alpha").value),
+            0.0,
+            1.0,
+        )
+        self.nav_pose_max_translation_step = max(
+            0.0,
+            float(self.get_parameter("nav_pose_max_translation_step").value),
+        )
+        self.nav_pose_max_yaw_step = math.radians(
+            max(0.0, float(self.get_parameter("nav_pose_max_yaw_step_deg").value))
+        )
+        self.nav_pose_snap_translation_threshold = max(
+            0.0,
+            float(self.get_parameter("nav_pose_snap_translation_threshold").value),
+        )
+        self.nav_pose_snap_yaw_threshold = math.radians(
+            max(0.0, float(self.get_parameter("nav_pose_snap_yaw_threshold_deg").value))
+        )
 
         self.t_base_body = vector_param(
             self.get_parameter("base_to_body_translation").value,
@@ -188,6 +244,10 @@ class FastLioOdomBridge(Node):
         self.last_clock_stamp_ns = None
         self.last_odom_wall_time = None
         self.last_clock_wall_time = None
+        self.smoothed_map_odom_pos = None
+        self.smoothed_map_odom_yaw = None
+        self.smoothed_nav_pos = None
+        self.smoothed_nav_yaw = None
         self.invalid_odom_count = 0
         self.invalid_tf_count = 0
 
@@ -210,6 +270,10 @@ class FastLioOdomBridge(Node):
         self.prev_stamp = None
         self.prev_pos = None
         self.prev_yaw = None
+        self.smoothed_map_odom_pos = None
+        self.smoothed_map_odom_yaw = None
+        self.smoothed_nav_pos = None
+        self.smoothed_nav_yaw = None
         self.reset_tf_buffer()
         self.get_logger().warn(f"Detected time discontinuity ({reason}); reset bridge TF buffer/state")
 
@@ -261,6 +325,121 @@ class FastLioOdomBridge(Node):
             return None
         orientation = normalize_quat(orientation_raw)
         return position, orientation, transform_map_odom.header.stamp
+
+    def smooth_planar_map_to_odom(
+        self,
+        position: Vector3,
+        orientation: Quaternion,
+    ) -> Tuple[Vector3, Quaternion]:
+        if not self.smooth_map_to_odom_tf:
+            return position, orientation
+
+        raw_yaw = yaw_from_quat(orientation)
+        if self.smoothed_map_odom_pos is None or self.smoothed_map_odom_yaw is None:
+            self.smoothed_map_odom_pos = position
+            self.smoothed_map_odom_yaw = raw_yaw
+            return position, orientation
+
+        prev_pos = self.smoothed_map_odom_pos
+        prev_yaw = self.smoothed_map_odom_yaw
+        dx = position[0] - prev_pos[0]
+        dy = position[1] - prev_pos[1]
+        dz = position[2] - prev_pos[2]
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        dyaw = shortest_angle_delta(raw_yaw, prev_yaw)
+
+        if (
+            self.map_to_odom_snap_translation_threshold > 0.0
+            and dist > self.map_to_odom_snap_translation_threshold
+        ) or (
+            self.map_to_odom_snap_yaw_threshold > 0.0
+            and abs(dyaw) > self.map_to_odom_snap_yaw_threshold
+        ):
+            self.smoothed_map_odom_pos = position
+            self.smoothed_map_odom_yaw = raw_yaw
+            return position, orientation
+
+        alpha = self.map_to_odom_smoothing_alpha
+        step = (dx * alpha, dy * alpha, dz * alpha)
+        step_norm = math.sqrt(step[0] * step[0] + step[1] * step[1] + step[2] * step[2])
+        if (
+            self.map_to_odom_max_translation_step > 0.0
+            and step_norm > self.map_to_odom_max_translation_step
+        ):
+            scale = self.map_to_odom_max_translation_step / step_norm
+            step = (step[0] * scale, step[1] * scale, step[2] * scale)
+
+        yaw_step = dyaw * alpha
+        if self.map_to_odom_max_yaw_step > 0.0:
+            yaw_step = clamp(
+                yaw_step,
+                -self.map_to_odom_max_yaw_step,
+                self.map_to_odom_max_yaw_step,
+            )
+
+        smoothed_pos = (
+            prev_pos[0] + step[0],
+            prev_pos[1] + step[1],
+            prev_pos[2] + step[2],
+        )
+        smoothed_yaw = prev_yaw + yaw_step
+        self.smoothed_map_odom_pos = smoothed_pos
+        self.smoothed_map_odom_yaw = smoothed_yaw
+        return smoothed_pos, quat_from_yaw(smoothed_yaw)
+
+    def smooth_planar_nav_pose(
+        self,
+        position: Vector3,
+        orientation: Quaternion,
+    ) -> Tuple[Vector3, Quaternion]:
+        if not self.smooth_nav_pose:
+            return position, orientation
+
+        raw_yaw = yaw_from_quat(orientation)
+        if self.smoothed_nav_pos is None or self.smoothed_nav_yaw is None:
+            self.smoothed_nav_pos = position
+            self.smoothed_nav_yaw = raw_yaw
+            return position, orientation
+
+        prev_pos = self.smoothed_nav_pos
+        prev_yaw = self.smoothed_nav_yaw
+        dx = position[0] - prev_pos[0]
+        dy = position[1] - prev_pos[1]
+        dz = position[2] - prev_pos[2]
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        dyaw = shortest_angle_delta(raw_yaw, prev_yaw)
+
+        if (
+            self.nav_pose_snap_translation_threshold > 0.0
+            and dist > self.nav_pose_snap_translation_threshold
+        ) or (
+            self.nav_pose_snap_yaw_threshold > 0.0
+            and abs(dyaw) > self.nav_pose_snap_yaw_threshold
+        ):
+            self.smoothed_nav_pos = position
+            self.smoothed_nav_yaw = raw_yaw
+            return position, orientation
+
+        alpha = self.nav_pose_smoothing_alpha
+        step = (dx * alpha, dy * alpha, dz * alpha)
+        step_norm = math.sqrt(step[0] * step[0] + step[1] * step[1] + step[2] * step[2])
+        if self.nav_pose_max_translation_step > 0.0 and step_norm > self.nav_pose_max_translation_step:
+            scale = self.nav_pose_max_translation_step / step_norm
+            step = (step[0] * scale, step[1] * scale, step[2] * scale)
+
+        yaw_step = dyaw * alpha
+        if self.nav_pose_max_yaw_step > 0.0:
+            yaw_step = clamp(yaw_step, -self.nav_pose_max_yaw_step, self.nav_pose_max_yaw_step)
+
+        smoothed_pos = (
+            prev_pos[0] + step[0],
+            prev_pos[1] + step[1],
+            prev_pos[2] + step[2],
+        )
+        smoothed_yaw = prev_yaw + yaw_step
+        self.smoothed_nav_pos = smoothed_pos
+        self.smoothed_nav_yaw = smoothed_yaw
+        return smoothed_pos, quat_from_yaw(smoothed_yaw)
 
     def odom_callback(self, msg: Odometry) -> None:
         if self.wall_gap_detected("last_odom_wall_time", f"{self.source_topic} stream gap"):
@@ -320,6 +499,13 @@ class FastLioOdomBridge(Node):
                 q_odom_base,
             )
             p_map_base_nav, q_map_base_nav = planarize_pose(p_map_base, q_map_base)
+            p_map_odom_tf, q_map_odom_tf = self.smooth_planar_map_to_odom(
+                p_map_odom_nav,
+                q_map_odom_nav,
+            )
+            # Keep /odom as the raw local odom view. Smoothing only applies to
+            # map->odom_nav so Open3D corrections do not get injected directly
+            # into the LaserScan/body projection every cycle.
             p_odom_nav_map, q_odom_nav_map = invert_transform(p_map_odom_nav, q_map_odom_nav)
             p_odom_nav, q_odom_nav = compose_transform(
                 p_odom_nav_map,
@@ -327,8 +513,11 @@ class FastLioOdomBridge(Node):
                 p_map_base_nav,
                 q_map_base_nav,
             )
-            nav_odom_tf = (tf_stamp, p_map_odom_nav, q_map_odom_nav)
+            nav_odom_tf = (tf_stamp, p_map_odom_tf, q_map_odom_tf)
 
+        p_odom_nav_raw = p_odom_nav
+        q_odom_nav_raw = q_odom_nav
+        p_odom_nav, q_odom_nav = self.smooth_planar_nav_pose(p_odom_nav_raw, q_odom_nav_raw)
         nav_yaw = yaw_from_quat(q_odom_nav)
 
         out = Odometry()
