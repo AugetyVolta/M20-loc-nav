@@ -9,7 +9,7 @@ from launch.actions import (
 from launch.conditions import IfCondition
 from launch.events import matches_action
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import LifecycleNode, Node
 from launch_ros.event_handlers import OnStateTransition
 from launch_ros.events.lifecycle import ChangeState
@@ -34,9 +34,6 @@ def generate_launch_description():
     map_pcd = LaunchConfiguration("map_pcd")
     raw_cloud_topic = LaunchConfiguration("raw_cloud_topic")
     imu_topic = LaunchConfiguration("imu_topic")
-    normalized_cloud_topic = LaunchConfiguration("normalized_cloud_topic")
-    normalized_imu_topic = LaunchConfiguration("normalized_imu_topic")
-    normalize_sensor_time = LaunchConfiguration("normalize_sensor_time")
     twist_topic = LaunchConfiguration("twist_topic")
     scan_topic = LaunchConfiguration("scan_topic")
     output_odom_topic = LaunchConfiguration("output_odom_topic")
@@ -49,31 +46,6 @@ def generate_launch_description():
     )
     localization_config = PathJoinSubstitution(
         [FindPackageShare("m20_fastlio_nav"), "config", "lidar_localization_m20.yaml"]
-    )
-    normalized_enabled = PythonExpression(
-        ["'", normalize_sensor_time, "'.lower() in ['1', 'true', 'yes', 'on']"]
-    )
-    effective_cloud_topic = PythonExpression(
-        [
-            "'",
-            normalized_cloud_topic,
-            "' if '",
-            normalize_sensor_time,
-            "'.lower() in ['1', 'true', 'yes', 'on'] else '",
-            raw_cloud_topic,
-            "'",
-        ]
-    )
-    effective_imu_topic = PythonExpression(
-        [
-            "'",
-            normalized_imu_topic,
-            "' if '",
-            normalize_sensor_time,
-            "'.lower() in ['1', 'true', 'yes', 'on'] else '",
-            imu_topic,
-            "'",
-        ]
     )
 
     livox_driver = IncludeLaunchDescription(
@@ -104,23 +76,6 @@ def generate_launch_description():
         arguments=["0", "0", "0", "0", "0", "0", "1", "base_link", "motion_link"],
     )
 
-    stamp_republisher = Node(
-        package="m20_fastlio_nav",
-        executable="stamp_republisher",
-        name="pointlio_stamp_republisher",
-        output="screen",
-        parameters=[
-            {
-                "use_sim_time": use_sim_time,
-                "cloud_in_topic": raw_cloud_topic,
-                "cloud_out_topic": normalized_cloud_topic,
-                "imu_in_topic": imu_topic,
-                "imu_out_topic": normalized_imu_topic,
-            }
-        ],
-        condition=IfCondition(normalized_enabled),
-    )
-
     point_lio_odom = Node(
         package="point_lio",
         executable="pointlio_mapping",
@@ -130,8 +85,8 @@ def generate_launch_description():
             point_lio_config,
             {
                 "use_sim_time": use_sim_time,
-                "common.lid_topic": effective_cloud_topic,
-                "common.imu_topic": effective_imu_topic,
+                "common.lid_topic": raw_cloud_topic,
+                "common.imu_topic": imu_topic,
                 "use_imu_as_input": use_imu_as_input,
                 "prop_at_freq_of_imu": True,
                 "check_satu": True,
@@ -196,8 +151,8 @@ def generate_launch_description():
             },
         ],
         remappings=[
-            ("/cloud", effective_cloud_topic),
-            ("/imu", effective_imu_topic),
+            ("/cloud", raw_cloud_topic),
+            ("/imu", imu_topic),
             ("/twist", twist_topic),
             ("/pcl_pose", "/localization/pose_with_covariance"),
         ],
@@ -240,7 +195,7 @@ def generate_launch_description():
         name="pointlio_pointcloud_to_laserscan",
         output="screen",
         remappings=[
-            ("cloud_in", effective_cloud_topic),
+            ("cloud_in", raw_cloud_topic),
             ("scan", scan_topic),
         ],
         parameters=[
@@ -284,16 +239,6 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("raw_cloud_topic", default_value="/livox/lidar"),
             DeclareLaunchArgument("imu_topic", default_value="/livox/imu"),
-            DeclareLaunchArgument("normalized_cloud_topic", default_value="/livox/lidar_stamped"),
-            DeclareLaunchArgument("normalized_imu_topic", default_value="/livox/imu_stamped"),
-            DeclareLaunchArgument(
-                "normalize_sensor_time",
-                default_value="true",
-                description=(
-                    "Shift live Livox hardware stamps onto ROS wall time. "
-                    "Set false for rosbag replay with use_sim_time:=true and ros2 bag play --clock."
-                ),
-            ),
             DeclareLaunchArgument("twist_topic", default_value="/cmd_vel"),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom"),
@@ -304,7 +249,6 @@ def generate_launch_description():
             base_to_livox,
             base_to_imu,
             base_to_motion,
-            stamp_republisher,
             point_lio_odom,
             odom_bridge,
             lidar_localization,

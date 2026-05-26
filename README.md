@@ -561,14 +561,9 @@ ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py \
   rviz:=true
 ```
 
-这条命令是**实车模式**：
-
-- `use_sim_time:=false`
-- `normalize_sensor_time:=true`
-- launch 会启动 `stamp_republisher`
-- Point-LIO、NDT、`pointcloud_to_laserscan` 会订阅 `/livox/lidar_stamped` 和 `/livox/imu_stamped`
-
-如果你是播放 rosbag，不要用上面这条实车命令，见后面的“rosbag 调试”章节。
+这条命令是实车模式，和旧 Fast-LIO 链路保持一致：不改写 `/livox/lidar`、`/livox/imu` 的 header stamp。
+如果你是播放 rosbag，见后面的“rosbag 调试”章节，核心区别只是加 `use_sim_time:=true` 并用
+`ros2 bag play --clock`。
 
 这个 launch 会启动：
 
@@ -831,12 +826,6 @@ rosbag 重播时所有定位/导航/RViz 节点都要 `use_sim_time:=true`，并
 ros2 bag play /path/to/bag --clock
 ```
 
-同时要关闭实车时间戳归一：
-
-```bash
-normalize_sensor_time:=false
-```
-
 ### 7. RViz / costmap 报 `timestamp ... earlier than all the data in the transform cache`
 
 如果看到类似：
@@ -853,40 +842,23 @@ Message Filter dropping message: frame 'base_footprint' ... earlier than all the
 
 两者差了几天，所以 TF cache 里不可能找到对应时间的变换。
 
-本分支的 `m20_point_lio_localization.launch.py` 默认会启动：
+当前分支已经不再改写传感器时间戳，策略与旧 Fast-LIO 定位保持一致。出现这类 warning 时，先检查是否混用了实车和 bag，或者某些节点没有统一 `use_sim_time`。
 
-```text
-m20_fastlio_nav/stamp_republisher
-```
-
-它会把：
-
-```text
-/livox/lidar -> /livox/lidar_stamped
-/livox/imu   -> /livox/imu_stamped
-```
-
-并把 header stamp 改成当前 ROS 时间。Point-LIO、NDT 和 `pointcloud_to_laserscan` 都订阅 `_stamped`
-话题，不再直接吃硬件时间戳。
-
-检查：
+检查时间戳和话题：
 
 ```bash
-ros2 topic hz /livox/lidar_stamped
-ros2 topic hz /livox/imu_stamped
-ros2 topic echo /livox/lidar_stamped --once | grep -A3 stamp
+ros2 topic hz /livox/lidar
+ros2 topic hz /livox/imu
+ros2 topic echo /livox/lidar --once | grep -A3 stamp
 ros2 topic echo /odom_corrected --once | grep -A3 stamp
 ros2 topic echo /scan --once | grep -A3 stamp
 ```
-
-这些时间戳应该都接近当前系统时间。如果 `_stamped` 话题没有数据，先检查原始 `/livox/lidar` 和 `/livox/imu`。
 
 rosbag 重播时不要同时跑实车 Livox 驱动；如果要用 bag 的时间线，启动 launch 时传：
 
 ```bash
 ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py \
-  use_sim_time:=true \
-  normalize_sensor_time:=false
+  use_sim_time:=true
 ros2 bag play /path/to/bag --clock
 ```
 
@@ -979,7 +951,6 @@ ros2 bag record -o /mnt/nvme/bags/m20_point_lio_run \
 ```bash
 ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py \
   use_sim_time:=true \
-  normalize_sensor_time:=false \
   map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
   map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml
 ```
@@ -994,16 +965,12 @@ ros2 bag play /path/to/bag --clock
 
 ### 实车模式和 bag 模式的区别
 
-| 场景 | `use_sim_time` | `normalize_sensor_time` | `/livox/lidar` 来源 | 说明 |
-|---|---:|---:|---|---|
-| 实车 MID360 | `false` | `true` | Livox driver | 把硬件时间整体平移到 ROS 当前时间线 |
-| rosbag 回放 | `true` | `false` | rosbag2_player | 使用 bag 自带时间线和 `/clock` |
+| 场景 | `use_sim_time` | `/livox/lidar` 来源 | 说明 |
+|---|---:|---|---|
+| 实车 MID360 | `false` | Livox driver | 使用实车实时话题，不改写 stamp |
+| rosbag 回放 | `true` | rosbag2_player | 使用 bag 自带时间线和 `/clock`，不改写 stamp |
 
-如果 bag 模式误开 `normalize_sensor_time:=true`，bag 的消息时间会被改到墙上时间，但 Nav2/RViz 又跟随
-`/clock`，两条时间线会再次混起来。表现就是播放包没反应、`/scan` 没有、TF message filter 丢消息。
-
-如果实车模式误关 `normalize_sensor_time:=false`，Livox 硬件时间可能和 TF 当前时间差几天，也会出现
-`timestamp earlier than all the data in the transform cache`。
+原则和旧 Fast-LIO 定位一样：定位链路不改传感器时间戳；bag 调试靠 `use_sim_time:=true` 和 `--clock`；实车调试靠系统时间。
 
 ## 推荐启动终端布局
 
