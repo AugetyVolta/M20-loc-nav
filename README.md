@@ -561,6 +561,15 @@ ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py \
   rviz:=true
 ```
 
+这条命令是**实车模式**：
+
+- `use_sim_time:=false`
+- `normalize_sensor_time:=true`
+- launch 会启动 `stamp_republisher`
+- Point-LIO、NDT、`pointcloud_to_laserscan` 会订阅 `/livox/lidar_stamped` 和 `/livox/imu_stamped`
+
+如果你是播放 rosbag，不要用上面这条实车命令，见后面的“rosbag 调试”章节。
+
 这个 launch 会启动：
 
 1. `m20_point_lio_localization.launch.py`
@@ -822,6 +831,12 @@ rosbag 重播时所有定位/导航/RViz 节点都要 `use_sim_time:=true`，并
 ros2 bag play /path/to/bag --clock
 ```
 
+同时要关闭实车时间戳归一：
+
+```bash
+normalize_sensor_time:=false
+```
+
 ### 7. RViz / costmap 报 `timestamp ... earlier than all the data in the transform cache`
 
 如果看到类似：
@@ -869,7 +884,9 @@ ros2 topic echo /scan --once | grep -A3 stamp
 rosbag 重播时不要同时跑实车 Livox 驱动；如果要用 bag 的时间线，启动 launch 时传：
 
 ```bash
-ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py use_sim_time:=true
+ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py \
+  use_sim_time:=true \
+  normalize_sensor_time:=false
 ros2 bag play /path/to/bag --clock
 ```
 
@@ -935,6 +952,20 @@ git commit -m "Stop tracking generated maps"
 
 ## rosbag 调试
 
+### 回放前先停实车 Livox
+
+不要让实车驱动和 bag 同时发布 `/livox/lidar`、`/livox/imu`。否则同一个话题有两个时间线来源，Point-LIO
+会先按其中一个初始化，另一个就可能被当成旧数据丢掉。
+
+检查发布者：
+
+```bash
+ros2 topic info /livox/lidar -v
+ros2 topic info /livox/imu -v
+```
+
+回放 bag 时，发布者应该只来自 `rosbag2_player`，不要同时有 `livox_lidar_publisher`。
+
 录必要话题到 NVMe：
 
 ```bash
@@ -948,6 +979,7 @@ ros2 bag record -o /mnt/nvme/bags/m20_point_lio_run \
 ```bash
 ros2 launch m20_fastlio_nav m20_point_lio_nav.launch.py \
   use_sim_time:=true \
+  normalize_sensor_time:=false \
   map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
   map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml
 ```
@@ -959,6 +991,19 @@ ros2 bag play /path/to/bag --clock
 ```
 
 如果重复播放或切 bag，建议完整重启 launch，避免 TF buffer 残留上一轮时间。
+
+### 实车模式和 bag 模式的区别
+
+| 场景 | `use_sim_time` | `normalize_sensor_time` | `/livox/lidar` 来源 | 说明 |
+|---|---:|---:|---|---|
+| 实车 MID360 | `false` | `true` | Livox driver | 把硬件时间整体平移到 ROS 当前时间线 |
+| rosbag 回放 | `true` | `false` | rosbag2_player | 使用 bag 自带时间线和 `/clock` |
+
+如果 bag 模式误开 `normalize_sensor_time:=true`，bag 的消息时间会被改到墙上时间，但 Nav2/RViz 又跟随
+`/clock`，两条时间线会再次混起来。表现就是播放包没反应、`/scan` 没有、TF message filter 丢消息。
+
+如果实车模式误关 `normalize_sensor_time:=false`，Livox 硬件时间可能和 TF 当前时间差几天，也会出现
+`timestamp earlier than all the data in the transform cache`。
 
 ## 推荐启动终端布局
 

@@ -14,6 +14,11 @@ def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     autostart = LaunchConfiguration("autostart")
     rviz = LaunchConfiguration("rviz")
+    raw_cloud_topic = LaunchConfiguration("raw_cloud_topic")
+    imu_topic = LaunchConfiguration("imu_topic")
+    normalized_cloud_topic = LaunchConfiguration("normalized_cloud_topic")
+    normalized_imu_topic = LaunchConfiguration("normalized_imu_topic")
+    normalize_sensor_time = LaunchConfiguration("normalize_sensor_time")
 
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -25,6 +30,11 @@ def generate_launch_description():
             "use_sim_time": use_sim_time,
             "start_livox": start_livox,
             "map_pcd": map_pcd,
+            "raw_cloud_topic": raw_cloud_topic,
+            "imu_topic": imu_topic,
+            "normalized_cloud_topic": normalized_cloud_topic,
+            "normalized_imu_topic": normalized_imu_topic,
+            "normalize_sensor_time": normalize_sensor_time,
             "scan_topic": "/scan",
             "output_odom_topic": "/odom",
             "rviz": rviz,
@@ -81,6 +91,18 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("rviz", default_value="false"),
+            DeclareLaunchArgument("raw_cloud_topic", default_value="/livox/lidar"),
+            DeclareLaunchArgument("imu_topic", default_value="/livox/imu"),
+            DeclareLaunchArgument("normalized_cloud_topic", default_value="/livox/lidar_stamped"),
+            DeclareLaunchArgument("normalized_imu_topic", default_value="/livox/imu_stamped"),
+            DeclareLaunchArgument(
+                "normalize_sensor_time",
+                default_value="true",
+                description=(
+                    "Shift live Livox hardware stamps onto ROS wall time. "
+                    "Set false for rosbag replay with use_sim_time:=true and ros2 bag play --clock."
+                ),
+            ),
             localization,
             TimerAction(period=3.0, actions=[map_server, map_lifecycle]),
             TimerAction(period=8.0, actions=[nav2_navigation]),
