@@ -6,21 +6,21 @@ global_localization_node:
     # with 2D Pose Estimate after the node starts.
     initialpose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-    pcd_queue_maxsize: 8
-    voxelsize_coarse: 0.04
-    voxelsize_fine: 0.25
-    threshold_fitness_init: 0.45
-    threshold_fitness: 0.45
-    loc_frequence: 2.0
+    pcd_queue_maxsize: 10
+    voxelsize_coarse: 0.15
+    voxelsize_fine: 0.10
+    threshold_fitness_init: 0.50
+    threshold_fitness: 0.50
+    loc_frequence: 2.5
     save_scan: false
     hidden_removal: false
     maxpoints_source: 80000
-    maxpoints_target: 300000
+    maxpoints_target: 400000
     filter_odom2map: false
     kalman_processVar2: 0.001
     kalman_estimatedMeasVar2: 0.02
-    confidence_loc_th: 0.65
-    dis_updatemap: 3.0
+    confidence_loc_th: 0.70
+    dis_updatemap: 3.5
     reset_fastlio_on_initialpose: true
     fastlio_reset_service: "/fastlio_localization_odom/reset_localization"
     reset_on_sensor_wall_gap: true

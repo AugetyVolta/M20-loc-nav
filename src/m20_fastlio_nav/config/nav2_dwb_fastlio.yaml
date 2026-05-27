@@ -93,14 +93,14 @@ controller_server:
 
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.60
+      max_vel_x: 0.80
       max_vel_y: 0.0
       max_vel_theta: 0.60
 
       # 保留底盘死区：非零线速度不低于 0.20，非零角速度不低于 0.40。
       # 平滑性主要交给高采样密度和 velocity_smoother 处理。
       min_speed_xy: 0.20
-      max_speed_xy: 0.60
+      max_speed_xy: 0.80
       min_speed_theta: 0.40
 
       acc_lim_x: 1.20
@@ -309,7 +309,7 @@ velocity_smoother:
     scale_velocities: False
     feedback: "OPEN_LOOP"
 
-    max_velocity: [0.6, 0.0, 0.6]
+    max_velocity: [0.8, 0.0, 0.6]
     min_velocity: [0.0, 0.0, -0.6]
 
     max_accel: [0.9, 0.0, 3.0]

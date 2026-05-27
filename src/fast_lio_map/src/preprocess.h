@@ -124,6 +124,16 @@ typedef struct {
   uint8_t tag;        /**< Livox point tag   */
   uint8_t line;       /**< Laser line id     */
 } LivoxPointXyzrtl;
+
+typedef struct {
+  float x;            /**< X axis, Unit:m */
+  float y;            /**< Y axis, Unit:m */
+  float z;            /**< Z axis, Unit:m */
+  float reflectivity; /**< Reflectivity   */
+  uint8_t tag;        /**< Livox point tag   */
+  uint8_t line;       /**< Laser line id     */
+  double timestamp;   /**< Point offset time from Livox PointCloud2 */
+} LivoxPointXyzrtlt;
 }
 POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzrtl,
     (float, x, x)
@@ -132,6 +142,16 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzrtl,
     (float, reflectivity, reflectivity)
     (uint8_t, tag, tag)
     (uint8_t, line, line)
+)
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzrtlt,
+    (float, x, x)
+    (float, y, y)
+    (float, z, z)
+    (float, reflectivity, intensity)
+    (uint8_t, tag, tag)
+    (uint8_t, line, line)
+    (double, timestamp, timestamp)
 )
 
 // RoboSense M1/Airy point type

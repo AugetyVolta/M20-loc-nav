@@ -961,12 +961,13 @@ void GloabalLocalization::LocalizationInitialize()
             open3d::utility::LogInfo("after sample, target size: {}, has normal: {}", target->points_.size(), target->HasNormals() ? "true" : "false");
 
             source = pcd_scan->Crop(*OBB_scan);
-            open3d::utility::LogInfo("source size: {}, has normal: {}", source->points_.size(), source->HasNormals() ? "true" : "false");
+            open3d::utility::LogInfo("before voxel sample, source size: {}, has normal: {}", source->points_.size(), source->HasNormals() ? "true" : "false");
+            source = source->VoxelDownSample(voxelsize_fine_);
             if (source->points_.size() > static_cast<size_t>(maxpoints_source_))
             {
                 source = source->RandomDownSample(double(maxpoints_source_) / source->points_.size());
             }
-            open3d::utility::LogInfo("source size: {}, has normal: {}", source->points_.size(), source->HasNormals() ? "true" : "false");
+            open3d::utility::LogInfo("after voxel/random sample, source size: {}, has normal: {}", source->points_.size(), source->HasNormals() ? "true" : "false");
 
             // 跳过空点云，等待累积足够数据
             if (target->IsEmpty() || source->IsEmpty())

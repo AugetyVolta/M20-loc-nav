@@ -11,7 +11,7 @@ RL local path + Nav2 DWB adapter。
 
 | 分支 | 定位前端 | 全局点云定位 | 状态 |
 |---|---|---|---|
-| `main` | `fast_lio` | `open3d_loc` | 回退到上一版定位链路，保留建图、Nav2 和 move 改动；定位效果仍不可认为可用 |
+| `main` | `fast_lio` | `open3d_loc` | 当前可用主线：MID360 PointCloud2 时间戳已修正，按 Jetson/室内场景收紧 Fast-LIO 和 Open3D 参数 |
 | `point-lio-lidar-localization` | `point_lio_ros2` | `lidar_localization_ros2` + `ndt_omp_ros2` | 新方案实验分支，第三方源码已经直接放进 `src/` |
 
 本 README 描述的是 `main`。如果要试 Point-LIO + NDT，请切到：
@@ -162,19 +162,42 @@ level_pcd.py                     # PCD 坐标系摆正脚本
 
 ## Fast-LIO 配置要点
 
-当前 `fast_lio` / `fast_lio_map` 代码里的枚举不是上游原版。`fast_lio` 里 `MID360=4`，
-但 `fast_lio_map` 里又插入了 `RSM1=5` / `RSM1_BREAK=6`。本仓库当前两个 M20 配置文件都使用
-`lidar_type: 5`，走的是当前代码里能稳定处理 `/livox/lidar` `PointCloud2` 的路径。不要按网上
-原始 Fast-LIO2 文档直接改回 AVIA(1)。
+当前实现按 `/home/orin/workspace/luckbot/FAST_LIO_LOCALIZATION_HUMANOID` 的思路重新对齐：
+Fast-LIO 定位包和建图包都走 MID360 的 `PointCloud2` 路径，Open3D 只负责低频全局拉回。
+
+注意：当前 `fast_lio` / `fast_lio_map` 代码里的枚举不是上游原版。`MID360=4` 才是 Livox MID360
+的 `PointCloud2` 路径。历史配置里的 `lidar_type: 5` 是错误设置：
+
+- 在 `fast_lio_map` 里，`5` 对应 Robosense RSM1。
+- 在 `fast_lio` 里，`5` 不匹配任何有效 Livox 分支，会退到普通 `PointXYZI` 处理路径。
+- 这会丢掉 MID360 的 `line` / `tag` / `timestamp` 信息，导致运动补偿和前端稳定性变差，还会增加无效计算。
+
+现在源码已经补齐 MID360 `PointCloud2` 字段解析：Livox driver 的 `intensity` 字段会映射到
+Fast-LIO 内部的 `reflectivity`，并读取 `tag` / `line` / `timestamp`。注意本机 rosbag 里的
+`timestamp` 字段是绝对 ns 时间，不是点内 offset；代码会先取一帧点云内的最小 timestamp，再用
+`timestamp - min_timestamp` 转成 Fast-LIO 需要的 scan 内相对时间。这样同时兼容实车驱动和 rosbag
+重播，避免把绝对时间直接当点内 offset 导致 `/Odometry` / `/Odometry_loc` 不输出。
 
 | 参数 | 正确值 | 说明 |
 |---|---:|---|
-| `preprocess.lidar_type` | `5` | 当前 M20 配置实际使用值；不要改成 AVIA(1) |
+| `preprocess.lidar_type` | `4` | MID360 `PointCloud2` 路径 |
+| `preprocess.scan_line` | `4` | MID360 实际 line 数，参考 luckbot 配置；不要再用 `96` |
+| `preprocess.timestamp_unit` | `3` | MID360 每点 timestamp/offset 以 ns 计，代码会转成 scan 内相对 ms |
+| `preprocess.blind` | `0.5` | 近距离盲区过滤 |
+| `point_filter_num` | `3` | 前端降采样，降低 Jetson 压力 |
+| `filter_size_surf` / `filter_size_map` | `0.5` | 与 luckbot Jetson 配置一致 |
+| `mapping.det_range` | 定位 `60` / 建图 `80` | 室内雷达有效距离约 30m，不再使用 `200` |
 | `common.time_sync_en` | `false` | 关闭 IMU-LiDAR 时间同步，MID360 时间戳无对齐 |
 | `common.lid_topic` | `/livox/lidar` | Livox 驱动话题 |
 | `common.imu_topic` | `/livox/imu` | Livox IMU 话题 |
 
-当前 **建图和定位两个配置文件已经改为正确值**，不要再改回旧值。
+发布项也做了边缘设备裁剪：
+
+- 定位配置关闭 `path_en`，避免持续发布无用轨迹。
+- 建图和定位都关闭 `dense_publish_en`，避免额外大点云输出占 CPU/带宽。
+- 保留 `scan_publish_en` 和 `scan_bodyframe_pub_en`，因为 Open3D 和 `pointcloud_to_laserscan` 仍需要实时点云。
+
+当前 **建图和定位两个配置文件已经改为正确值**，不要再改回 `lidar_type: 5` / `scan_line: 96` / `det_range: 200`。
 
 ## 外参
 
@@ -232,8 +255,11 @@ Open3D 是 C++ 链接使用，不是只靠 Python venv。`open3d_loc` 的 CMake 
 cd /mnt/nvme/workspace/fast_lio_ws
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
+export CMAKE_BUILD_PARALLEL_LEVEL=1
+export MAKEFLAGS=-j1
 
 colcon build --symlink-install --executor sequential \
+  --parallel-workers 1 \
   --cmake-args -DCMAKE_BUILD_TYPE=Release \
   -DMPI_SKIP_COMPILER_WRAPPER=TRUE \
   -DMPI_C_LIB_NAMES=mpi \
@@ -362,6 +388,45 @@ ros2 service list | grep map_save
 ros2 service list | grep save_pgo_map
 ```
 
+### 用 rosbag 回放建图
+
+如果用 rosbag 验证建图，建图 launch 必须使用仿真时间，bag 播放必须发布 `/clock`：
+
+Terminal 1：
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws
+source /opt/ros/humble/setup.bash
+source ~/liv_ws/install/setup.bash
+source install/setup.bash
+
+LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
+ros2 launch m20_fastlio_nav m20_fastlio_mapping.launch.py \
+  use_sim_time:=true \
+  rviz:=true
+```
+
+Terminal 2：
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws
+source /opt/ros/humble/setup.bash
+source ~/liv_ws/install/setup.bash
+source install/setup.bash
+
+ros2 bag play ~/workspace/fast_lio_ws/bags/lab1 --clock
+```
+
+判断标准：
+
+```bash
+ros2 topic hz /Odometry
+ros2 topic hz /cloud_registered_body
+ros2 topic hz /cloud_registered
+```
+
+`/Odometry` 有输出才说明 `fast_lio_map` 前端正常吃到了 `/livox/lidar` 和 `/livox/imu`。如果实车能建图但 bag 没反应，优先检查是否漏了 `use_sim_time:=true` 或 `--clock`，以及是否运行的是重编后的 `fast_lio_map`。
+
 保存前端原始 PCD：
 
 ```bash
@@ -486,10 +551,12 @@ LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
   map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml \
-  rviz:=true
+  rviz:=false
 ```
 
-这个 launch 会启动：
+实车导航默认建议 `rviz:=false`。Open3D 初始化、3D 点云显示和远程 RViz 都会增加 Orin 负载；只有部署、看 TF/点云对齐或排查定位时再改成 `rviz:=true`。
+
+这个 launch 会启动:
 
 1. `m20_fastlio_localization.launch.py`
 2. Fast-LIO 定位节点 `fast_lio/fastlio_mapping`
@@ -544,7 +611,8 @@ python src/move/move/priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py
 
 当前推荐使用 `priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py`。它默认不强依赖
 `/localization_3d_confidence`，因此不会因为 Open3D 没有发布置信度而把底盘一直冻结。如果你想启用定位置信度门控，可以通过参数把
-`require_localization_confidence` 设为 `true`。
+`require_localization_confidence` 设为 `true`。注意这里有两个阈值：Open3D 的 `confidence_loc_th=0.70`
+用于判断 3D 配准是否接受；adapter 的 `localization_confidence_threshold=0.65` 是底盘命令门控阈值。
 
 启用置信度门控后，当 Open3D 还没定位成功、正在重初始化，或者置信度低于默认阈值 `0.65` 时，adapter 会：
 
@@ -552,7 +620,7 @@ python src/move/move/priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py
 - 取消已经激活的 `FollowPath` goal
 - 持续向 `/NAV_CMD` 发布零速度，避免定位没锁住时底盘继续执行旧速度
 
-恢复定位后，如果 `/localization_3d_confidence >= 0.65`，adapter 会自动恢复转发 `/cmd_vel` 到 `/NAV_CMD`。如果启用了门控且 1.5 秒内收不到新的 `/localization_3d_confidence`，adapter 也会按定位失效处理并冻结输出。
+恢复定位后，如果 `/localization_3d_confidence >= adapter.localization_confidence_threshold`（默认 `0.65`），adapter 会自动恢复转发 `/cmd_vel` 到 `/NAV_CMD`。如果启用了门控且 1.5 秒内收不到新的 `/localization_3d_confidence`，adapter 也会按定位失效处理并冻结输出。
 
 ## 远程 RViz（笔记本外接显示器）
 
@@ -678,7 +746,9 @@ src/m20_fastlio_nav/config/nav2_dwb_fastlio.yaml
 - 保留底盘死区：
   - `min_speed_xy: 0.20`
   - `min_speed_theta: 0.40`
-- `/odom` 来自 Fast-LIO bridge，`header.frame_id` 是 `odom_nav`。
+- `max_vel_x: 0.80` / `max_speed_xy: 0.80`，当前实测比 `0.60` 更能跟上局部路径频率。
+- `velocity_smoother.max_velocity: [0.8, 0.0, 0.6]`，和 DWB 最大速度保持一致。
+- `/odom` 来自 Fast-LIO bridge，`header.frame_id` 是 `odom_nav`.
 - `/scan` 来自 Fast-LIO body 点云，转换到 `base_footprint` 坐标系（自动水平）。
 - AMCL 段虽然保留在 YAML 中，但 `tf_broadcast: false`，且正常启动路径不会启动 AMCL。
 
@@ -696,13 +766,21 @@ src/m20_fastlio_nav/config/open3d_localization_m20.yaml
 |---|---:|---|
 | `path_map` | `m20_map_leveled.pcd` | 3D PCD 地图（摆正后，与2D地图坐标系一致） |
 | `initialpose` | `[0,0,0,0,0,0]` | 初始位姿，单位 m/deg |
-| `voxelsize_coarse` | `0.04` | 粗地图体素 |
-| `voxelsize_fine` | `0.25` | 精配准体素 |
-| `threshold_fitness` | `0.45` | 定位接受阈值 |
-| `loc_frequence` | `2.0` | Open3D 定位频率 |
-| `confidence_loc_th` | `0.65` | 置信度阈值 |
+| `pcd_queue_maxsize` | `10` | Open3D 等待 Fast-LIO 点云队列长度 |
+| `voxelsize_coarse` | `0.15` | 粗配准体素，参考 luckbot Jetson 配置 |
+| `voxelsize_fine` | `0.10` | 精配准体素，兼顾贴墙稳定性和 CPU |
+| `threshold_fitness_init` | `0.50` | 初始化接受阈值 |
+| `threshold_fitness` | `0.50` | 定位接受阈值 |
+| `loc_frequence` | `2.5` | Open3D 全局拉回频率；不要当成前端里程计频率 |
+| `maxpoints_source` | `80000` | 当前帧最大参与配准点数 |
+| `maxpoints_target` | `400000` | 局部地图最大参与配准点数 |
+| `confidence_loc_th` | `0.70` | 置信度阈值 |
+| `dis_updatemap` | `3.5` | 移动超过该距离后更新局部地图 |
 | `reset_fastlio_on_initialpose` | `true` | RViz `2D Pose Estimate` 后同时请求重置 Fast-LIO |
 | `fastlio_reset_service` | `/fastlio_localization_odom/reset_localization` | Fast-LIO 安全复位服务 |
+
+`open3d_loc` 初始化和重定位会消耗明显 CPU。实车导航时默认 `rviz:=false`，只在部署、看 TF/点云对齐、
+排查定位问题时打开 RViz；远程 RViz 也会通过 DDS 拉点云，仍然会增加 Orin 侧负载。
 
 如果机器人初始位置和 PCD 地图坐标差很多，需要在 RViz 用 `2D Pose Estimate` 给大概初值，或者修改 `initialpose`。
 
@@ -729,7 +807,7 @@ source ~/.bashrc
 
 **原因 A**：`lidar_type` 配成了 AVIA (1)，Fast-LIO 订阅了 `CustomMsg`，但 Livox 驱动发布的是 `PointCloud2`，类型不匹配。
 
-**修复**：确认 `fastlio_localization_mid360.yaml` 中 `preprocess.lidar_type: 5`。
+**修复**：确认 `fastlio_localization_mid360.yaml` 中 `preprocess.lidar_type: 4`，并且 `scan_line: 4`。
 
 **原因 B**：`time_sync_en: true`，MID360 的时间戳无对齐，Fast-LIO 在等同步。
 
@@ -850,7 +928,7 @@ ros2 topic hz /livox/imu
 - Fast-LIO 检测到 `/livox/lidar` 或 IMU 时间戳回退后，会先请求复位，再在处理线程安全点重置内部定位状态、缓存和局部地图，避免在回调里直接清 KD-tree 导致段错误。
 - Open3D 检测到 `/Odometry_loc` 时间戳回退后，会清空当前 scan 队列，把 `/localization_3d_confidence` 置 0，然后等待新的 `/cloud_registered_1` 并重新初始化定位。
 - RViz `2D Pose Estimate` 会先更新目标 `map -> base_link`，再请求 `/fastlio_localization_odom/reset_localization`，让漂掉的 Fast-LIO EKF/局部地图一起复位。
-- adapter 在置信度低于 `0.65` 时会冻结 `/NAV_CMD`，避免定位没定上时继续执行旧速度。
+- 如果启用了 adapter 置信度门控，置信度低于 `localization_confidence_threshold`（默认 `0.65`）时会冻结 `/NAV_CMD`，避免定位没定上时继续执行旧速度。
 
 重启或恢复时，日志里预期能看到：
 
@@ -877,8 +955,8 @@ ros2 service list | grep reset_localization
 判断标准：
 
 - `/livox/lidar`、`/livox/imu` 恢复后，`/Odometry_loc` 和 `/cloud_registered_1` 应该重新连续输出。
-- `/localization_3d_confidence` 低于 `0.65` 时，`/NAV_CMD` 应该保持零速度。
-- `/localization_3d_confidence` 恢复到 `0.65` 以上后，adapter 才会重新允许 Nav2 控制输出。
+- 如果启用了 adapter 置信度门控，`/localization_3d_confidence` 低于 `localization_confidence_threshold` 时，`/NAV_CMD` 应该保持零速度。
+- `/localization_3d_confidence` 恢复到 `localization_confidence_threshold` 以上后，adapter 才会重新允许 Nav2 控制输出。
 - 如果一直看到 `TF_NAN_INPUT` 或 `TF_DENORMALIZED_QUATERNION` 指向 `motion_link`，先确认运行的是重编译后的 `open3d_loc`，并完整重启 Fast-LIO、Open3D、Nav2 和 adapter。
 - 如果 `fastlio_mapping` 仍然 `exit code -11`，优先确认已经完整重启定位 launch。旧进程不会吃到安全点复位逻辑。
 
