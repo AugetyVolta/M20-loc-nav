@@ -23,7 +23,7 @@ global_localization_node:
     dis_updatemap: 3.5
     reset_fastlio_on_initialpose: true
     fastlio_reset_service: "/fastlio_localization_odom/reset_localization"
-    reset_on_sensor_wall_gap: true
+    reset_on_sensor_wall_gap: false
     bag_switch_wall_gap_sec: 1.5
 
     kf_baselink2map:

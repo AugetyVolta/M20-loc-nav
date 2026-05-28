@@ -60,7 +60,7 @@ class PriestMppiAdapterNavCmd(Node):
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
         self.declare_parameter("nav_cmd_topic", "/NAV_CMD")
         self.declare_parameter("cmd_frame_id", 0)
-        self.declare_parameter("nav_cmd_publish_hz", 10.0)
+        self.declare_parameter("nav_cmd_publish_hz", 15.0)
         self.declare_parameter("cmd_timeout", 2.0)
         self.declare_parameter("scale_x", 1.0)
         self.declare_parameter("scale_y", 1.0)
@@ -390,6 +390,16 @@ class PriestMppiAdapterNavCmd(Node):
             lambda f, goal_handle=goal_handle, goal_seq=goal_seq: self._on_result(f, goal_handle, goal_seq)
         )
 
+    @staticmethod
+    def _same_goal_handle(lhs, rhs) -> bool:
+        if lhs is None or rhs is None:
+            return False
+        lhs_goal_id = getattr(lhs, "goal_id", None)
+        rhs_goal_id = getattr(rhs, "goal_id", None)
+        if lhs_goal_id is not None and rhs_goal_id is not None:
+            return lhs_goal_id == rhs_goal_id
+        return lhs is rhs
+
     def _on_result(self, future, goal_handle, goal_seq: int):
         try:
             result_wrap = future.result()
@@ -397,7 +407,7 @@ class PriestMppiAdapterNavCmd(Node):
             self.get_logger().warn(f"FollowPath result failed: {e}")
             return
 
-        is_current_goal = goal_handle == self._active_goal_handle
+        is_current_goal = self._same_goal_handle(goal_handle, self._active_goal_handle)
         if is_current_goal:
             self._active_goal_handle = None
             self._active_goal_seq = -1

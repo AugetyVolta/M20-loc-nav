@@ -67,7 +67,7 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 controller_server:
   ros__parameters:
     use_sim_time: False  # 真机若没有 /clock，请改成 False
-    controller_frequency: 10.0
+    controller_frequency: 15.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.0
     min_theta_velocity_threshold: 0.001
@@ -95,24 +95,25 @@ controller_server:
       min_vel_y: 0.0
       max_vel_x: 0.80
       max_vel_y: 0.0
-      max_vel_theta: 0.60
+      max_vel_theta: 0.65
 
       # 保留底盘死区：非零线速度不低于 0.20，非零角速度不低于 0.40。
-      # 平滑性主要交给高采样密度和 velocity_smoother 处理。
+      # 角速度不能放得过激，否则 DWB 容易在本该直走时选择原地掉头。
+      # 死区主要靠 min_speed_theta 处理，velocity_smoother 不再二次截断。
       min_speed_xy: 0.20
       max_speed_xy: 0.80
       min_speed_theta: 0.40
 
       acc_lim_x: 1.20
       acc_lim_y: 0.0
-      acc_lim_theta: 3.20
+      acc_lim_theta: 4.30
       decel_lim_x: -1.50
       decel_lim_y: 0.0
-      decel_lim_theta: -3.80
+      decel_lim_theta: -4.60
 
       vx_samples: 20
       vy_samples: 1
-      vtheta_samples: 25
+      vtheta_samples: 31
       sim_time: 1.45
       linear_granularity: 0.03
       angular_granularity: 0.025
@@ -165,9 +166,10 @@ local_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 10.0
+          inf_is_valid: True
+          raytrace_max_range: 12.0
           raytrace_min_range: 0.0
-          obstacle_max_range: 10.0
+          obstacle_max_range: 8.0
           obstacle_min_range: 0.0
 
       static_layer:
@@ -203,9 +205,10 @@ global_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 10.0
+          inf_is_valid: True
+          raytrace_max_range: 12.0
           raytrace_min_range: 0.0
-          obstacle_max_range: 10.0
+          obstacle_max_range: 8.0
           obstacle_min_range: 0.0
 
       static_layer:
@@ -262,7 +265,7 @@ behavior_server:
     use_sim_time: false  # 真机若没有 /clock，请改成 False
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
-    cycle_frequency: 10.0
+    cycle_frequency: 15.0
     behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
 
     spin:
@@ -281,10 +284,11 @@ behavior_server:
     transform_tolerance: 0.1
     simulate_ahead_time: 2.0
 
-    # 与你的死区保持一致，但别把恢复动作转得过猛
-    max_rotational_vel: 0.6
-    min_rotational_vel: 0.4
-    rotational_acc_lim: 2.0
+    # 狗的角速度有约 0.4rad/s 死区，但恢复动作不能过激，
+    # 否则会在本该直走时倾向原地旋转。
+    max_rotational_vel: 0.65
+    min_rotational_vel: 0.40
+    rotational_acc_lim: 4.0
 
 robot_state_publisher:
   ros__parameters:
@@ -305,15 +309,15 @@ waypoint_follower:
 velocity_smoother:
   ros__parameters:
     use_sim_time: False  # 真机若没有 /clock，请改成 False
-    smoothing_frequency: 10.0
+    smoothing_frequency: 15.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
 
-    max_velocity: [0.8, 0.0, 0.6]
-    min_velocity: [0.0, 0.0, -0.6]
+    max_velocity: [0.8, 0.0, 0.65]
+    min_velocity: [0.0, 0.0, -0.65]
 
-    max_accel: [0.9, 0.0, 3.0]
-    max_decel: [-1.1, 0.0, -3.5]
+    max_accel: [0.9, 0.0, 4.3]
+    max_decel: [-1.1, 0.0, -4.6]
 
     odom_topic: "/odom"
     odom_duration: 0.1

@@ -14,7 +14,7 @@
       imu_topic: "/livox/imu"
       time_sync_en: false
       time_offset_lidar_to_imu: 0.0
-      reset_on_sensor_wall_gap: true
+      reset_on_sensor_wall_gap: false
       bag_switch_wall_gap_sec: 1.5
 
     preprocess:
