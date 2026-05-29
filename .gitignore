@@ -39,8 +39,9 @@ core.*
 *.egg-info/
 src/**/hook/
 
-# Runtime model checkpoints. Use Git LFS or external storage if needed.
-src/move/ckpts/
+# Stable RL checkpoints are required for deployment on this branch.
+!src/move/ckpts/
+!src/move/ckpts/**
 
 # Large upstream demo/doc assets; not needed for robot deployment.
 src/fast_lio/doc/

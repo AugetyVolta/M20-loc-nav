@@ -1,24 +1,44 @@
 # M20 MID360 Fast-LIO2 建图定位导航系统
 
-这个工作空间用于把 MID360 的 Fast-LIO2 建图/定位结果接入 Nav2，并运行当前拷贝到本工作区的
-RL local path + Nav2 DWB adapter。
+本文档描述的是当前稳定分支 `stable/fastlio-localization`。这个工作空间用于把 MID360 的 Fast-LIO2
+建图/定位结果接入 Nav2，并运行当前拷贝到本工作区的 RL local path + Nav2 DWB adapter。
 
-当前工作空间是独立复制出来的，不依赖 `m20_ws/src` 里的软链接。
+当前工作空间是独立复制出来的，不依赖 `m20_ws/src` 里的软链接。除非明确说明，本 README 里的命令都在：
+
+```text
+/mnt/nvme/workspace/fast_lio_ws
+```
 
 ## 分支定位
 
-当前仓库有两条定位线：
+当前仓库有三条主要线：
 
-| 分支 | 定位前端 | 全局点云定位 | 状态 |
-|---|---|---|---|
-| `main` | `fast_lio` | `open3d_loc` | 当前可用主线：MID360 PointCloud2 时间戳已修正，按 Jetson/室内场景收紧 Fast-LIO 和 Open3D 参数 |
-| `point-lio-lidar-localization` | `point_lio_ros2` | `lidar_localization_ros2` + `ndt_omp_ros2` | 新方案实验分支，第三方源码已经直接放进 `src/` |
+| 分支 | 定位/导航方案 | 状态 |
+|---|---|---|
+| `stable/fastlio-localization` | `fast_lio` + `open3d_loc` + Nav2 DWB + RL local path | 当前稳定版。本 README 只按这个分支维护和验证 |
+| `main` | `fast_lio` + `open3d_loc` | 之前的主线实现，保留用于对比，不代表当前稳定部署状态 |
+| `point-lio-lidar-localization` | `point_lio_ros2` + `lidar_localization_ros2` + `ndt_omp_ros2` | Point-LIO/NDT 实验分支，第三方源码直接放在 `src/` |
 
-本 README 描述的是 `main`。如果要试 Point-LIO + NDT，请切到：
+使用当前稳定版：
+
+```bash
+git switch stable/fastlio-localization
+git pull origin stable/fastlio-localization
+```
+
+如果要试 Point-LIO + NDT，请切到：
 
 ```bash
 git switch point-lio-lidar-localization
 ```
+
+## 当前稳定版要点
+
+- 3D 建图：`fast_lio_map` 前端保存 `m20_map.pcd`，`slam_mapping/alaserPGO` 后端保存 `global_map.pcd` 和 `sc_database.txt`。
+- 3D 定位：Open3D 使用 `/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd`。
+- 2D 地图：`pcd2pgm` 默认输入 `global_map.pcd`，内部完成摆平、地面基准对齐，再生成 `m20_2d_map.pgm/.yaml`。
+- Nav2：`m20_fastlio_nav.launch.py` 启动 Fast-LIO 定位、Open3D、`/scan`、map server 和 Nav2 navigation，不启动 AMCL。
+- 局部路径：`global_path` -> `pure_pursuit` 发布 `subgoal` -> RL/PRIEST 发布 `local_path` -> DWB adapter 转成 `/NAV_CMD`。
 
 ## 系统目标
 
@@ -64,8 +84,11 @@ MID360
 Nav2 DWB:
   map_server -> /map
   pointcloud_to_laserscan -> /scan
-  controller_server -> /cmd_vel
-  move adapter -> /NAV_CMD
+  planner_server -> compute_path_to_pose
+  global_path_publisher/global_path_seq_publisher -> /global_path
+  pure_pursuit.py (plan:=global_path) -> /subgoal, /final_goal
+  priest_rl_publisher_nav_cmd_fast.py -> /local_path
+  DWB adapter -> FollowPath -> /cmd_vel -> /NAV_CMD
 ```
 
 核心 TF 链：
@@ -86,7 +109,6 @@ map
 ```text
 /mnt/nvme/workspace/fast_lio_ws/
 ├── README.md
-├── level_pcd.py                  # 可选离线摆正工具；2D 转图已内置同等逻辑
 ├── maps/                         # 本地生成数据，默认不再进入 Git
 │   └── fastlio/
 │       ├── m20_map.pcd           # fast_lio_map 直接保存的原始 3D 地图
@@ -101,7 +123,10 @@ map
     ├── slam_mapping/             # 建图 PGO 后端，输出 global_map.pcd / sc_database.txt
     ├── open3d_loc/               # Open3D 点云地图定位，发布 map -> odom
     ├── pcd2pgm/                  # PCD 转 Nav2 2D OccupancyGrid
-    └── m20_fastlio_nav/          # M20 专用 launch、参数、odom bridge
+    ├── m20_fastlio_nav/          # M20 专用 launch、参数、odom bridge
+    │   └── scripts/level_pcd.py  # 可选离线摆正工具；2D 转图已内置同等逻辑
+    ├── move/                     # global path、pure pursuit、RL local path、DWB adapter
+    └── RL2Path/                  # RL/PRIEST local planner 依赖代码和模型
 ```
 
 ## 地图文件和 Git 规则
@@ -125,8 +150,12 @@ git rm --cached maps/fastlio/global_map.pcd \
   maps/fastlio/sc_database.txt
 ```
 
-这个命令只从 Git 索引移除，不删除你本地磁盘上的地图文件。当前 `main` 和
-`point-lio-lidar-localization` 都按这个规则处理。
+这个命令只从 Git 索引移除，不删除你本地磁盘上的地图文件。当前 `stable/fastlio-localization`、`main`
+和 `point-lio-lidar-localization` 都按这个规则处理。
+
+`src/move/ckpts/` 是例外：当前稳定版运行 RL local path 默认依赖 `ckpt_3/best_agent.pt` 和
+`ckpt_3/params/agent.pkl`，因此本分支允许 checkpoint 文件进入 Git。`.gitignore` 仍会默认忽略其它路径下的
+`*.pt`、`*.pth`、`*.onnx`、`*.engine`、`*.pkl`，避免无关模型产物误入库。
 
 ## 包说明
 
@@ -138,6 +167,8 @@ git rm --cached maps/fastlio/global_map.pcd \
 | `open3d_loc` | luckrobot 的 Open3D ICP/NDT 类定位节点，发布 `map -> odom` | 定位/导航 |
 | `pcd2pgm` | 把 3D PCD 转成 2D 占据栅格，再用 map_saver 保存 | 地图转换 |
 | `m20_fastlio_nav` | 本系统新增 glue 包：TF、参数、launch、`/Odometry_loc` -> `/odom` | 全流程 |
+| `move` | 当前稳定版使用的 global path、pure pursuit、RL local path 和 DWB adapter | 局部导航 |
+| `RL2Path` | RL/PRIEST local planner 依赖代码和模型配置 | 局部导航 |
 
 ## 关键文件
 
@@ -157,7 +188,13 @@ src/m20_fastlio_nav/config/m20_nav3d.rviz      # 定位+导航全景 RViz 配置
 
 src/m20_fastlio_nav/m20_fastlio_nav/fastlio_odom_bridge.py
 
-level_pcd.py                     # 可选离线 PCD 坐标系摆正脚本
+src/move/move/global_path_publisher.py
+src/move/move/global_path_seq_publisher.py
+src/move/move/pure_pursuit.py
+src/move/move/priest_rl_publisher_nav_cmd_fast.py
+src/move/move/priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py
+
+src/m20_fastlio_nav/scripts/level_pcd.py  # 可选离线 PCD 坐标系摆正脚本
 ```
 
 ## Fast-LIO 配置要点
@@ -178,23 +215,27 @@ Fast-LIO 内部的 `reflectivity`，并读取 `tag` / `line` / `timestamp`。注
 `timestamp - min_timestamp` 转成 Fast-LIO 需要的 scan 内相对时间。这样同时兼容实车驱动和 rosbag
 重播，避免把绝对时间直接当点内 offset 导致 `/Odometry` / `/Odometry_loc` 不输出。
 
-| 参数 | 正确值 | 说明 |
-|---|---:|---|
-| `preprocess.lidar_type` | `4` | MID360 `PointCloud2` 路径 |
-| `preprocess.scan_line` | `4` | MID360 实际 line 数，参考 luckbot 配置；不要再用 `96` |
-| `preprocess.timestamp_unit` | `3` | MID360 每点 timestamp/offset 以 ns 计，代码会转成 scan 内相对 ms |
-| `preprocess.blind` | `0.5` | 近距离盲区过滤 |
-| `point_filter_num` | `3` | 前端降采样，降低 Jetson 压力 |
-| `filter_size_surf` / `filter_size_map` | `0.5` | 与 luckbot Jetson 配置一致 |
-| `mapping.det_range` | 定位 `60` / 建图 `80` | 室内雷达有效距离约 30m，不再使用 `200` |
-| `common.time_sync_en` | `false` | 关闭 IMU-LiDAR 时间同步，MID360 时间戳无对齐 |
-| `common.lid_topic` | `/livox/lidar` | Livox 驱动话题 |
-| `common.imu_topic` | `/livox/imu` | Livox IMU 话题 |
+| 参数 | 建图配置 | 定位配置 | 说明 |
+|---|---:|---:|---|
+| `preprocess.lidar_type` | `4` | `4` | MID360 `PointCloud2` 路径 |
+| `preprocess.scan_line` | `4` | `4` | MID360 实际 line 数，参考 luckbot 配置；不要再用 `96` |
+| `preprocess.timestamp_unit` | `3` | `3` | MID360 每点 timestamp/offset 以 ns 计，代码会转成 scan 内相对 ms |
+| `preprocess.blind` | `0.5` | `0.5` | 近距离盲区过滤 |
+| `point_filter_num` | `3` | `3` | 前端降采样，降低 Jetson 压力 |
+| `filter_size_surf` / `filter_size_map` | `0.3 / 0.3` | `0.5 / 0.5` | 建图保留更密局部结构，定位按 Jetson 负载裁剪 |
+| `mapping.det_range` | `80` | `60` | 室内雷达有效距离约 30m，不再使用 `200` |
+| `publish.path_en` | `true` | `false` | 建图保留轨迹，定位关闭无用轨迹输出 |
+| `publish.dense_publish_en` | `true` | `false` | 建图保留 dense 点云用于复核，定位关闭以减轻负载 |
+| `publish.scan_publish_en` | `true` | `true` | Open3D 和调试仍需要实时点云 |
+| `publish.scan_bodyframe_pub_en` | `true` | `true` | `pointcloud_to_laserscan` 需要 body 点云转 `/scan` |
+| `common.time_sync_en` | `false` | `false` | 关闭 IMU-LiDAR 时间同步，MID360 时间戳无对齐 |
+| `common.lid_topic` | `/livox/lidar` | `/livox/lidar` | Livox 驱动话题 |
+| `common.imu_topic` | `/livox/imu` | `/livox/imu` | Livox IMU 话题 |
 
 发布项也做了边缘设备裁剪：
 
-- 定位配置关闭 `path_en`，避免持续发布无用轨迹。
-- 建图和定位都关闭 `dense_publish_en`，避免额外大点云输出占 CPU/带宽。
+- 定位配置关闭 `path_en` 和 `dense_publish_en`，避免额外轨迹和大点云输出占 CPU/带宽。
+- 建图配置保留 `path_en` 和 `dense_publish_en`，方便保存、复核 3D 地图质量。
 - 保留 `scan_publish_en` 和 `scan_bodyframe_pub_en`，因为 Open3D 和 `pointcloud_to_laserscan` 仍需要实时点云。
 
 当前 **建图和定位两个配置文件已经改为正确值**，不要再改回 `lidar_type: 5` / `scan_line: 96` / `det_range: 200`。
@@ -210,7 +251,7 @@ translation: [0.32713234, 0.01413551, 0.31238696]
 quaternion:  [-0.00394028, 0.24367785, 0.00970223, 0.96979969]   ->  Euler: roll -0.2°, pitch 28.2°, yaw 1.1°
 ```
 
-这个倾角导致建图坐标系（`camera_init`）的 Z 轴不是真正垂直的。因此 **PCD 转 2D 地图前必须先做摆平处理**。现在 `pcd2pgm` 会在转图流程里按 `pcd2pgm_m20.yaml` 自动完成摆平和地面基准对齐，不再需要为 2D 地图单独运行 `level_pcd.py`。
+这个倾角导致建图坐标系（`camera_init`）的 Z 轴不是真正垂直的。因此 **PCD 转 2D 地图前必须先做摆平处理**。现在 `pcd2pgm` 会在转图流程里按 `pcd2pgm_m20.yaml` 自动完成摆平和地面基准对齐，不再需要为 2D 地图单独运行 `src/m20_fastlio_nav/scripts/level_pcd.py`。
 
 定位阶段的实时 `/scan` 使用 `pointcloud_to_laserscan(target_frame=base_footprint)`，会通过 TF 自动转平，不受影响。
 
@@ -222,7 +263,7 @@ quaternion:  [-0.00394028, 0.24367785, 0.00970223, 0.96979969]   ->  Euler: roll
 - `base_link -> imu_link` 静态 TF
 - `fastlio_odom_bridge` 内部同时计算 `map -> odom_nav`、`odom_nav -> base_footprint` 和 `odom -> base_link`
 - `pcd2pgm_m20.yaml` 中的 `leveling_quaternion_xyzw`
-- `level_pcd.py` 可选离线摆正脚本
+- `src/m20_fastlio_nav/scripts/level_pcd.py` 可选离线摆正脚本
 
 如果后面重新标定 MID360，必须同步修改：
 
@@ -231,7 +272,7 @@ src/m20_fastlio_nav/launch/m20_fastlio_localization.launch.py
 src/m20_fastlio_nav/launch/m20_fastlio_mapping.launch.py
 src/m20_fastlio_nav/m20_fastlio_nav/fastlio_odom_bridge.py
 src/m20_fastlio_nav/config/pcd2pgm_m20.yaml
-level_pcd.py
+src/m20_fastlio_nav/scripts/level_pcd.py
 ```
 
 ## 编译
@@ -288,6 +329,7 @@ ros2 pkg prefix fast_lio_map
 ros2 pkg prefix open3d_loc
 ros2 pkg prefix pcd2pgm
 ros2 pkg prefix m20_fastlio_nav
+ros2 pkg prefix move
 
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py --show-args
 ```
@@ -502,7 +544,7 @@ src/m20_fastlio_nav/config/pcd2pgm_m20.yaml
 |---|---:|---|
 | `pcd_file` | `global_map.pcd` | 默认输入原始/优化 3D PCD，`m20_pcd2pgm_save.launch.py` 的 `pcd_file:=...` 会覆盖它 |
 | `odom_to_lidar_odom` | `[0,0,0,0,0,0]` | 转图前额外施加的已知位姿修正，通常保持全 0 |
-| `enable_leveling` | `true` | 启用内置 PCD 摆平，替代单独运行 `level_pcd.py` |
+| `enable_leveling` | `true` | 启用内置 PCD 摆平，替代单独运行 `src/m20_fastlio_nav/scripts/level_pcd.py` |
 | `leveling_quaternion_xyzw` | MID360 外参四元数 | 用 `base_link -> livox_frame` 外参补偿雷达安装倾角 |
 | `refine_ground_plane` | `true` | 摆平后拟合近水平面并做小角度细修正 |
 | `ground_plane_voxel_size` | `0.08` | 拟合地面平面前的降采样体素大小，单位 m |
@@ -510,15 +552,22 @@ src/m20_fastlio_nav/config/pcd2pgm_m20.yaml
 | `ground_plane_min_normal_z` | `0.95` | 只有拟合平面接近水平时才用于细修正 |
 | `auto_align_ground_to_map` | `true` | 自动把检测到的地面高度平移到 `z=0`，作为最终 2D map 基准面 |
 | `ground_histogram_bin_size` | `0.10` | 自动找地面高度时的 Z 方向直方图间隔，单位 m |
-| `thre_z_min` | `0.1` | 相对最终 2D map 基准面 `z=0` 的最低切片高度 |
-| `thre_z_max` | `0.5` | 相对最终 2D map 基准面 `z=0` 的最高切片高度 |
+| `thre_z_min` | `0.15` | 相对最终 2D map 基准面 `z=0` 的最低切片高度 |
+| `thre_z_max` | `0.6` | 相对最终 2D map 基准面 `z=0` 的最高切片高度 |
 | `thre_radius` | `0.8` | 半径滤波搜索半径，单位 m |
 | `thres_point_count` | `10` | 半径内最少邻居数，低于该值的离群点会被滤掉 |
 | `map_resolution` | `0.05` | 2D 地图分辨率，单位 m/pixel |
 
-常规调参只需要动 `thre_z_min/thre_z_max`。例如 `0.1 / 0.5` 表示取 2D map 基准面上方 10cm 到 50cm 的点云投影成 2D 占据图；如果需要包含地面下方点，再把 `thre_z_min` 设成负数。不要再手算 `0.84` 这类绝对高度。
+常规调参只需要动 `thre_z_min/thre_z_max`。当前 `0.15 / 0.6` 表示取 2D map 基准面上方 15cm 到 60cm 的点云投影成 2D 占据图；如果需要包含地面下方点，再把 `thre_z_min` 设成负数。不要再手算 `0.84` 这类绝对高度。
 
-`level_pcd.py` 仍保留为离线检查工具；只有需要生成或复核 3D 定位用的 `m20_map_leveled.pcd` 时才需要运行。
+`src/m20_fastlio_nav/scripts/level_pcd.py` 仍保留为离线检查工具；只有需要生成或复核 3D 定位用的
+`m20_map_leveled.pcd` 时才需要运行：
+
+```bash
+python3 src/m20_fastlio_nav/scripts/level_pcd.py \
+  maps/fastlio/global_map.pcd \
+  maps/fastlio/m20_map_leveled.pcd
+```
 
 ## Step 4: 启动 Fast-LIO 定位 + Nav2
 
@@ -526,8 +575,11 @@ src/m20_fastlio_nav/config/pcd2pgm_m20.yaml
 
 ```text
 /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd  # 摆正后的 3D PCD（给 Open3D）
-/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml      # 2D 地图（从摆正 PCD 生成）
+/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml      # 2D 地图（pcd2pgm 从 global_map.pcd 生成）
 ```
+
+注意：Open3D 的 3D 定位地图和 Nav2 的 2D 地图是两个文件。当前稳定版中，Open3D 仍读取
+`m20_map_leveled.pcd`；2D map 由 `pcd2pgm` 从 `global_map.pcd` 生成，并在转图过程中内部摆平和对齐地面基准。
 
 启动：
 
@@ -566,7 +618,7 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   map:=/mnt/nvme/workspace/m20_ws/src/move/map/lab.yaml
 ```
 
-## Step 5: 启动 RL local path 和 DWB adapter
+## Step 5: 启动 global path、pure pursuit、RL local path 和 DWB adapter
 
 Nav2 启动后，再按当前验证过的方式运行 global path、pure pursuit、RL 路径发布和 adapter。当前拷贝到本工作区的 `move` / `RL2Path` 默认按 2D 链路运行：`global_path(map)` -> `subgoal(map)` -> `local_path(base_footprint)` -> adapter 输出到 `odom_nav`。
 
@@ -576,6 +628,17 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 python3 src/move/move/global_path_publisher.py
+```
+
+如果要按多个点顺序跑，用 sequence publisher。当前稳定分支默认点列在 `global_path_seq_publisher.py` 的
+`goals_xy` 里，发布话题仍是 `/global_path`：
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+python3 src/move/move/global_path_seq_publisher.py
 ```
 
 `pure_pursuit.py` 必须和 global Path 发布配合使用：global publisher 发布 `/global_path`，pure pursuit 通过 remap 订阅这条全局路径，并发布 `/subgoal` / `/final_goal` 给 RL local path 使用。
@@ -600,6 +663,16 @@ source ~/venv/m20_nav/bin/activate
 
 python src/move/move/priest_rl_publisher_nav_cmd_fast.py
 ```
+
+RL 默认模型和参数文件已经在本分支保留：
+
+```text
+src/move/ckpts/ckpt_3/best_agent.pt
+src/move/ckpts/ckpt_3/params/agent.pkl
+```
+
+默认路径写在 `src/move/move/priest_rl_publisher_nav_cmd.py`，一般不需要手动传参。如果要切模型，可以用 ROS 参数覆盖
+`model_path` 和 `agent_cfg_path`。
 
 adapter 用当前实车验证效果最好的文件：
 
@@ -702,6 +775,10 @@ ros2 topic hz /cmd_vel_nav
 ros2 topic echo /cmd_vel_nav
 ros2 topic hz /cmd_vel
 ros2 topic echo /cmd_vel
+ros2 topic hz /global_path
+ros2 topic hz /subgoal
+ros2 topic hz /local_path
+ros2 topic echo /NAV_CMD
 ros2 node list
 ros2 lifecycle nodes
 ```
@@ -713,6 +790,7 @@ ros2 lifecycle nodes
 - `tf2_echo map odom_nav` 能持续输出，而且基本只有 yaw。
 - `/scan` 有 LaserScan 数据。
 - Nav2 lifecycle 节点处于 `active`。
+- `/global_path`、`/subgoal`、`/local_path` 都有输出后，RL local path 链路才算接上。
 - `/cmd_vel_nav` 是 controller 原始输出，`/cmd_vel` 是 velocity_smoother 平滑后的输出。adapter 默认订阅 `/cmd_vel` 并转换到 `/NAV_CMD`。
 
 ## 主要话题
@@ -728,6 +806,11 @@ ros2 lifecycle nodes
 | `/cloud_registered_body_1` | `PointCloud2` | `fast_lio` | 转 `/scan` |
 | `/scan` | `LaserScan` | `pointcloud_to_laserscan` | Nav2 costmap 障碍层 |
 | `/map` | `OccupancyGrid` | `map_server` | Nav2 2D 地图 |
+| `/global_path` | `Path` | `global_path_publisher` 或 `global_path_seq_publisher` | Nav2 planner 算出的全局路径 |
+| `/subgoal` | `PoseStamped` | `pure_pursuit.py` | RL local path 的局部目标点 |
+| `/final_goal` | `PoseStamped` | `pure_pursuit.py` | 当前全局路径终点 |
+| `/local_path` | `Path` | `priest_rl_publisher_nav_cmd_fast.py` | RL/PRIEST 输出给 DWB adapter 的局部路径 |
+| `/mppi_path` | `Path` | DWB adapter | adapter 转到 `odom_nav` 后发给 Nav2 FollowPath 的调试路径 |
 | `/cmd_vel_nav` | `Twist` | Nav2 controller | controller 原始速度输出 |
 | `/cmd_vel` | `Twist` | Nav2 velocity_smoother | adapter 默认订阅的平滑速度 |
 | `/NAV_CMD` | `drdds/NavCmd` | move adapter | 发送给底盘的速度命令 |
@@ -743,13 +826,14 @@ src/m20_fastlio_nav/config/nav2_dwb_fastlio.yaml
 
 它基于之前实车较平滑的 DWB 参数，关键点：
 
-- `controller_frequency: 10.0`
+- `controller_frequency: 15.0`
 - DWB 控制器，不使用 MPPI。
 - 保留底盘死区：
   - `min_speed_xy: 0.20`
   - `min_speed_theta: 0.40`
-- `max_vel_x: 0.80` / `max_speed_xy: 0.80`，当前实测比 `0.60` 更能跟上局部路径频率。
-- `velocity_smoother.max_velocity: [0.8, 0.0, 0.6]`，和 DWB 最大速度保持一致。
+- `max_vel_x: 0.80` / `max_speed_xy: 0.80` / `max_vel_theta: 0.65`。
+- `velocity_smoother.max_velocity: [0.8, 0.0, 0.65]`，和 DWB 最大速度保持一致。
+- local costmap 使用 `odom_nav`，global costmap 使用 `map`。
 - `/odom` 来自 Fast-LIO bridge，`header.frame_id` 是 `odom_nav`.
 - `/scan` 来自 Fast-LIO body 点云，转换到 `base_footprint` 坐标系（自动水平）。
 - AMCL 段虽然保留在 YAML 中，但 `tf_broadcast: false`，且正常启动路径不会启动 AMCL。
@@ -766,7 +850,7 @@ src/m20_fastlio_nav/config/open3d_localization_m20.yaml
 
 | 参数 | 当前值 | 说明 |
 |---|---:|---|
-| `path_map` | `m20_map_leveled.pcd` | 3D PCD 地图（摆正后，与2D地图坐标系一致） |
+| `path_map` | `m20_map_leveled.pcd` | Open3D 使用的摆正后 3D PCD 地图，不是 Nav2 的 2D map |
 | `initialpose` | `[0,0,0,0,0,0]` | 初始位姿，单位 m/deg |
 | `pcd_queue_maxsize` | `10` | Open3D 等待 Fast-LIO 点云队列长度 |
 | `voxelsize_coarse` | `0.15` | 粗配准体素，参考 luckbot Jetson 配置 |
@@ -874,6 +958,10 @@ ros2 topic delay /odom
 - `thre_z_min` / `thre_z_max`：控制相对自动地面基准 `z=0` 的切片高度范围
 - `thres_point_count`：判定占据的点数阈值
 - `map_resolution`：2D 地图分辨率
+
+当前稳定参数是 `thre_z_min: 0.15`、`thre_z_max: 0.6`，表示只取自动地面基准上方 15cm 到 60cm 的点做投影。这个基准是 `pcd2pgm` 在生成 2D map 时自动对齐出来的，不需要手算 RViz 中 2D map 平面相对 3D 点云的绝对 Z 偏移。
+
+**原因 C**（Open3D 3D 点云和 2D map 看起来高度不一致）：这是两个文件。Open3D 显示的是 `m20_map_leveled.pcd`，Nav2 map 是 `m20_2d_map.yaml`。2D map 的切片高度只影响生成占据栅格时选哪些点，不会修改 Open3D 正在加载的 3D PCD。
 
 ### 7. Open3D 构建失败
 
@@ -1008,7 +1096,9 @@ source ~/liv_ws/install/setup.bash
 source install/setup.bash
 LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
-  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
+  map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml \
+  rviz:=false
 ```
 
 Terminal 3: global path
@@ -1018,6 +1108,12 @@ cd /mnt/nvme/workspace/fast_lio_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 python3 src/move/move/global_path_publisher.py
+```
+
+如果要跑默认多点顺序路线，把上面最后一行换成：
+
+```bash
+python3 src/move/move/global_path_seq_publisher.py
 ```
 
 Terminal 4: pure pursuit subgoal
