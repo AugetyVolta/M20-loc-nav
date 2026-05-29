@@ -86,13 +86,13 @@ map
 ```text
 /mnt/nvme/workspace/fast_lio_ws/
 ├── README.md
-├── level_pcd.py                  # PCD 摆正脚本（补偿 MID360 安装倾角）
+├── level_pcd.py                  # 可选离线摆正工具；2D 转图已内置同等逻辑
 ├── maps/                         # 本地生成数据，默认不再进入 Git
 │   └── fastlio/
 │       ├── m20_map.pcd           # fast_lio_map 直接保存的原始 3D 地图
 │       ├── global_map.pcd        # slam_mapping PGO 后端保存的优化 3D 地图
 │       ├── sc_database.txt       # 建图后端生成的 ScanContext 数据库，仅用于建图后端输出
-│       ├── m20_map_leveled.pcd   # 摆正后的 3D 点云地图（3D 定位 + pcd2pgm 共用）
+│       ├── m20_map_leveled.pcd   # 摆正后的 3D 点云地图（Open3D 定位使用）
 │       ├── m20_2d_map.pgm        # pcd2pgm + map_saver 生成
 │       └── m20_2d_map.yaml       # Nav2 map_server 使用
 └── src/
@@ -157,7 +157,7 @@ src/m20_fastlio_nav/config/m20_nav3d.rviz      # 定位+导航全景 RViz 配置
 
 src/m20_fastlio_nav/m20_fastlio_nav/fastlio_odom_bridge.py
 
-level_pcd.py                     # PCD 坐标系摆正脚本
+level_pcd.py                     # 可选离线 PCD 坐标系摆正脚本
 ```
 
 ## Fast-LIO 配置要点
@@ -210,7 +210,7 @@ translation: [0.32713234, 0.01413551, 0.31238696]
 quaternion:  [-0.00394028, 0.24367785, 0.00970223, 0.96979969]   ->  Euler: roll -0.2°, pitch 28.2°, yaw 1.1°
 ```
 
-这个倾角导致建图坐标系（`camera_init`）的 Z 轴不是真正垂直的。因此 **PCD 必须摆正后才能给 pcd2pgm 生成 2D 地图**（见 Step 3），否则 2D 地图是歪的。
+这个倾角导致建图坐标系（`camera_init`）的 Z 轴不是真正垂直的。因此 **PCD 转 2D 地图前必须先做摆平处理**。现在 `pcd2pgm` 会在转图流程里按 `pcd2pgm_m20.yaml` 自动完成摆平和地面基准对齐，不再需要为 2D 地图单独运行 `level_pcd.py`。
 
 定位阶段的实时 `/scan` 使用 `pointcloud_to_laserscan(target_frame=base_footprint)`，会通过 TF 自动转平，不受影响。
 
@@ -221,7 +221,8 @@ quaternion:  [-0.00394028, 0.24367785, 0.00970223, 0.96979969]   ->  Euler: roll
 - `base_link -> livox_frame` 静态 TF
 - `base_link -> imu_link` 静态 TF
 - `fastlio_odom_bridge` 内部同时计算 `map -> odom_nav`、`odom_nav -> base_footprint` 和 `odom -> base_link`
-- `level_pcd.py` 摆正脚本
+- `pcd2pgm_m20.yaml` 中的 `leveling_quaternion_xyzw`
+- `level_pcd.py` 可选离线摆正脚本
 
 如果后面重新标定 MID360，必须同步修改：
 
@@ -229,6 +230,7 @@ quaternion:  [-0.00394028, 0.24367785, 0.00970223, 0.96979969]   ->  Euler: roll
 src/m20_fastlio_nav/launch/m20_fastlio_localization.launch.py
 src/m20_fastlio_nav/launch/m20_fastlio_mapping.launch.py
 src/m20_fastlio_nav/m20_fastlio_nav/fastlio_odom_bridge.py
+src/m20_fastlio_nav/config/pcd2pgm_m20.yaml
 level_pcd.py
 ```
 
@@ -460,39 +462,15 @@ ls -lh /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd
 ls -lh /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/sc_database.txt
 ```
 
-## Step 3: 摆正 PCD（补偿 MID360 安装倾角）
+## Step 3: 生成 Nav2 2D 地图
 
-MID360 前倾 ~28°，导致 PCD 在 `camera_init` 坐标系里是歪的。直接用 pcd2pgm 沿 Z 轴切片会产生错误倾斜的 2D 地图。
+`pcd2pgm` 现在会在转图流程里完成三件事：
 
-`level_pcd.py` 用已知外参旋转矩阵将点云从倾斜方向转到接近 `base_link` 的水平方向：
+1. 用 `leveling_quaternion_xyzw` 补偿 MID360 安装倾角，把原始 PCD 摆到接近水平。
+2. 可选拟合地面平面做小角度细修正。
+3. 自动检测地面高度并平移到 `z=0`，然后用 `thre_z_min/thre_z_max` 按相对高度切片。
 
-```bash
-cd /mnt/nvme/workspace/fast_lio_ws
-source ~/venv/m20_nav/bin/activate
-python3 level_pcd.py \
-  maps/fastlio/global_map.pcd \
-  maps/fastlio/m20_map_leveled.pcd
-```
-
-输出：
-
-```text
-/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd
-```
-
-**注意**：摆正后的 PCD 同时用于 3D 定位和 2D 地图生成，保证两者坐标系一致。原始 PCD 保留备用。
-
-如果 `global_map.pcd` 不存在或明显错位，可以临时用原始前端地图：
-
-```bash
-python3 level_pcd.py \
-  maps/fastlio/m20_map.pcd \
-  maps/fastlio/m20_map_leveled.pcd
-```
-
-## Step 4: 生成 Nav2 2D 地图
-
-用**摆正后的 PCD** 生成 2D occupancy grid：
+因此生成 2D 图时默认直接输入原始/优化后的 3D PCD，不需要先生成 `m20_map_leveled.pcd`：
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws
@@ -501,7 +479,7 @@ source install/setup.bash
 
 LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
 ros2 launch m20_fastlio_nav m20_pcd2pgm_save.launch.py \
-  pcd_file:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
+  pcd_file:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd \
   output_map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map
 ```
 
@@ -518,19 +496,31 @@ ros2 launch m20_fastlio_nav m20_pcd2pgm_save.launch.py \
 src/m20_fastlio_nav/config/pcd2pgm_m20.yaml
 ```
 
-重要参数：
+重要参数都在 `src/m20_fastlio_nav/config/pcd2pgm_m20.yaml`：
 
 | 参数 | 当前值 | 说明 |
 |---|---:|---|
-| `map_resolution` | `0.05` | 2D 地图分辨率 |
-| `thre_z_min` | `-0.3` | 参与投影的最低高度 |
-| `thre_z_max` | `0.35` | 参与投影的最高高度 |
-| `thre_radius` | `0.8` | 点云膨胀/聚合半径 |
-| `thres_point_count` | `10` | 判定占据的点数阈值 |
+| `pcd_file` | `global_map.pcd` | 默认输入原始/优化 3D PCD，`m20_pcd2pgm_save.launch.py` 的 `pcd_file:=...` 会覆盖它 |
+| `odom_to_lidar_odom` | `[0,0,0,0,0,0]` | 转图前额外施加的已知位姿修正，通常保持全 0 |
+| `enable_leveling` | `true` | 启用内置 PCD 摆平，替代单独运行 `level_pcd.py` |
+| `leveling_quaternion_xyzw` | MID360 外参四元数 | 用 `base_link -> livox_frame` 外参补偿雷达安装倾角 |
+| `refine_ground_plane` | `true` | 摆平后拟合近水平面并做小角度细修正 |
+| `ground_plane_voxel_size` | `0.08` | 拟合地面平面前的降采样体素大小，单位 m |
+| `ground_plane_distance_threshold` | `0.03` | RANSAC 平面内点距离阈值，单位 m |
+| `ground_plane_min_normal_z` | `0.95` | 只有拟合平面接近水平时才用于细修正 |
+| `auto_align_ground_to_map` | `true` | 自动把检测到的地面高度平移到 `z=0`，作为最终 2D map 基准面 |
+| `ground_histogram_bin_size` | `0.10` | 自动找地面高度时的 Z 方向直方图间隔，单位 m |
+| `thre_z_min` | `0.1` | 相对最终 2D map 基准面 `z=0` 的最低切片高度 |
+| `thre_z_max` | `0.5` | 相对最终 2D map 基准面 `z=0` 的最高切片高度 |
+| `thre_radius` | `0.8` | 半径滤波搜索半径，单位 m |
+| `thres_point_count` | `10` | 半径内最少邻居数，低于该值的离群点会被滤掉 |
+| `map_resolution` | `0.05` | 2D 地图分辨率，单位 m/pixel |
 
-如果生成的 2D 地图墙太粗或障碍太多，优先调 `thre_z_min/thre_z_max` 和 `thres_point_count`。
+常规调参只需要动 `thre_z_min/thre_z_max`。例如 `0.1 / 0.5` 表示取 2D map 基准面上方 10cm 到 50cm 的点云投影成 2D 占据图；如果需要包含地面下方点，再把 `thre_z_min` 设成负数。不要再手算 `0.84` 这类绝对高度。
 
-## Step 5: 启动 Fast-LIO 定位 + Nav2
+`level_pcd.py` 仍保留为离线检查工具；只有需要生成或复核 3D 定位用的 `m20_map_leveled.pcd` 时才需要运行。
+
+## Step 4: 启动 Fast-LIO 定位 + Nav2
 
 确保已经有：
 
@@ -551,7 +541,7 @@ LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
   map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml \
-  rviz:=false
+  rviz:=true
 ```
 
 实车导航默认建议 `rviz:=false`。Open3D 初始化、3D 点云显示和远程 RViz 都会增加 Orin 负载；只有部署、看 TF/点云对齐或排查定位时再改成 `rviz:=true`。
@@ -576,9 +566,9 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   map:=/mnt/nvme/workspace/m20_ws/src/move/map/lab.yaml
 ```
 
-## Step 6: 启动 RL local path 和 DWB adapter
+## Step 5: 启动 RL local path 和 DWB adapter
 
-Nav2 启动后，再按当前验证过的方式运行 RL 路径发布和 adapter。当前拷贝到本工作区的 `move` / `RL2Path` 默认按 2D 链路运行：`global_path(map)` -> `local_path(base_footprint)` -> adapter 输出到 `odom_nav`。
+Nav2 启动后，再按当前验证过的方式运行 global path、pure pursuit、RL 路径发布和 adapter。当前拷贝到本工作区的 `move` / `RL2Path` 默认按 2D 链路运行：`global_path(map)` -> `subgoal(map)` -> `local_path(base_footprint)` -> adapter 输出到 `odom_nav`。
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws
@@ -586,6 +576,18 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 python3 src/move/move/global_path_publisher.py
+```
+
+`pure_pursuit.py` 必须和 global Path 发布配合使用：global publisher 发布 `/global_path`，pure pursuit 通过 remap 订阅这条全局路径，并发布 `/subgoal` / `/final_goal` 给 RL local path 使用。
+
+另开终端：
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+python3 src/move/move/pure_pursuit.py --ros-args -r plan:=global_path
 ```
 
 另开终端：
@@ -865,11 +867,11 @@ ros2 topic delay /odom
 
 ### 6. PCD 转 2D 地图效果差或不水平
 
-**原因 A**（不水平）：MID360 安装有倾角，PCD 坐标系本身是歪的。必须先跑 Step 3 用 `level_pcd.py` 摆正，再用摆正后的 PCD 生成 2D 地图。
+**原因 A**（不水平）：MID360 安装有倾角，PCD 坐标系本身是歪的。现在 `pcd2pgm_m20.yaml` 里 `enable_leveling: true` 会在转图时自动摆平；如果仍然不水平，优先检查 `leveling_quaternion_xyzw` 是否和 launch 里的 `base_link -> livox_frame` 外参一致。
 
 **原因 B**（障碍过多/过少）：调整 `pcd2pgm_m20.yaml` 中的参数：
 
-- `thre_z_min` / `thre_z_max`：控制切片高度范围
+- `thre_z_min` / `thre_z_max`：控制相对自动地面基准 `z=0` 的切片高度范围
 - `thres_point_count`：判定占据的点数阈值
 - `map_resolution`：2D 地图分辨率
 
@@ -1018,7 +1020,16 @@ source install/setup.bash
 python3 src/move/move/global_path_publisher.py
 ```
 
-Terminal 4: RL local path
+Terminal 4: pure pursuit subgoal
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+python3 src/move/move/pure_pursuit.py --ros-args -r plan:=global_path
+```
+
+Terminal 5: RL local path
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws
@@ -1028,7 +1039,7 @@ source ~/venv/m20_nav/bin/activate
 python src/move/move/priest_rl_publisher_nav_cmd_fast.py
 ```
 
-Terminal 5: adapter / debug
+Terminal 6: adapter / debug
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws

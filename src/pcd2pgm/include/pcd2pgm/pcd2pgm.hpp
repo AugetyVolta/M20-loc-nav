@@ -19,8 +19,11 @@
 #include <string>
 #include <vector>
 
+#include "Eigen/Geometry"
 #include "nav_msgs/msg/occupancy_grid.hpp"
+#include "pcl/ModelCoefficients.h"
 #include "pcl/filters/passthrough.h"
+#include "pcl/PointIndices.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 
@@ -48,12 +51,33 @@ private:
 
   void applyTransform();
 
+  void levelPointCloud();
+
+  bool fitGroundPlane(Eigen::Vector3f & normal, double & d, int & inlier_count) const;
+
+  Eigen::Matrix3f rotationAligningVectors(
+    const Eigen::Vector3f & source, const Eigen::Vector3f & target) const;
+
+  void autoAlignGroundToMapPlane();
+
+  bool estimateGroundZ(double & ground_z) const;
+
   float thre_z_min_;
   float thre_z_max_;
   float thre_radius_;
   bool flag_pass_through_;
   float map_resolution_;
   int thres_point_count_;
+  bool enable_leveling_;
+  std::vector<double> leveling_quaternion_xyzw_;
+  bool refine_ground_plane_;
+  bool auto_align_ground_to_map_;
+  float ground_plane_voxel_size_;
+  float ground_plane_distance_threshold_;
+  int ground_plane_max_iterations_;
+  int ground_plane_min_inliers_;
+  float ground_plane_min_normal_z_;
+  float ground_histogram_bin_size_;
   std::string pcd_file_;
   std::string map_topic_name_;
   std::vector<double> odom_to_lidar_odom_;

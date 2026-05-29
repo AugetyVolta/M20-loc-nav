@@ -44,13 +44,13 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "pcd_file",
-                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map.pcd",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd",
             ),
             DeclareLaunchArgument(
                 "output_map",
                 default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map",
             ),
             pcd2pgm,
-            TimerAction(period=3.0, actions=[save_map]),
+            TimerAction(period=8.0, actions=[save_map]),
         ]
     )

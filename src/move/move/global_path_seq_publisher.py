@@ -49,7 +49,7 @@ class GlobalPathSequencePublisher(Node):
 
         # Main behavior.
         self.declare_parameter("goals", "")
-        self.declare_parameter("goals_xy", [4.26204, -44.292, -39.319, -54.3482, -43.6628, -11.813, -2.19349, -0.965322]) # 3.73781, -44.5877, -39.8001, -54.3622, -42.7874, -11.6964, -0.146971, -0.05
+        self.declare_parameter("goals_xy", [14.9616, -39.4128, -27.6913, -43.1581, -29.8596, -2.77471, 18.6057, 4.53992])
         self.declare_parameter("goal_yaw_unit", "deg")  # deg / rad, only for `goals` third column
         self.declare_parameter("goal_tolerance", 0.6)
         self.declare_parameter("replan_period", 1.0)

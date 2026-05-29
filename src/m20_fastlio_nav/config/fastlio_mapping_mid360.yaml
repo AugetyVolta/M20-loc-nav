@@ -3,8 +3,8 @@
     feature_extract_enable: false
     point_filter_num: 3
     max_iteration: 3
-    filter_size_surf: 0.5
-    filter_size_map: 0.5
+    filter_size_surf: 0.3
+    filter_size_map: 0.3
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
     map_file_path: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map.pcd"
@@ -41,7 +41,7 @@
       effect_map_en: false
       map_en: true
       scan_publish_en: true
-      dense_publish_en: false
+      dense_publish_en: true
       scan_bodyframe_pub_en: true
 
     pcd_save:

@@ -143,7 +143,7 @@ def generate_launch_description():
             {
                 "target_frame": "base_footprint",
                 "transform_tolerance": 0.05,
-                "min_height": 0.1,
+                "min_height": -0.5,
                 "max_height": 0.35,
                 "angle_min": -3.14159,
                 "angle_max": 3.14159,
