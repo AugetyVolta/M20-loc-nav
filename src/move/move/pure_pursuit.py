@@ -116,7 +116,7 @@ class PurePursuitNode(Node):
         self.cnn_goal_pub = self.create_publisher(PoseStamped, 'subgoal', pub_qos)
         self.final_goal_pub = self.create_publisher(PoseStamped, 'final_goal', pub_qos)
 
-        self.get_logger().info('PurePursuitNode initialized (ROS2).')
+        self.get_logger().debug('PurePursuitNode initialized (ROS2).')
 
     # --------------- Path Callback ---------------
     def path_callback(self, msg: Path):
@@ -126,7 +126,7 @@ class PurePursuitNode(Node):
 
         if self.path is None or len(self.path.poses) < 2:
             if not self._waiting_for_path_logged:
-                self.get_logger().info('PurePursuit: Path cleared, waiting for a new plan')
+                self.get_logger().debug('PurePursuit: Path cleared, waiting for a new plan')
                 self._waiting_for_path_logged = True
         else:
             self._waiting_for_path_logged = False
@@ -140,7 +140,7 @@ class PurePursuitNode(Node):
         # run controller at specified rate
         period = 1.0 / max(self.rate, 1e-3)
         self.timer = self.create_timer(period, self.timer_callback)
-        self.get_logger().info(f'PurePursuit control loop started at {self.rate:.1f} Hz')
+        self.get_logger().debug(f'PurePursuit control loop started at {self.rate:.1f} Hz')
 
     # --------------- TF Pose ---------------
     def get_current_pose(self):
@@ -148,7 +148,7 @@ class PurePursuitNode(Node):
             t: Time = Time()  # latest available
             trans = self.tf_buffer.lookup_transform(self.world_frame, self.robot_frame, t)
         except Exception as ex:
-            self.get_logger().warn(f'Could not get robot pose: {ex}')
+            self.get_logger().debug(f'Could not get robot pose: {ex}')
             return np.array([np.nan, np.nan]), np.nan
 
         x = np.array([trans.transform.translation.x, trans.transform.translation.y], dtype=float)
@@ -365,7 +365,7 @@ class PurePursuitNode(Node):
 
         if not np.isnan(cnn_goal.pose.position.x) and not np.isnan(cnn_goal.pose.position.y):
             self.cnn_goal_pub.publish(cnn_goal)
-            self.get_logger().info(f'Subgoal (local): {goal_local[0]:.3f}, {goal_local[1]:.3f}')
+            self.get_logger().debug(f'Subgoal (local): {goal_local[0]:.3f}, {goal_local[1]:.3f}')
 
         # ---- Publish final goal (relative position only) ----
         final_goal = PoseStamped()
@@ -375,7 +375,7 @@ class PurePursuitNode(Node):
 
         if not np.isnan(final_goal.pose.position.x) and not np.isnan(final_goal.pose.position.y):
             self.final_goal_pub.publish(final_goal)
-            self.get_logger().info(f'Final goal (local): {relative_goal[0]:.3f}, {relative_goal[1]:.3f}')
+            self.get_logger().debug(f'Final goal (local): {relative_goal[0]:.3f}, {relative_goal[1]:.3f}')
 
 
 def main():

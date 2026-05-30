@@ -220,7 +220,7 @@ class RLLocalPlannerNodeROS2(Node):
             return self.get_parameter(name).get_parameter_value()
 
         self.priest_cfg = PriestConfig.from_rosparams(self)
-        self.get_logger().warn(f"[priest config] {self.priest_cfg}")
+        self.get_logger().debug(f"[priest config] {self.priest_cfg}")
 
         self.cfg = PlannerConfig(
             num_points=int(declare_get("num_points", 100).integer_value),
@@ -315,7 +315,7 @@ class RLLocalPlannerNodeROS2(Node):
             elif typ == "agent_states" and AgentStates is not None:
                 self.sub_dyn = self.create_subscription(AgentStates, t, self._on_dynamic_obstacles, 10)
             else:
-                self.get_logger().warn(
+                self.get_logger().debug(
                     f"[rl_priest_planner] dynamic_msg_type '{typ}' not available, dynamic obstacles disabled."
                 )
                 self.priest_cfg.use_obstacle_constraints = False
@@ -386,7 +386,7 @@ class RLLocalPlannerNodeROS2(Node):
         period = max(1e-3, 1.0 / max(1e-3, self.cfg.hz))
         self.timer = self.create_timer(period, self._on_timer)
 
-        self.get_logger().warn(
+        self.get_logger().debug(
             "[rl_priest_planner ROS2 omni] ready.\n"
             f"  model={self.model_path}\n"
             f"  device={self.cfg.device} (cuda_available={torch.cuda.is_available()})\n"
@@ -411,6 +411,17 @@ class RLLocalPlannerNodeROS2(Node):
 
     def _on_global_plan(self, msg: Path):
         self.latest_global_plan = msg
+        if len(msg.poses) == 0:
+            self.subgoal_position = None
+            self._publish_empty_local_paths()
+
+    def _publish_empty_local_paths(self):
+        empty = Path()
+        empty.header.frame_id = self.cfg.base_frame
+        empty.header.stamp = self.get_clock().now().to_msg()
+        self.pub_local_path.publish(empty)
+        if self.pub_local_path_rl is not None:
+            self.pub_local_path_rl.publish(empty)
 
     def _on_dynamic_obstacles(self, msg):
         self.latest_dynamic_raw = msg
@@ -513,7 +524,7 @@ class RLLocalPlannerNodeROS2(Node):
                 target, source, RosTime(), timeout=Duration(seconds=float(self.cfg.tf_timeout))
             )
         except Exception as e:
-            self.get_logger().warn(f"TF lookup failed: {target} <- {source}: {e}")
+            self.get_logger().debug(f"TF lookup failed: {target} <- {source}: {e}")
             return None
 
     def _apply_tf_xy(self, pts_src: np.ndarray, tf_msg) -> np.ndarray:
@@ -536,7 +547,7 @@ class RLLocalPlannerNodeROS2(Node):
         src_frame = gp.header.frame_id or self.cfg.global_frame
         tf_to_bl = self._lookup_tf(self.cfg.base_frame, src_frame)
         if tf_to_bl is None:
-            self.get_logger().warn(f"global plan TF missing: {src_frame} -> {self.cfg.base_frame}")
+            self.get_logger().debug(f"global plan TF missing: {src_frame} -> {self.cfg.base_frame}")
             return None
 
         xs = [ps.pose.position.x for ps in gp.poses]
@@ -607,11 +618,11 @@ class RLLocalPlannerNodeROS2(Node):
     def _on_timer(self):
         odom = self.latest_odom
         if odom is None:
-            self.get_logger().warn("skip: odom is None")
+            self.get_logger().debug("skip: odom is None")
             return
 
         if self.cfg.use_scan and self.latest_scan is None:
-            self.get_logger().warn("skip: scan is None")
+            self.get_logger().debug("skip: scan is None")
             return
 
         try:
@@ -621,7 +632,7 @@ class RLLocalPlannerNodeROS2(Node):
             if path_final is not None:
                 self.pub_local_path.publish(path_final)
             else:
-                self.get_logger().warn("skip: compute_local_path_and_priest returned None")
+                self.get_logger().debug("skip: compute_local_path_and_priest returned None")
         except Exception:
             self.get_logger().error("planner exception:\n" + traceback.format_exc())
 
@@ -961,7 +972,7 @@ class RLLocalPlannerNodeROS2(Node):
             )
         except Exception as e:
             _mark("priest_optimization", t0)
-            self.get_logger().warn(f"PRIEST failed: {e}")
+            self.get_logger().debug(f"PRIEST failed: {e}")
             self.get_logger().error("planner exception:\n" + traceback.format_exc())
             timings_ms["total"] = (perf_counter() - t_all) * 1000.0
             return path_rl_msg, path_rl_msg
@@ -978,7 +989,7 @@ class RLLocalPlannerNodeROS2(Node):
 
         timings_ms["total"] = (perf_counter() - t_all) * 1000.0
         for name, duration in sorted(timings_ms.items(), key=lambda x: x[1], reverse=True):
-            self.get_logger().info(f"[timing] {name}: {duration:.2f} ms")
+            self.get_logger().debug(f"[timing] {name}: {duration:.2f} ms")
 
         return path_rl_msg, path_final_msg
 

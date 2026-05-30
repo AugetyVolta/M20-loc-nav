@@ -147,7 +147,7 @@ class PriestMppiAdapterNavCmd(Node):
         cmd_bridge_period = 1.0 / max(1e-3, self.nav_cmd_publish_hz)
         self.cmd_bridge_timer = self.create_timer(cmd_bridge_period, self._on_cmd_bridge_timer)
 
-        self.get_logger().info(
+        self.get_logger().debug(
             "[priest_mppi_adapter_nav_cmd] ready\n"
             f"  priest_path_topic={self.priest_path_topic}\n"
             f"  path_target_frame={self.path_target_frame}\n"
@@ -171,11 +171,44 @@ class PriestMppiAdapterNavCmd(Node):
         if len(msg.poses) < self.min_path_points:
             self.latest_path = None
             self.latest_path_time = None
+            self.latest_path_seq += 1
+            self.last_sent_seq = -1
+            self.latest_cmd_time = None
+            self._publish_nav_cmd(0.0, 0.0, 0.0)
+            self._cancel_active_follow_path("local path cleared")
+            self._publish_empty_mppi_path()
             return
         self.latest_path = msg
         self.latest_path_time = self.get_clock().now()
         self.latest_path_seq += 1
         self._cancel_requested = False
+
+    def _cancel_follow_path_goal_handle(self, goal_handle, reason: str):
+        try:
+            goal_handle.cancel_goal_async()
+            self.get_logger().debug(f"Cancel FollowPath goal: {reason}")
+        except Exception as exc:
+            self.get_logger().warn(f"FollowPath cancel failed ({reason}): {exc}")
+
+    def _cancel_active_follow_path(self, reason: str):
+        self.latest_cmd_time = None
+        self._publish_nav_cmd(0.0, 0.0, 0.0)
+        goal_handle = self._active_goal_handle
+        if goal_handle is None:
+            return
+
+        self._active_goal_handle = None
+        self._active_goal_seq = -1
+        self._cancel_requested = True
+        self._cancel_follow_path_goal_handle(goal_handle, reason)
+
+    def _publish_empty_mppi_path(self):
+        if self.mppi_path_pub is None:
+            return
+        empty = Path()
+        empty.header.frame_id = self.path_target_frame
+        empty.header.stamp = self.get_clock().now().to_msg()
+        self.mppi_path_pub.publish(empty)
 
     def _on_cmd_vel(self, msg: Twist):
         self.latest_cmd_vel = msg
@@ -188,7 +221,7 @@ class PriestMppiAdapterNavCmd(Node):
         self.localization_ready = ready
         if ready:
             self._localization_timeout_active = False
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"Localization confidence recovered to {self.localization_confidence:.3f}, navigation output enabled"
             )
         else:
@@ -228,7 +261,7 @@ class PriestMppiAdapterNavCmd(Node):
                 target, source, Time(), timeout=Duration(seconds=self.tf_timeout)
             )
         except Exception as e:
-            self.get_logger().warn(f"TF lookup failed: {target} <- {source}: {e}")
+            self.get_logger().debug(f"TF lookup failed: {target} <- {source}: {e}")
             return None
 
     @staticmethod
@@ -324,18 +357,14 @@ class PriestMppiAdapterNavCmd(Node):
     def _on_goal_timer(self):
         self._refresh_localization_state()
         if not self.localization_ready:
-            if self._active_goal_handle is not None and not self._cancel_requested:
-                self._cancel_requested = True
-                self._active_goal_handle.cancel_goal_async()
+            self._cancel_active_follow_path("localization not ready")
             return
         if self.latest_path is None or self.latest_path_time is None or self._pending_goal:
             return
 
         age = (self.get_clock().now() - self.latest_path_time).nanoseconds * 1e-9
         if age > self.path_timeout:
-            if self._active_goal_handle is not None and not self._cancel_requested:
-                self._cancel_requested = True
-                self._active_goal_handle.cancel_goal_async()
+            self._cancel_active_follow_path(f"local path timeout {age:.2f}s")
             return
 
         if self.latest_path_seq == self.last_sent_seq:
@@ -347,7 +376,7 @@ class PriestMppiAdapterNavCmd(Node):
                 return
 
         if not self.follow_path_client.wait_for_server(timeout_sec=0.0):
-            self.get_logger().warn("follow_path action server not available yet")
+            self.get_logger().debug("follow_path action server not available yet")
             return
 
         path_goal = self._path_to_target_frame(self.latest_path)
@@ -379,6 +408,9 @@ class PriestMppiAdapterNavCmd(Node):
             return
         if goal_handle is None or not goal_handle.accepted:
             self.get_logger().warn("FollowPath goal rejected")
+            return
+        if goal_seq != self.latest_path_seq or self.latest_path is None:
+            self._cancel_follow_path_goal_handle(goal_handle, f"stale path seq {goal_seq}")
             return
 
         self._active_goal_handle = goal_handle
@@ -430,7 +462,7 @@ class PriestMppiAdapterNavCmd(Node):
         fb = feedback_msg.feedback
         dist = float(getattr(fb, "distance_to_goal", 0.0))
         speed = float(getattr(fb, "speed", 0.0))
-        self.get_logger().info(f"[follow_path] distance_to_goal={dist:.3f}, speed={speed:.3f}")
+        self.get_logger().debug(f"[follow_path] distance_to_goal={dist:.3f}, speed={speed:.3f}")
 
     def destroy_node(self):
         try:

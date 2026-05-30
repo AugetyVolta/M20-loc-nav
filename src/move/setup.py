@@ -23,6 +23,16 @@ setup(
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
-        'console_scripts': [],
+        'console_scripts': [
+            'pure_pursuit = move.pure_pursuit:main',
+            'priest_rl_publisher_nav_cmd = move.priest_rl_publisher_nav_cmd:main',
+            'priest_rl_publisher_nav_cmd_fast = move.priest_rl_publisher_nav_cmd_fast:main',
+            (
+                'priest_mppi_adapter_nav_cmd_dwb_smooth_responsive = '
+                'move.priest_mppi_adapter_nav_cmd_dwb_smooth_responsive:main'
+            ),
+            'global_path_publisher = move.global_path_publisher:main',
+            'global_path_seq_publisher = move.global_path_seq_publisher:main',
+        ],
     },
 )

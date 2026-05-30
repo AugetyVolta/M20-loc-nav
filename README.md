@@ -607,6 +607,7 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 5. `pointcloud_to_laserscan_node`
 6. Nav2 `map_server`
 7. Nav2 `navigation_launch.py`
+8. `move` 外部导航链路：RViz Publish Point -> waypoint manager -> Nav2 planner -> pure pursuit -> RL/PRIEST local path -> DWB adapter -> `/NAV_CMD`
 
 注意：这里使用的是 `nav2_bringup/launch/navigation_launch.py`，不是 `bringup_launch.py`，因此不会启动 AMCL。
 
@@ -618,9 +619,127 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   map:=/mnt/nvme/workspace/m20_ws/src/move/map/lab.yaml
 ```
 
-## Step 5: 启动 global path、pure pursuit、RL local path 和 DWB adapter
+## Step 5: RViz Publish Point 触发外部导航链路
 
-Nav2 启动后，再按当前验证过的方式运行 global path、pure pursuit、RL 路径发布和 adapter。当前拷贝到本工作区的 `move` / `RL2Path` 默认按 2D 链路运行：`global_path(map)` -> `subgoal(map)` -> `local_path(base_footprint)` -> adapter 输出到 `odom_nav`。
+现在默认不需要手动运行 `global_path_publisher.py`，也不再使用自定义 Nav2 行为树。单点和多点都统一用 RViz `Publish Point`：
+
+```text
+RViz Publish Point(/clicked_point)
+  -> global_path_seq_publisher 追加 waypoint
+  -> 调用 Nav2 ComputePathToPose
+  -> 发布 /global_path
+  -> pure_pursuit.py 发布 /subgoal /final_goal
+  -> priest_rl_publisher_nav_cmd_fast.py 发布 /local_path
+  -> priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py 发送 FollowPath 并转 /cmd_vel 到 /NAV_CMD
+```
+
+关键点：`Publish Point` 只借用 Nav2 的 `planner_server/compute_path_to_pose` 来算全局路径，不走 Nav2 自己的局部跟踪。后续局部路径和底盘输出仍然全部走 `move` 包里的外部链路。默认全局规划和 `/global_path` 重发布都是 2 秒级，不做高频全局路径刷新，避免无意义消耗 CPU。
+
+控制链路只使用 `/global_path`，不要把 pure pursuit 接到 Nav2 自己的 `/plan` 上；`/plan` 可能由 `planner_server` 发布调试路径，清空 waypoint 后也可能出现迟到消息。旧的 `global_path_publisher.py` 只保留为手动调试工具，不要和默认 waypoint manager 同时运行，否则两个节点会同时发布 `/global_path`。
+
+推荐启动：
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws
+source /opt/ros/humble/setup.bash
+source ~/liv_ws/install/setup.bash
+source install/setup.bash
+
+LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
+  map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml \
+  rviz:=true \
+  start_external_nav:=true
+```
+
+启动后在 RViz 里选择 `Publish Point`。只点一次就是单目标；连续点多个就是多路径点序列。
+
+### RViz 多路径点
+
+如果要一次拉多个路径点，不需要再手动运行 `global_path_seq_publisher.py` 或手写 `goals_xy`。主 launch 默认会启动 RViz waypoint 管理节点：
+
+```text
+RViz Publish Point(/clicked_point)
+  -> global_path_seq_publisher 追加 waypoint
+  -> 按顺序调用 Nav2 ComputePathToPose
+  -> 发布 /global_path
+  -> 后续仍走 pure pursuit、RL local path、adapter
+```
+
+使用方式：
+
+- 在 RViz 工具栏选择 `Publish Point`。
+- 在 2D 地图上按顺序点击多个目标点。
+- RViz 里只显示 `Waypoint Editors` 交互点，不再显示普通 `/waypoints` marker，也不再画路径点之间的连线。
+- 要编辑路径点，切到 RViz 工具栏的 `Interact`，拖动 waypoint 上的彩色圆盘；松手后会清掉旧路径并按新点位重新规划。
+- 要删除或清空，仍然用 `Interact`，右键 waypoint 旁边的小红色菜单块：`Delete this waypoint` 删除当前点，`Clear all waypoints` 清空全部目标点。
+- 如果拖不动，检查 Displays 里 `Waypoint Editors` 是否启用，Update Topic 应该是 `/waypoint_editor/update`。
+- 机器人进入 `waypoint_goal_tolerance` 范围后，会先清空旧 `/global_path`，再自动切到下一个点并重新规划。
+- 如果看起来“到了但没切”，看 `/waypoint_sequence/status`，确认距离是否已经小于容差。
+
+RViz 工具栏只保留一个 `Publish Point`，只用于新增点，避免多个同名工具分不清。删除/拖动/清空都走 Interactive Marker：
+
+| RViz 操作 | 作用 |
+|---|---|
+| `Publish Point` 点击地图 | 追加路径点 |
+| `Interact` 拖动彩色圆盘 | 移动路径点，只允许在 XY 平面移动 |
+| `Interact` 右键旁边的小红色菜单块 -> `Delete this waypoint` | 删除该路径点 |
+| `Interact` 右键旁边的小红色菜单块 -> `Clear all waypoints` | 清空全部路径点 |
+
+`/waypoint_sequence/delete_nearest` 和 `/waypoint_sequence/replace_nearest` 这两个点击 topic 仍然保留给命令行或外部脚本使用，但不再放到 RViz 工具栏里。
+
+默认参数：
+
+- `start_rviz_waypoints:=true`
+- `clicked_point_topic:=/clicked_point`
+- `waypoint_delete_topic:=/waypoint_sequence/delete_nearest`
+- `waypoint_replace_topic:=/waypoint_sequence/replace_nearest`
+- `waypoint_status_topic:=/waypoint_sequence/status`
+- `waypoints_topic:=waypoints`
+- `waypoint_replan_period:=2.0`
+- `waypoint_goal_tolerance:=1.5`
+- `waypoint_edit_radius:=1.5`
+- `waypoint_enable_interactive_markers:=true`
+- `waypoint_interactive_marker_ns:=waypoint_editor`
+
+如果不想启用 RViz 点击 waypoint 管理节点：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py start_rviz_waypoints:=false
+```
+
+清空、撤销、暂停、恢复点列可以用这些控制话题：
+
+```bash
+ros2 topic pub --once /waypoint_sequence/clear std_msgs/msg/Empty "{}"
+ros2 topic pub --once /waypoint_sequence/undo std_msgs/msg/Empty "{}"
+ros2 topic pub --once /waypoint_sequence/pause std_msgs/msg/Empty "{}"
+ros2 topic pub --once /waypoint_sequence/resume std_msgs/msg/Empty "{}"
+```
+
+当前状态可以这样看：
+
+```bash
+ros2 topic echo /waypoint_sequence/status
+```
+
+如果 RL 环境不在默认的 `~/venv/m20_nav/bin/python`，启动时覆盖：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  rl_python_executable:=/path/to/python
+```
+
+如果只想启动 Fast-LIO + Nav2，不启动外部导航链路：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py start_external_nav:=false
+```
+
+### 手动模式
+
+需要回退到旧的手动发布方式时，先用 `start_external_nav:=false` 启动主 launch，然后手动运行 global path、pure pursuit、RL local path 和 adapter。当前拷贝到本工作区的 `move` / `RL2Path` 默认按 2D 链路运行：`global_path(map)` -> `subgoal(map)` -> `local_path(base_footprint)` -> adapter 输出到 `odom_nav`。
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws
@@ -630,30 +749,21 @@ source install/setup.bash
 python3 src/move/move/global_path_publisher.py
 ```
 
-如果要按多个点顺序跑，用 sequence publisher。当前稳定分支默认点列在 `global_path_seq_publisher.py` 的
-`goals_xy` 里，发布话题仍是 `/global_path`：
+如果要按多个点顺序跑，用 sequence publisher。当前稳定分支默认不再内置静态点列，避免节点启动后没点击就出现默认终点；发布话题仍是 `/global_path`：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
 python3 src/move/move/global_path_seq_publisher.py
 ```
 
-`pure_pursuit.py` 必须和 global Path 发布配合使用：global publisher 发布 `/global_path`，pure pursuit 通过 remap 订阅这条全局路径，并发布 `/subgoal` / `/final_goal` 给 RL local path 使用。
+如果确实要用写死的静态点列，启动时显式传 `use_static_goals:=true` 和 `goals_xy:=[x1,y1,x2,y2,...]`。
 
-另开终端：
+pure pursuit：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
 python3 src/move/move/pure_pursuit.py --ros-args -r plan:=global_path
 ```
 
-另开终端：
+RL local path：
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws

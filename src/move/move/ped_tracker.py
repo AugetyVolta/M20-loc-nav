@@ -206,7 +206,7 @@ class PedestrianTrackerOdomNode(Node):
         self.last_seen = {}
         self._warned_neg_id = False
 
-        self.get_logger().info("Pedestrian tracker: KF in 'odom', publish ABSOLUTE velocity/position expressed in 'base_link' (strict sync).")
+        self.get_logger().debug("Pedestrian tracker: KF in 'odom', publish ABSOLUTE velocity/position expressed in 'base_link' (strict sync).")
 
     # ----------------- 工具 -----------------
 
@@ -230,7 +230,7 @@ class PedestrianTrackerOdomNode(Node):
     # ----------------- 主同步回调（严格同步） -----------------
 
     def sync_cb(self, img_msg: Image, scan_msg: LaserScan, odom_msg: Odometry):
-        self.get_logger().warn(f"sync_call_back")
+        self.get_logger().debug("sync_call_back")
         if self.K is None:
             return
         if self.skip_rate > 0 and (self.frame_count % (self.skip_rate + 1) != 0):
@@ -265,13 +265,13 @@ class PedestrianTrackerOdomNode(Node):
                              T_ob.transform.translation.y,
                              T_ob.transform.translation.z])
         except Exception as e:
-            self.get_logger().warn(f"TF lookup failed: {e}")
+            self.get_logger().debug(f"TF lookup failed: {e}")
             return
 
         try:
             frame = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
         except Exception as e:
-            self.get_logger().warn(f"cv_bridge failed: {e}")
+            self.get_logger().debug(f"cv_bridge failed: {e}")
             return
 
         results = self.model.track(
@@ -398,7 +398,7 @@ class PedestrianTrackerOdomNode(Node):
                 t_ob=t_ob
             )
         except Exception as e:
-            self.get_logger().warn(f"Debug viz failed: {e}")
+            self.get_logger().debug(f"Debug viz failed: {e}")
 
         self._prune_filters(now_sec)
         self._publish(stamp, R_ob, t_ob)
@@ -571,7 +571,7 @@ class PedestrianTrackerOdomNode(Node):
             img_msg.header.frame_id = 'camera'
             self.debug_img_pub.publish(img_msg)
         except Exception as e:
-            self.get_logger().warn(f"Publish debug image failed: {e}")
+            self.get_logger().debug(f"Publish debug image failed: {e}")
 
         # 可选：保存 PNG
         if self.debug_save_png:
@@ -590,7 +590,7 @@ class PedestrianTrackerOdomNode(Node):
                 else:
                     cv2.imwrite(out_file, vis)
             except Exception as e:
-                self.get_logger().warn(f"Save debug PNG failed: {e}")
+                self.get_logger().debug(f"Save debug PNG failed: {e}")
 
     def _prune_filters(self, now_sec: float):
         to_del = []

@@ -85,7 +85,7 @@ class FastRLLocalPlannerNodeROS2(base.RLLocalPlannerNodeROS2):
         self.costmap.generate = self._costmap_generate_dispatch
         self.costmap.inflate = self._costmap_inflate_dispatch
 
-        self.get_logger().warn(
+        self.get_logger().debug(
             "[fast_nav] enabled: "
             f"spline={self.fast_spline_enabled}/{self.fast_spline_mode}, "
             f"spline_max_points={self.fast_spline_max_points}, "
