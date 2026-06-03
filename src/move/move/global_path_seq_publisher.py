@@ -80,7 +80,7 @@ class GlobalPathSequencePublisher(Node):
 
         # Frames/topics.
         self.declare_parameter("global_frame", "map")
-        self.declare_parameter("robot_frame", "base_footprint")
+        self.declare_parameter("robot_frame", "base_link")
         self.declare_parameter("path_topic", "global_path")
         self.declare_parameter("publish_pure_pursuit_plan", True)
         self.declare_parameter("pure_pursuit_plan_topic", "global_path")

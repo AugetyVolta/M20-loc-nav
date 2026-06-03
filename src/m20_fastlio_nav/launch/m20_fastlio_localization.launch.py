@@ -146,7 +146,7 @@ def generate_launch_description():
         ],
         parameters=[
             {
-                "target_frame": "base_footprint",
+                "target_frame": "base_link",
                 "transform_tolerance": 0.05,
                 "min_height": -0.5,
                 "max_height": 0.35,
@@ -190,7 +190,7 @@ def generate_launch_description():
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom"),
             DeclareLaunchArgument("start_scan", default_value="true"),
-            DeclareLaunchArgument("publish_flattened_nav", default_value="true"),
+            DeclareLaunchArgument("publish_flattened_nav", default_value="false"),
             DeclareLaunchArgument("rviz", default_value="false"),
             SetEnvironmentVariable(
                 "LD_LIBRARY_PATH",

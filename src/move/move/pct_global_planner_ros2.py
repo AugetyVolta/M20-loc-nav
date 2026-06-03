@@ -30,7 +30,7 @@ def _default_planner_root() -> str:
         return env_root
 
     workspace_root = Path(__file__).resolve().parents[3]
-    candidate = workspace_root / "third_party" / "global_path_planning"
+    candidate = workspace_root / "src" / "global_path_planning"
     return str(candidate)
 
 
@@ -141,7 +141,7 @@ class PctGlobalPlannerRos2(Node):
         except Exception as exc:
             raise RuntimeError(
                 "Failed to import vendored PCT planner. Build it first with:\n"
-                "  cd third_party/global_path_planning/planner\n"
+                "  cd src/global_path_planning/planner\n"
                 "  ./build_thirdparty.sh\n"
                 "  ./build.sh\n"
                 "and make sure the launch LD_LIBRARY_PATH includes the PCT planner lib paths."

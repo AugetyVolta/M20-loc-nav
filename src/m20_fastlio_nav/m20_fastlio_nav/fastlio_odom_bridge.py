@@ -135,7 +135,7 @@ class FastLioOdomBridge(Node):
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("nav_base_frame", "base_footprint")
         self.declare_parameter("publish_tf", True)
-        self.declare_parameter("publish_flattened_nav", True)
+        self.declare_parameter("publish_flattened_nav", False)
         self.declare_parameter("reset_on_wall_time_gap", True)
         self.declare_parameter("bag_switch_wall_gap_sec", 1.5)
         self.declare_parameter(

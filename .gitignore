@@ -59,11 +59,11 @@ maps/*
 
 # Vendored PCT planner build/runtime outputs. The source is tracked, but
 # generated pybind libraries and tomogram pickles should be rebuilt locally.
-third_party/global_path_planning/planner/lib/build/
-third_party/global_path_planning/planner/lib/*.so
-third_party/global_path_planning/planner/lib/3rdparty/gtsam-4.1.1/build/
-third_party/global_path_planning/planner/lib/3rdparty/gtsam-4.1.1/install/
-third_party/global_path_planning/planner/lib/3rdparty/osqp/build/
-third_party/global_path_planning/planner/lib/3rdparty/osqp/install/
-third_party/global_path_planning/rsc/tomogram/*.pickle
-!third_party/global_path_planning/**/*.csv
+src/global_path_planning/planner/lib/build/
+src/global_path_planning/planner/lib/*.so
+src/global_path_planning/planner/lib/3rdparty/gtsam-4.1.1/build/
+src/global_path_planning/planner/lib/3rdparty/gtsam-4.1.1/install/
+src/global_path_planning/planner/lib/3rdparty/osqp/build/
+src/global_path_planning/planner/lib/3rdparty/osqp/install/
+src/global_path_planning/rsc/tomogram/*.pickle
+!src/global_path_planning/**/*.csv

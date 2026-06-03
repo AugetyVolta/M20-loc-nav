@@ -1,7 +1,7 @@
 # M20 MID360 Fast-LIO2 建图定位导航系统
 
-本文档描述的是当前稳定分支 `stable/fastlio-localization`。这个工作空间用于把 MID360 的 Fast-LIO2
-建图/定位结果接入 Nav2，并运行当前拷贝到本工作区的 RL local path + Nav2 DWB adapter。
+本文档优先描述当前分支 `feature/3d-body-plane-nav`。这个工作空间用于把 MID360 的 Fast-LIO2
+建图/定位结果接入 PCT 3D 全局规划、PRIEST/RL local path 和 Nav2 DWB body-plane 控制链路。
 
 当前工作空间是独立复制出来的，不依赖 `m20_ws/src` 里的软链接。除非明确说明，本 README 里的命令都在：
 
@@ -11,16 +11,16 @@
 
 ## 分支定位
 
-当前仓库有三条主要线：
+当前仓库有几条主要线：
 
 | 分支 | 定位/导航方案 | 状态 |
 |---|---|---|
-| `stable/fastlio-localization` | `fast_lio` + `open3d_loc` + Nav2 DWB + RL local path | 当前稳定版。本 README 只按这个分支维护和验证 |
-| `feature/stair-body-plane-dwb` | 内置 PCT 3D 全局路径 + `base_link/odom_body` body-plane DWB + 2D local path | 上楼梯实验分支。默认导航入口已切到 3D/body-plane 链路 |
+| `feature/3d-body-plane-nav` | 内置 PCT 3D 全局路径 + `base_link/odom_body` body-plane DWB + 2D local path | 当前分支。平地、坡道、楼梯使用同一套 3D/body-plane 链路 |
+| `stable/fastlio-localization` | `fast_lio` + `open3d_loc` + Nav2 DWB + RL local path | 旧 2D 稳定版，后半段资料仍可用于回退排查 |
 | `main` | `fast_lio` + `open3d_loc` | 之前的主线实现，保留用于对比，不代表当前稳定部署状态 |
 | `point-lio-lidar-localization` | `point_lio_ros2` + `lidar_localization_ros2` + `ndt_omp_ros2` | Point-LIO/NDT 实验分支，第三方源码直接放在 `src/` |
 
-使用当前稳定版：
+回退旧 2D 稳定版：
 
 ```bash
 git switch stable/fastlio-localization
@@ -33,22 +33,24 @@ git pull origin stable/fastlio-localization
 git switch point-lio-lidar-localization
 ```
 
-## 当前稳定版要点
+## 当前 3D 分支要点
 
 - 3D 建图：`fast_lio_map` 前端保存 `m20_map.pcd`，`slam_mapping/alaserPGO` 后端保存 `global_map.pcd` 和 `sc_database.txt`。
 - 3D 定位：Open3D 使用 `/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd`。
-- 2D 地图：`pcd2pgm` 默认输入 `global_map.pcd`，内部完成摆平、地面基准对齐，再生成 `m20_2d_map.pgm/.yaml`。
-- Nav2：`m20_fastlio_nav.launch.py` 启动 Fast-LIO 定位、Open3D、`/scan`、map server 和 Nav2 navigation，不启动 AMCL。
-- 局部路径：`global_path` -> `pure_pursuit` 发布 `subgoal` -> RL/PRIEST 发布 `local_path` -> DWB adapter 转成 `/NAV_CMD`。
+- 3D 全局路径：`src/global_path_planning` 内置 PCT planner，`pct_global_planner_ros2` 输出保留 `z` 的 `/global_path`。
+- 局部路径：PRIEST/RL 仍生成 `base_link` 平面的 2D `/local_path`。
+- 控制 frame：Nav2 DWB 使用 `odom_body/base_link`，local costmap 使用 `/scan_body`，默认不再发布旧 `odom_nav/base_footprint` 平面链路。
+- 默认入口：`ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py` 包装到 `m20_fastlio_3d_nav.launch.py`。
 
-## 实验：3D 全局路径 + body-plane DWB 上楼梯
+## 3D 全局路径 + body-plane DWB 导航
 
-本分支 `feature/stair-body-plane-dwb` 用于验证“全局路径 3D、局部路径仍 2D”的楼梯导航方案。核心假设是：
+本分支 `feature/3d-body-plane-nav` 用于验证“全局路径 3D、局部路径仍 2D”的通用 3D 导航方案。核心假设是：
 
 - FastLIO/Open3D 继续提供 3D 定位和 `map -> odom`。
 - 全局规划使用 vendor 到本仓库的 PCT planner，输出带 `z` 的 `/global_path`。
 - 本仓库的 PRIEST/RL local planner 不改成 3D，只把 3D 全局路径通过完整 TF 投影到当前 `base_link` 平面，在这个平面上生成二维 `/local_path`。
 - DWB 不再用 `odom_nav/base_footprint`，而使用新增的 `odom_body/base_link`。`odom_body` 的姿态始终和 `base_link` 平行，local costmap 和机器狗机体平面对齐。
+- 这套链路不是楼梯专用：只要全局规划输入的 3D tomogram 覆盖环境，平地、坡道、楼梯和多层通道都走同一套接口。
 
 实验链路：
 
@@ -73,12 +75,12 @@ Nav2 DWB(body-plane config) -> /cmd_vel -> /NAV_CMD
 新增文件：
 
 ```text
-src/m20_fastlio_nav/launch/m20_fastlio_stair_body_nav.launch.py
+src/m20_fastlio_nav/launch/m20_fastlio_3d_nav.launch.py
 src/m20_fastlio_nav/config/nav2_dwb_body_plane.yaml
 src/m20_fastlio_nav/m20_fastlio_nav/body_plane_odom_bridge.py
 src/move/move/pct_global_planner_ros2.py
 src/move/move/pct_path_adapter.py       # 只作为外部 /pct_path 备用适配
-third_party/global_path_planning/        # PCT planner 原始源码，保留 LICENSE/NOTICE
+src/global_path_planning/                # PCT planner 原始源码，保留 LICENSE/NOTICE
 ```
 
 ### 内置 PCT planner
@@ -88,7 +90,7 @@ third_party/global_path_planning/        # PCT planner 原始源码，保留 LIC
 PCT planner 已经 vendor 到：
 
 ```text
-/mnt/nvme/workspace/fast_lio_ws/third_party/global_path_planning
+/mnt/nvme/workspace/fast_lio_ws/src/global_path_planning
 ```
 
 原始 PCT 是 ROS1/Python 风格，本分支新增了 ROS2 wrapper：
@@ -114,7 +116,7 @@ ROS2 wrapper 订阅：
 PCT 的 C++/pybind 扩展和 tomogram 需要单独准备。第一次使用前编译：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws/third_party/global_path_planning/planner
+cd /mnt/nvme/workspace/fast_lio_ws/src/global_path_planning/planner
 ./build_thirdparty.sh
 ./build.sh
 ```
@@ -125,19 +127,19 @@ cd /mnt/nvme/workspace/fast_lio_ws/third_party/global_path_planning/planner
 /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd
 ```
 
-PCT 侧的 tomography 配置需要按楼梯地图修改输入 PCD、分辨率和高度切片，然后生成 planner 读取的 tomogram pickle。默认启动参数读取：
+PCT 侧的 tomography 配置需要按当前 3D 地图修改输入 PCD、分辨率和高度切片，然后生成 planner 读取的 tomogram pickle。默认启动参数读取：
 
 ```text
-third_party/global_path_planning/rsc/tomogram/output.pickle
+src/global_path_planning/rsc/tomogram/output.pickle
 ```
 
 如果使用别的文件名，通过 launch 覆盖：
 
 ```bash
-ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py pct_tomogram_file:=stair1
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py pct_tomogram_file:=demo_3d
 ```
 
-### 启动本仓库楼梯链路
+### 启动本仓库 3D 导航链路
 
 真机：
 
@@ -148,10 +150,10 @@ source ~/liv_ws/install/setup.bash
 source install/setup.bash
 
 LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
-ros2 launch m20_fastlio_nav m20_fastlio_stair_body_nav.launch.py
+ros2 launch m20_fastlio_nav m20_fastlio_3d_nav.launch.py
 ```
 
-`m20_fastlio_nav.launch.py` 现在也是 3D/body-plane 入口的包装，平地和楼梯都可以直接使用：
+`m20_fastlio_nav.launch.py` 现在也是 3D/body-plane 入口的包装，平地、坡道和多层场景都可以直接使用：
 
 ```bash
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py
@@ -166,7 +168,7 @@ source ~/liv_ws/install/setup.bash
 source install/setup.bash
 
 LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
-ros2 launch m20_fastlio_nav m20_fastlio_stair_body_nav.launch.py use_sim_time:=true
+ros2 launch m20_fastlio_nav m20_fastlio_3d_nav.launch.py use_sim_time:=true
 ```
 
 另一个终端播放：
@@ -212,7 +214,7 @@ ros2 topic echo /global_path --once
 ros2 topic echo /pct_global_planner/status --once
 ```
 
-不要在 PCT 模式同时启动 RViz Publish Point waypoint manager 或旧的 `global_path_seq_publisher.py`，否则会有两个节点同时发布 `/global_path`。`m20_fastlio_nav.launch.py` 和 `m20_fastlio_stair_body_nav.launch.py` 已经默认关闭它们。
+不要在 PCT 模式同时启动 RViz Publish Point waypoint manager 或旧的 `global_path_seq_publisher.py`，否则会有两个节点同时发布 `/global_path`。`m20_fastlio_nav.launch.py` 和 `m20_fastlio_3d_nav.launch.py` 已经默认关闭它们。
 
 ### 关键调试话题
 
@@ -228,34 +230,38 @@ ros2 run tf2_ros tf2_echo odom_body base_link
 ros2 run tf2_ros tf2_echo base_link map
 ```
 
-`/local_path` 应该是 `frame_id=base_link`、`z=0` 的二维路径；`/mppi_path` 应该是 `frame_id=odom_body`。`/global_path` 来自 PCT，应该是 `frame_id=map` 且 `pose.position.z` 有楼梯高度变化。
+`/local_path` 应该是 `frame_id=base_link`、`z=0` 的二维路径；`/mppi_path` 应该是 `frame_id=odom_body`。`/global_path` 来自 PCT，应该是 `frame_id=map` 且 `pose.position.z` 保留 3D 高度变化。
 
 ### 现场最需要调的参数
 
 `body_scan_min_height` / `body_scan_max_height`：
 
 - 默认 `-0.10 ~ 0.65`，用于从 `base_link` 平面生成 `/scan_body`。
-- 如果楼梯立面被大量当成障碍，先把 `body_scan_min_height` 提高到 `0.05` 或 `0.10`，让 costmap 更偏向检测墙、人、栏杆，而不是检测可行走的台阶面。
+- 如果可行走高度变化区域被大量当成障碍，先把 `body_scan_min_height` 提高到 `0.05` 或 `0.10`，让 costmap 更偏向检测墙、人、栏杆，而不是检测可行走面。
 - 如果低矮障碍漏检，再把 `body_scan_min_height` 降回负值。
 
 `nav2_dwb_body_plane.yaml`：
 
-- `max_vel_x: 0.45`、`max_vel_theta: 0.45` 是楼梯实验的保守起点。
+- `max_vel_x: 0.45`、`max_vel_theta: 0.45` 是 3D 导航实验的保守起点。
 - `RotateToGoal.scale: 1.5`，避免 DWB 为了追局部路径末端姿态做急转。
-- local costmap 不启用 static layer，只用 `/scan_body`，因为 2D map 在楼梯上不再表达真实可通行高度。
+- local costmap 不启用 static layer，只用 `/scan_body`，因为 2D map 在 3D 高度变化场景里不再表达真实可通行高度。
 
 PRIEST/RL：
 
-- 楼梯模式通过 `global_plan_use_3d:=true` 使用完整 3D TF 取前视点，但输出仍是二维 `base_link` 平面路径。
-- 如果上楼时局部目标太激进，优先降低 `pp_lookahead` 或 `virt_goal_pref`；如果路径回归太急，优先降低 DWB 的 `PathDist.scale`、`PathAlign.scale` 或提高 adapter 重发频率。
+- 3D 模式通过 `global_plan_use_3d:=true` 使用完整 3D TF 取前视点，但输出仍是二维 `base_link` 平面路径。
+- 如果高差场景里局部目标太激进，优先降低 `pp_lookahead` 或 `virt_goal_pref`；如果路径回归太急，优先降低 DWB 的 `PathDist.scale`、`PathAlign.scale` 或提高 adapter 重发频率。
 
 ### 当前边界
 
 - PCT 源码已经放进当前仓库，但其 pybind C++ 扩展和 tomogram pickle 仍需要本机编译/生成。
 - `odom_body` 是非标准的动态机体平行 odom frame，适合短视距 local costmap/DWB 跟踪，不建议拿它做全局规划或长时间轨迹记录。
-- 机器狗能不能稳定上楼仍取决于底盘步态控制和楼梯几何；本分支只解决导航坐标系、路径投影和局部避障接口。
+- 机器狗能不能稳定通过高差场景仍取决于底盘步态控制和地形几何；本分支只解决导航坐标系、路径投影和局部避障接口。
 
-## 系统目标
+## 旧 2D 稳定版资料
+
+下面内容保留给 `stable/fastlio-localization` 和旧 2D Nav2 链路排查使用。当前 `feature/3d-body-plane-nav` 分支默认启动前面的 3D/body-plane 链路，不再默认发布 `map -> odom_nav -> base_footprint`。
+
+## 旧 2D 系统目标
 
 原系统依赖简陋轮速/运动估计 `/odom` 加 AMCL 做定位。这个方案替换为：
 
@@ -368,7 +374,7 @@ git rm --cached maps/fastlio/global_map.pcd \
 这个命令只从 Git 索引移除，不删除你本地磁盘上的地图文件。当前 `stable/fastlio-localization`、`main`
 和 `point-lio-lidar-localization` 都按这个规则处理。
 
-`src/move/ckpts/` 是例外：当前稳定版运行 RL local path 默认依赖 `ckpt_3/best_agent.pt` 和
+`src/move/ckpts/` 是例外：旧 2D 稳定版运行 RL local path 默认依赖 `ckpt_3/best_agent.pt` 和
 `ckpt_3/params/agent.pkl`，因此本分支允许 checkpoint 文件进入 Git。`.gitignore` 仍会默认忽略其它路径下的
 `*.pt`、`*.pth`、`*.onnx`、`*.engine`、`*.pkl`，避免无关模型产物误入库。
 
@@ -382,7 +388,7 @@ git rm --cached maps/fastlio/global_map.pcd \
 | `open3d_loc` | luckrobot 的 Open3D ICP/NDT 类定位节点，发布 `map -> odom` | 定位/导航 |
 | `pcd2pgm` | 把 3D PCD 转成 2D 占据栅格，再用 map_saver 保存 | 地图转换 |
 | `m20_fastlio_nav` | 本系统新增 glue 包：TF、参数、launch、`/Odometry_loc` -> `/odom` | 全流程 |
-| `move` | 当前稳定版使用的 global path、pure pursuit、RL local path 和 DWB adapter | 局部导航 |
+| `move` | 3D 分支使用 PCT wrapper、PRIEST/RL local path 和 DWB adapter；旧 2D 稳定版也使用 waypoint/pure pursuit 工具 | 局部导航 |
 | `RL2Path` | RL/PRIEST local planner 依赖代码和模型配置 | 局部导航 |
 
 ## 关键文件
@@ -468,7 +474,7 @@ quaternion:  [-0.00394028, 0.24367785, 0.00970223, 0.96979969]   ->  Euler: roll
 
 这个倾角导致建图坐标系（`camera_init`）的 Z 轴不是真正垂直的。因此 **PCD 转 2D 地图前必须先做摆平处理**。现在 `pcd2pgm` 会在转图流程里按 `pcd2pgm_m20.yaml` 自动完成摆平和地面基准对齐，不再需要为 2D 地图单独运行 `src/m20_fastlio_nav/scripts/level_pcd.py`。
 
-定位阶段的实时 `/scan` 使用 `pointcloud_to_laserscan(target_frame=base_footprint)`，会通过 TF 自动转平，不受影响。
+定位阶段的实时 `/scan` 使用 `pointcloud_to_laserscan(target_frame=base_link)`，会通过 TF 自动转平，不受影响。
 
 ### 外参修改范围
 
@@ -793,7 +799,7 @@ python3 src/m20_fastlio_nav/scripts/level_pcd.py \
 /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml      # 2D 地图（pcd2pgm 从 global_map.pcd 生成）
 ```
 
-注意：Open3D 的 3D 定位地图和 Nav2 的 2D 地图是两个文件。当前稳定版中，Open3D 仍读取
+注意：Open3D 的 3D 定位地图和 Nav2 的 2D 地图是两个文件。旧 2D 稳定版中，Open3D 仍读取
 `m20_map_leveled.pcd`；2D map 由 `pcd2pgm` 从 `global_map.pcd` 生成，并在转图过程中内部摆平和对齐地面基准。
 
 启动：
@@ -954,7 +960,7 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py start_external_nav:=false
 
 ### 手动模式
 
-需要回退到旧的手动发布方式时，先用 `start_external_nav:=false` 启动主 launch，然后手动运行 global path、pure pursuit、RL local path 和 adapter。当前拷贝到本工作区的 `move` / `RL2Path` 默认按 2D 链路运行：`global_path(map)` -> `subgoal(map)` -> `local_path(base_footprint)` -> adapter 输出到 `odom_nav`。
+需要手动调试时，先用 `start_external_nav:=false` 启动主 launch，然后手动运行 global path、pure pursuit、RL local path 和 adapter。当前 3D 分支的 `move` 默认 frame 是 `global_path(map)` -> `subgoal(map)` -> `local_path(base_link)` -> adapter 输出到 `odom_body`。
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws

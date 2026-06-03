@@ -98,7 +98,7 @@ controller_server:
       max_vel_y: 0.0
       max_vel_theta: 0.45
 
-      # Stair mode favors forward progress and avoids sharp heading corrections.
+      # 3D body-plane mode favors forward progress and avoids sharp heading corrections.
       min_speed_xy: 0.12
       max_speed_xy: 0.45
       min_speed_theta: 0.22

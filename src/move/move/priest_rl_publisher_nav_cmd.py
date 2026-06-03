@@ -201,9 +201,9 @@ class PlannerConfig:
     # 框架/话题
     use_scan: bool = True
     global_frame: str = "map"
-    odom_frame: str = "odom_nav"
-    base_frame: str = "base_footprint"
-    frame_id: str = "base_footprint"
+    odom_frame: str = "odom_body"
+    base_frame: str = "base_link"
+    frame_id: str = "base_link"
     tf_timeout: float = 0.2
     global_plan_topic: str = "global_path"
     global_plan_use_3d: bool = False
@@ -244,9 +244,9 @@ class RLLocalPlannerNodeROS2(Node):
 
             use_scan=bool(declare_get("use_scan", True).bool_value),
             global_frame=str(declare_get("global_frame", "map").string_value),
-            odom_frame=str(declare_get("odom_frame", "odom_nav").string_value),
-            base_frame=str(declare_get("base_frame", "base_footprint").string_value),
-            frame_id=str(declare_get("frame_id", "base_footprint").string_value),
+            odom_frame=str(declare_get("odom_frame", "odom_body").string_value),
+            base_frame=str(declare_get("base_frame", "base_link").string_value),
+            frame_id=str(declare_get("frame_id", "base_link").string_value),
             tf_timeout=float(declare_get("tf_timeout", 0.08).double_value),
             global_plan_topic=str(declare_get("global_plan_topic", "global_path").string_value),
             global_plan_use_3d=bool(declare_get("global_plan_use_3d", False).bool_value),
@@ -432,7 +432,7 @@ class RLLocalPlannerNodeROS2(Node):
     # ---------- 动态障碍解析（支持 MarkerArray 文本 vx,vy） ----------
     def _process_dynamic_obstacles_current(self, msg) -> np.ndarray:
         """
-        返回 ndarray (N,4): [x, y, vx, vy]，坐标在 base_footprint。
+        返回 ndarray (N,4): [x, y, vx, vy]，坐标在 base_link。
         MarkerArray: 从 TEXT_VIEW_FACING 的 text 中解析 vx, vy
         """
         if msg is None:
@@ -488,7 +488,7 @@ class RLLocalPlannerNodeROS2(Node):
 
     def _update_dyn_hist_once(self, msg):
         pad = self.priest_cfg.padding_distance
-        arr = self._process_dynamic_obstacles_current(msg)  # (N,4) base_footprint
+        arr = self._process_dynamic_obstacles_current(msg)  # (N,4) base_link
         if arr.shape[0] > 0:
             order = np.argsort(np.linalg.norm(arr[:, :2], axis=1))
             arr = arr[order][:self.max_dyn]
@@ -910,10 +910,10 @@ class RLLocalPlannerNodeROS2(Node):
         path_pts_rel = batch_cubic_spline_interpolation(path_pts_rel, num_points=num_interp)
         _mark("spline_resample", t0)
 
-        # 12) 旋回 base_footprint
+        # 12) 旋回 base_link
         t0 = perf_counter()
         path_pts_bl_all = rotate_xy_tensor(path_pts_rel, neg_yaw_rows)
-        _mark("rotate_back_to_base_footprint", t0)
+        _mark("rotate_back_to_base_link", t0)
 
         # 13) RL 调试路径
         t0 = perf_counter()

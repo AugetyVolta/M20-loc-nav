@@ -24,7 +24,7 @@ from m20_fastlio_nav.fastlio_odom_bridge import (
 
 
 class BodyPlaneOdomBridge(Node):
-    """Publish a body-parallel odometry frame for stair local navigation."""
+    """Publish a body-parallel odometry frame for 3D local navigation."""
 
     def __init__(self) -> None:
         super().__init__("body_plane_odom_bridge")

@@ -263,7 +263,7 @@ def generate_launch_description():
             DeclareLaunchArgument("start_body_scan", default_value="true"),
             DeclareLaunchArgument(
                 "pct_planner_root",
-                default_value="/mnt/nvme/workspace/fast_lio_ws/third_party/global_path_planning",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/src/global_path_planning",
             ),
             DeclareLaunchArgument("pct_tomogram_file", default_value="output"),
             DeclareLaunchArgument("pct_tomogram_dir", default_value="/rsc/tomogram/"),

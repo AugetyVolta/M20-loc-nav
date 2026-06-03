@@ -37,8 +37,8 @@ class PriestMppiAdapterNavCmd(Node):
         super().__init__("priest_mppi_adapter_nav_cmd")
 
         self.declare_parameter("priest_path_topic", "local_path")
-        self.declare_parameter("path_target_frame", "odom_nav")
-        self.declare_parameter("base_frame", "base_footprint")
+        self.declare_parameter("path_target_frame", "odom_body")
+        self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("tf_timeout", 0.03)
         self.declare_parameter("path_timeout", 1.0)
         self.declare_parameter("goal_send_hz", 5.0)

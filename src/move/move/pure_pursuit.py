@@ -14,7 +14,7 @@
 #
 # Frames:
 #   world_frame (default: "map")
-#   robot_frame (default: "base_footprint")
+#   robot_frame (default: "base_link")
 #
 # Parameters (ROS2):
 #   lookahead   [double, default 1.0]  Lookahead distance (m)
@@ -25,7 +25,7 @@
 #   v_max       [double, default 0.5]  Max linear velocity (m/s)             # kept for parity
 #   w_max       [double, default 5.0]  Max angular velocity (rad/s)          # kept for parity
 #   world_frame [string, default "map"]
-#   robot_frame [string, default "base_footprint"]
+#   robot_frame [string, default "base_link"]
 #
 # Notes:
 # - Uses tf2_ros Buffer/TransformListener to query robot pose.
@@ -71,7 +71,7 @@ class PurePursuitNode(Node):
         self.declare_parameter('w_max', 0.5)
 
         self.declare_parameter('world_frame', 'map')
-        self.declare_parameter('robot_frame', 'base_footprint')
+        self.declare_parameter('robot_frame', 'base_link')
 
         self.lookahead = float(self.get_parameter('lookahead').value)
         self.rate = float(self.get_parameter('rate').value)

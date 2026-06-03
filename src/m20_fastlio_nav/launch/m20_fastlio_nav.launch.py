@@ -27,10 +27,10 @@ def generate_launch_description():
     body_scan_max_height = LaunchConfiguration("body_scan_max_height")
     rl_python_executable = LaunchConfiguration("rl_python_executable")
 
-    stair_body_nav = IncludeLaunchDescription(
+    nav_3d = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
-                [FindPackageShare("m20_fastlio_nav"), "launch", "m20_fastlio_stair_body_nav.launch.py"]
+                [FindPackageShare("m20_fastlio_nav"), "launch", "m20_fastlio_3d_nav.launch.py"]
             )
         ),
         launch_arguments={
@@ -80,7 +80,7 @@ def generate_launch_description():
             DeclareLaunchArgument("start_body_scan", default_value="true"),
             DeclareLaunchArgument(
                 "pct_planner_root",
-                default_value="/mnt/nvme/workspace/fast_lio_ws/third_party/global_path_planning",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/src/global_path_planning",
             ),
             DeclareLaunchArgument("pct_tomogram_file", default_value="output"),
             DeclareLaunchArgument("pct_tomogram_dir", default_value="/rsc/tomogram/"),
@@ -96,6 +96,6 @@ def generate_launch_description():
                     [EnvironmentVariable("HOME"), "venv", "m20_nav", "bin", "python"]
                 ),
             ),
-            stair_body_nav,
+            nav_3d,
         ]
     )
