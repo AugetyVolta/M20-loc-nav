@@ -48,12 +48,23 @@ def generate_launch_description():
     robot_frame = LaunchConfiguration("robot_frame")
     odom_frame = LaunchConfiguration("odom_frame")
     path_target_frame = LaunchConfiguration("path_target_frame")
+    odom_topic = LaunchConfiguration("odom_topic")
+    scan_topic = LaunchConfiguration("scan_topic")
+    global_plan_use_3d = LaunchConfiguration("global_plan_use_3d")
+    adapter_path_transform_use_3d = LaunchConfiguration("adapter_path_transform_use_3d")
 
     lookahead = LaunchConfiguration("lookahead")
     pure_pursuit_rate = LaunchConfiguration("pure_pursuit_rate")
     rl_hz = LaunchConfiguration("rl_hz")
+    rl_pp_lookahead = LaunchConfiguration("rl_pp_lookahead")
+    rl_virt_goal_min = LaunchConfiguration("rl_virt_goal_min")
+    rl_virt_goal_max = LaunchConfiguration("rl_virt_goal_max")
+    rl_virt_goal_pref = LaunchConfiguration("rl_virt_goal_pref")
     device = LaunchConfiguration("device")
     require_localization_confidence = LaunchConfiguration("require_localization_confidence")
+    adapter_goal_send_hz = LaunchConfiguration("adapter_goal_send_hz")
+    adapter_min_goal_resend_interval = LaunchConfiguration("adapter_min_goal_resend_interval")
+    adapter_path_timeout = LaunchConfiguration("adapter_path_timeout")
 
     common_env = {
         "PYTHONUNBUFFERED": "1",
@@ -130,6 +141,10 @@ def generate_launch_description():
             "-r",
             ["local_path:=", local_path_topic],
             "-r",
+            ["odom:=", odom_topic],
+            "-r",
+            ["scan:=", scan_topic],
+            "-r",
             ["subgoal:=", subgoal_topic],
             "-r",
             ["final_goal:=", final_goal_topic],
@@ -146,7 +161,17 @@ def generate_launch_description():
             "-p",
             ["odom_frame:=", odom_frame],
             "-p",
+            ["global_plan_use_3d:=", global_plan_use_3d],
+            "-p",
             ["hz:=", rl_hz],
+            "-p",
+            ["pp_lookahead:=", rl_pp_lookahead],
+            "-p",
+            ["virt_goal_min:=", rl_virt_goal_min],
+            "-p",
+            ["virt_goal_max:=", rl_virt_goal_max],
+            "-p",
+            ["virt_goal_pref:=", rl_virt_goal_pref],
             "-p",
             ["device:=", device],
         ],
@@ -169,6 +194,14 @@ def generate_launch_description():
             ["path_target_frame:=", path_target_frame],
             "-p",
             ["base_frame:=", robot_frame],
+            "-p",
+            ["path_transform_use_3d:=", adapter_path_transform_use_3d],
+            "-p",
+            ["goal_send_hz:=", adapter_goal_send_hz],
+            "-p",
+            ["min_goal_resend_interval:=", adapter_min_goal_resend_interval],
+            "-p",
+            ["path_timeout:=", adapter_path_timeout],
             "-p",
             ["cmd_vel_topic:=", cmd_vel_topic],
             "-p",
@@ -216,11 +249,22 @@ def generate_launch_description():
             DeclareLaunchArgument("robot_frame", default_value="base_footprint"),
             DeclareLaunchArgument("odom_frame", default_value="odom_nav"),
             DeclareLaunchArgument("path_target_frame", default_value="odom_nav"),
+            DeclareLaunchArgument("odom_topic", default_value="/odom"),
+            DeclareLaunchArgument("scan_topic", default_value="/scan"),
+            DeclareLaunchArgument("global_plan_use_3d", default_value="false"),
+            DeclareLaunchArgument("adapter_path_transform_use_3d", default_value="false"),
             DeclareLaunchArgument("lookahead", default_value="1.8"),
             DeclareLaunchArgument("pure_pursuit_rate", default_value="10.0"),
             DeclareLaunchArgument("rl_hz", default_value="10.0"),
+            DeclareLaunchArgument("rl_pp_lookahead", default_value="4.0"),
+            DeclareLaunchArgument("rl_virt_goal_min", default_value="3.5"),
+            DeclareLaunchArgument("rl_virt_goal_max", default_value="4.0"),
+            DeclareLaunchArgument("rl_virt_goal_pref", default_value="4.0"),
             DeclareLaunchArgument("device", default_value="cuda"),
             DeclareLaunchArgument("require_localization_confidence", default_value="false"),
+            DeclareLaunchArgument("adapter_goal_send_hz", default_value="3.0"),
+            DeclareLaunchArgument("adapter_min_goal_resend_interval", default_value="0.35"),
+            DeclareLaunchArgument("adapter_path_timeout", default_value="1.0"),
             rviz_waypoints,
             pure_pursuit,
             rl_local_path,

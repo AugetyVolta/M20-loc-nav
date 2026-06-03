@@ -50,7 +50,7 @@ except Exception:
     TrackedPersons = None
 
 import tf2_ros
-from tf_transformations import quaternion_matrix  # noqa: F401
+from tf_transformations import quaternion_matrix
 
 import torch
 from gymnasium import spaces
@@ -206,6 +206,7 @@ class PlannerConfig:
     frame_id: str = "base_footprint"
     tf_timeout: float = 0.2
     global_plan_topic: str = "global_path"
+    global_plan_use_3d: bool = False
 
     device: str = "cuda"
 
@@ -248,6 +249,7 @@ class RLLocalPlannerNodeROS2(Node):
             frame_id=str(declare_get("frame_id", "base_footprint").string_value),
             tf_timeout=float(declare_get("tf_timeout", 0.08).double_value),
             global_plan_topic=str(declare_get("global_plan_topic", "global_path").string_value),
+            global_plan_use_3d=bool(declare_get("global_plan_use_3d", False).bool_value),
             device=str(declare_get("device", "cuda").string_value),
         )
 
@@ -539,6 +541,21 @@ class RLLocalPlannerNodeROS2(Node):
         pts[:, 1] += ty
         return pts.astype(np.float64)
 
+    def _apply_tf_xyz_to_xy(self, pts_src: np.ndarray, tf_msg) -> np.ndarray:
+        trans = np.array(
+            [
+                tf_msg.transform.translation.x,
+                tf_msg.transform.translation.y,
+                tf_msg.transform.translation.z,
+            ],
+            dtype=np.float64,
+        )
+        q = tf_msg.transform.rotation
+        rot = quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3].astype(np.float64)
+        pts = (rot @ pts_src.T).T
+        pts += trans
+        return pts[:, :2].astype(np.float64)
+
     def _pp_goal_from_global_path(self) -> Optional[Tuple[float, float]]:
         gp = self.latest_global_plan
         if gp is None or len(gp.poses) == 0:
@@ -550,10 +567,25 @@ class RLLocalPlannerNodeROS2(Node):
             self.get_logger().debug(f"global plan TF missing: {src_frame} -> {self.cfg.base_frame}")
             return None
 
-        xs = [ps.pose.position.x for ps in gp.poses]
-        ys = [ps.pose.position.y for ps in gp.poses]
-        pts_src = np.stack([xs, ys], axis=1).astype(np.float64)
-        pts_bl = self._apply_tf_xy(pts_src, tf_to_bl)
+        if self.cfg.global_plan_use_3d:
+            pts_src = np.array(
+                [
+                    (
+                        ps.pose.position.x,
+                        ps.pose.position.y,
+                        ps.pose.position.z,
+                    )
+                    for ps in gp.poses
+                ],
+                dtype=np.float64,
+            )
+            pts_bl = self._apply_tf_xyz_to_xy(pts_src, tf_to_bl)
+        else:
+            pts_src = np.array(
+                [(ps.pose.position.x, ps.pose.position.y) for ps in gp.poses],
+                dtype=np.float64,
+            )
+            pts_bl = self._apply_tf_xy(pts_src, tf_to_bl)
         if pts_bl.shape[0] < 1:
             return None
 

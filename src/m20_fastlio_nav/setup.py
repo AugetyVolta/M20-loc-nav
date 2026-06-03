@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "fastlio_odom_bridge = m20_fastlio_nav.fastlio_odom_bridge:main",
+            "body_plane_odom_bridge = m20_fastlio_nav.body_plane_odom_bridge:main",
         ],
     },
 )

@@ -24,6 +24,7 @@ def generate_launch_description():
     map_pcd = LaunchConfiguration("map_pcd")
     scan_topic = LaunchConfiguration("scan_topic")
     output_odom_topic = LaunchConfiguration("output_odom_topic")
+    start_scan = LaunchConfiguration("start_scan")
     rviz = LaunchConfiguration("rviz")
 
     fastlio_config = PathJoinSubstitution(
@@ -131,6 +132,7 @@ def generate_launch_description():
     )
 
     pointcloud_to_scan = Node(
+        condition=IfCondition(start_scan),
         package="pointcloud_to_laserscan",
         executable="pointcloud_to_laserscan_node",
         name="fastlio_pointcloud_to_laserscan",
@@ -184,6 +186,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom"),
+            DeclareLaunchArgument("start_scan", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="false"),
             SetEnvironmentVariable(
                 "LD_LIBRARY_PATH",

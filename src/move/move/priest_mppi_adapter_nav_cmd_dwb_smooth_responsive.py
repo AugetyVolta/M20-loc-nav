@@ -20,6 +20,7 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 
 import tf2_ros
+from tf_transformations import quaternion_matrix
 
 
 def yaw_to_quat(yaw: float):
@@ -40,6 +41,7 @@ class PriestMppiAdapterNavCmd(Node):
         self.declare_parameter("priest_path_topic", "local_path")
         self.declare_parameter("path_target_frame", "odom_nav")
         self.declare_parameter("base_frame", "base_footprint")
+        self.declare_parameter("path_transform_use_3d", False)
         self.declare_parameter("tf_timeout", 0.03)
         self.declare_parameter("path_timeout", 1.0)
         self.declare_parameter("goal_send_hz", 3.0)
@@ -72,6 +74,7 @@ class PriestMppiAdapterNavCmd(Node):
         self.priest_path_topic = self.get_parameter("priest_path_topic").value
         self.path_target_frame = self._normalize_frame_id(self.get_parameter("path_target_frame").value)
         self.base_frame = self._normalize_frame_id(self.get_parameter("base_frame").value)
+        self.path_transform_use_3d = bool(self.get_parameter("path_transform_use_3d").value)
         self.tf_timeout = float(self.get_parameter("tf_timeout").value)
         self.path_timeout = float(self.get_parameter("path_timeout").value)
         self.goal_send_hz = float(self.get_parameter("goal_send_hz").value)
@@ -151,6 +154,7 @@ class PriestMppiAdapterNavCmd(Node):
             "[priest_mppi_adapter_nav_cmd] ready\n"
             f"  priest_path_topic={self.priest_path_topic}\n"
             f"  path_target_frame={self.path_target_frame}\n"
+            f"  path_transform_use_3d={self.path_transform_use_3d}\n"
             f"  follow_path_action={self.follow_path_action}\n"
             f"  controller_id={self.controller_id}\n"
             f"  min_goal_resend_interval={self.min_goal_resend_interval}\n"
@@ -277,23 +281,55 @@ class PriestMppiAdapterNavCmd(Node):
         pts[:, 1] += ty
         return pts.astype(np.float64)
 
+    @staticmethod
+    def _apply_tf_xyz_to_xy(points_xyz: np.ndarray, tf_msg) -> np.ndarray:
+        trans = np.array(
+            [
+                tf_msg.transform.translation.x,
+                tf_msg.transform.translation.y,
+                tf_msg.transform.translation.z,
+            ],
+            dtype=np.float64,
+        )
+        q = tf_msg.transform.rotation
+        rot = quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3].astype(np.float64)
+        pts = (rot @ points_xyz.T).T
+        pts += trans
+        return pts[:, :2].astype(np.float64)
+
     def _path_to_target_frame(self, path_msg: Path) -> Optional[Path]:
         if len(path_msg.poses) < self.min_path_points:
             return None
 
         src_frame = self._normalize_frame_id(path_msg.header.frame_id) or self.base_frame
-        pts_src = np.array(
-            [(ps.pose.position.x, ps.pose.position.y) for ps in path_msg.poses],
-            dtype=np.float64,
-        )
+        if self.path_transform_use_3d:
+            pts_src = np.array(
+                [
+                    (
+                        ps.pose.position.x,
+                        ps.pose.position.y,
+                        ps.pose.position.z,
+                    )
+                    for ps in path_msg.poses
+                ],
+                dtype=np.float64,
+            )
+        else:
+            pts_src = np.array(
+                [(ps.pose.position.x, ps.pose.position.y) for ps in path_msg.poses],
+                dtype=np.float64,
+            )
 
         if src_frame == self.path_target_frame:
-            pts_target = pts_src
+            pts_target = pts_src[:, :2] if self.path_transform_use_3d else pts_src
         else:
             tf_msg = self._lookup_tf(self.path_target_frame, src_frame)
             if tf_msg is None:
                 return None
-            pts_target = self._apply_tf_xy(pts_src, tf_msg)
+            if self.path_transform_use_3d:
+                pts_target = self._apply_tf_xyz_to_xy(pts_src, tf_msg)
+            else:
+                pts_target = self._apply_tf_xy(pts_src, tf_msg)
 
         path_out = Path()
         path_out.header.frame_id = self.path_target_frame

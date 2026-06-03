@@ -33,6 +33,7 @@ setup(
             ),
             'global_path_publisher = move.global_path_publisher:main',
             'global_path_seq_publisher = move.global_path_seq_publisher:main',
+            'pct_path_adapter = move.pct_path_adapter:main',
         ],
     },
 )
