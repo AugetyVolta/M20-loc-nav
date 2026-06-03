@@ -16,7 +16,7 @@
 | 分支 | 定位/导航方案 | 状态 |
 |---|---|---|
 | `stable/fastlio-localization` | `fast_lio` + `open3d_loc` + Nav2 DWB + RL local path | 当前稳定版。本 README 只按这个分支维护和验证 |
-| `feature/stair-body-plane-dwb` | 外部 PCT 3D 全局路径 + `base_link/odom_body` body-plane DWB + 2D local path | 上楼梯实验分支。保留稳定版入口，新增实验 launch 和适配节点 |
+| `feature/stair-body-plane-dwb` | 内置 PCT 3D 全局路径 + `base_link/odom_body` body-plane DWB + 2D local path | 上楼梯实验分支。默认导航入口已切到 3D/body-plane 链路 |
 | `main` | `fast_lio` + `open3d_loc` | 之前的主线实现，保留用于对比，不代表当前稳定部署状态 |
 | `point-lio-lidar-localization` | `point_lio_ros2` + `lidar_localization_ros2` + `ndt_omp_ros2` | Point-LIO/NDT 实验分支，第三方源码直接放在 `src/` |
 
@@ -46,20 +46,15 @@ git switch point-lio-lidar-localization
 本分支 `feature/stair-body-plane-dwb` 用于验证“全局路径 3D、局部路径仍 2D”的楼梯导航方案。核心假设是：
 
 - FastLIO/Open3D 继续提供 3D 定位和 `map -> odom`。
-- 全局规划使用外部 PCT planner，输出带 `z` 的 `/pct_path`。
+- 全局规划使用 vendor 到本仓库的 PCT planner，输出带 `z` 的 `/global_path`。
 - 本仓库的 PRIEST/RL local planner 不改成 3D，只把 3D 全局路径通过完整 TF 投影到当前 `base_link` 平面，在这个平面上生成二维 `/local_path`。
 - DWB 不再用 `odom_nav/base_footprint`，而使用新增的 `odom_body/base_link`。`odom_body` 的姿态始终和 `base_link` 平行，local costmap 和机器狗机体平面对齐。
 
 实验链路：
 
 ```text
-外部 PCT planner (ROS1)
-  /goal_3d, /initialpose -> /pct_path(map, x/y/z)
-      │
-      └── ros1_bridge / 手动桥接
-              │
-              v
-pct_path_adapter -> /global_path(map, x/y/z)
+pct_global_planner_ros2
+  /goal_3d + 当前 TF 起点 -> /global_path(map, x/y/z)
       │
       v
 priest_rl_publisher_nav_cmd_fast.py
@@ -81,33 +76,66 @@ Nav2 DWB(body-plane config) -> /cmd_vel -> /NAV_CMD
 src/m20_fastlio_nav/launch/m20_fastlio_stair_body_nav.launch.py
 src/m20_fastlio_nav/config/nav2_dwb_body_plane.yaml
 src/m20_fastlio_nav/m20_fastlio_nav/body_plane_odom_bridge.py
-src/move/move/pct_path_adapter.py
+src/move/move/pct_global_planner_ros2.py
+src/move/move/pct_path_adapter.py       # 只作为外部 /pct_path 备用适配
+third_party/global_path_planning/        # PCT planner 原始源码，保留 LICENSE/NOTICE
 ```
 
-### 外部 PCT planner
+### 内置 PCT planner
 
 参考仓库：https://github.com/jie0110/global_path_planning
 
-这个仓库是 ROS1/Python 风格的 PCT planner。本工作区不直接拷贝它的源码，只把它当外部全局规划器使用。它的 planner 节点订阅：
+PCT planner 已经 vendor 到：
 
 ```text
-/initialpose  geometry_msgs/PoseWithCovarianceStamped  # 起点，使用 x/y/z
-/goal_3d      geometry_msgs/PoseStamped                # 终点，使用 x/y/z
+/mnt/nvme/workspace/fast_lio_ws/third_party/global_path_planning
+```
+
+原始 PCT 是 ROS1/Python 风格，本分支新增了 ROS2 wrapper：
+
+```text
+move/pct_global_planner_ros2
+```
+
+ROS2 wrapper 订阅：
+
+```text
+/goal_3d      geometry_msgs/PoseStamped                # 终点，使用 x/y/z，frame 默认 map
+/initialpose  geometry_msgs/PoseWithCovarianceStamped  # 可选起点；默认起点来自 TF map<-base_link
 ```
 
 输出：
 
 ```text
-/pct_path     nav_msgs/Path                            # frame_id=map，保留 z
+/global_path  nav_msgs/Path                            # frame_id=map，保留 z
+/pct_path     nav_msgs/Path                            # 同步调试输出，可关闭
 ```
 
-实际使用时需要在外部 PCT 工作区准备 tomogram。当前建图仍可使用本仓库已有的 3D PCD 地图，例如：
+PCT 的 C++/pybind 扩展和 tomogram 需要单独准备。第一次使用前编译：
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws/third_party/global_path_planning/planner
+./build_thirdparty.sh
+./build.sh
+```
+
+然后准备 tomogram。当前建图仍可使用本仓库已有的 3D PCD 地图，例如：
 
 ```text
 /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd
 ```
 
-PCT 侧的 tomography 配置需要按楼梯地图修改输入 PCD、分辨率和高度切片，然后生成 planner 读取的 tomogram pickle。PCT 原仓库默认 `Building` 场景读取 `output.pickle`，默认 tomogram 目录在其 `planner/rsc/tomogram/` 下；如果使用别的文件名，需要同步修改 PCT 配置或启动参数。
+PCT 侧的 tomography 配置需要按楼梯地图修改输入 PCD、分辨率和高度切片，然后生成 planner 读取的 tomogram pickle。默认启动参数读取：
+
+```text
+third_party/global_path_planning/rsc/tomogram/output.pickle
+```
+
+如果使用别的文件名，通过 launch 覆盖：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py pct_tomogram_file:=stair1
+```
 
 ### 启动本仓库楼梯链路
 
@@ -121,6 +149,12 @@ source install/setup.bash
 
 LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
 ros2 launch m20_fastlio_nav m20_fastlio_stair_body_nav.launch.py
+```
+
+`m20_fastlio_nav.launch.py` 现在也是 3D/body-plane 入口的包装，平地和楼梯都可以直接使用：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py
 ```
 
 回放 `bags/stair1`：
@@ -146,22 +180,39 @@ source install/setup.bash
 ros2 bag play bags/stair1 --clock
 ```
 
-### PCT 路径接入
+### PCT 目标点输入
 
-如果 PCT 在 ROS1 中运行，需要把 `/pct_path` 桥到 ROS2。桥接方式按现场 ROS1/ROS2 环境选择；最终只要 ROS2 侧能看到：
+默认 `pct_start_source:=tf`，起点来自当前 `map <- base_link` TF。终点发布到 `/goal_3d`：
 
 ```bash
-ros2 topic echo /pct_path --once
+ros2 topic pub --once /goal_3d geometry_msgs/msg/PoseStamped \
+"{header: {frame_id: map}, pose: {position: {x: 3.0, y: 1.0, z: 0.5}, orientation: {w: 1.0}}}"
 ```
 
-本仓库的 `pct_path_adapter` 会自动把 `/pct_path` 重发为 `/global_path`，并保留每个点的 `z`：
+如果希望手动给 3D 起点：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py pct_start_source:=initialpose
+```
+
+`pct_start_z_offset` 和 `pct_goal_z_offset` 可用于把 `base_link` 高度补偿到可行走面高度。
+
+保留的 `pct_path_adapter` 只作为备用：如果现场仍要外部节点发布 `/pct_path`，启动时关闭内置 planner、打开 adapter：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  start_pct_planner:=false \
+  start_pct_adapter:=true
+```
+
+检查：
 
 ```bash
 ros2 topic echo /global_path --once
-ros2 topic echo /pct_path_adapter/status --once
+ros2 topic echo /pct_global_planner/status --once
 ```
 
-不要在楼梯 PCT 模式同时启动 RViz Publish Point waypoint manager 或旧的 `global_path_seq_publisher.py`，否则会有两个节点同时发布 `/global_path`。`m20_fastlio_stair_body_nav.launch.py` 已经默认关闭它们。
+不要在 PCT 模式同时启动 RViz Publish Point waypoint manager 或旧的 `global_path_seq_publisher.py`，否则会有两个节点同时发布 `/global_path`。`m20_fastlio_nav.launch.py` 和 `m20_fastlio_stair_body_nav.launch.py` 已经默认关闭它们。
 
 ### 关键调试话题
 
@@ -169,7 +220,6 @@ ros2 topic echo /pct_path_adapter/status --once
 ros2 topic hz /Odometry_loc
 ros2 topic hz /odom_body
 ros2 topic hz /scan_body
-ros2 topic hz /pct_path
 ros2 topic hz /global_path
 ros2 topic hz /local_path
 ros2 topic hz /mppi_path
@@ -201,7 +251,7 @@ PRIEST/RL：
 
 ### 当前边界
 
-- 这个分支没有把 PCT planner port 到 ROS2，也没有把 PCT 源码 vendor 进当前仓库。
+- PCT 源码已经放进当前仓库，但其 pybind C++ 扩展和 tomogram pickle 仍需要本机编译/生成。
 - `odom_body` 是非标准的动态机体平行 odom frame，适合短视距 local costmap/DWB 跟踪，不建议拿它做全局规划或长时间轨迹记录。
 - 机器狗能不能稳定上楼仍取决于底盘步态控制和楼梯几何；本分支只解决导航坐标系、路径投影和局部避障接口。
 

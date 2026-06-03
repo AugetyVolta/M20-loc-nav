@@ -1,5 +1,11 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, TimerAction
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+    SetEnvironmentVariable,
+    TimerAction,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
@@ -17,9 +23,17 @@ def generate_launch_description():
     rviz = LaunchConfiguration("rviz")
     start_nav2 = LaunchConfiguration("start_nav2")
     start_external_nav = LaunchConfiguration("start_external_nav")
+    start_pct_planner = LaunchConfiguration("start_pct_planner")
     start_pct_adapter = LaunchConfiguration("start_pct_adapter")
     start_body_scan = LaunchConfiguration("start_body_scan")
     rl_python_executable = LaunchConfiguration("rl_python_executable")
+    pct_planner_root = LaunchConfiguration("pct_planner_root")
+    pct_tomogram_file = LaunchConfiguration("pct_tomogram_file")
+    pct_tomogram_dir = LaunchConfiguration("pct_tomogram_dir")
+    pct_start_source = LaunchConfiguration("pct_start_source")
+    pct_start_z_offset = LaunchConfiguration("pct_start_z_offset")
+    pct_goal_z_offset = LaunchConfiguration("pct_goal_z_offset")
+    pct_goal_topic = LaunchConfiguration("pct_goal_topic")
     pct_path_topic = LaunchConfiguration("pct_path_topic")
     global_path_topic = LaunchConfiguration("global_path_topic")
     body_scan_min_height = LaunchConfiguration("body_scan_min_height")
@@ -44,6 +58,7 @@ def generate_launch_description():
             "scan_topic": "/scan",
             "output_odom_topic": "/odom",
             "start_scan": "false",
+            "publish_flattened_nav": "false",
             "rviz": rviz,
         }.items(),
     )
@@ -116,6 +131,32 @@ def generate_launch_description():
         }.items(),
     )
 
+    pct_planner = Node(
+        condition=IfCondition(start_pct_planner),
+        package="move",
+        executable="pct_global_planner_ros2",
+        name="pct_global_planner",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": use_sim_time,
+                "planner_root": pct_planner_root,
+                "tomogram_file": pct_tomogram_file,
+                "tomogram_dir": pct_tomogram_dir,
+                "global_frame": "map",
+                "base_frame": "base_link",
+                "goal_topic": pct_goal_topic,
+                "initialpose_topic": "/initialpose",
+                "path_topic": global_path_topic,
+                "pct_path_topic": pct_path_topic,
+                "start_source": pct_start_source,
+                "start_z_offset": ParameterValue(pct_start_z_offset, value_type=float),
+                "goal_z_offset": ParameterValue(pct_goal_z_offset, value_type=float),
+                "tf_timeout": 0.2,
+            }
+        ],
+    )
+
     pct_adapter = Node(
         condition=IfCondition(start_pct_adapter),
         package="move",
@@ -184,6 +225,21 @@ def generate_launch_description():
         actions=[TimerAction(period=11.0, actions=[external_nav])],
     )
 
+    pct_ld_library_path = SetEnvironmentVariable(
+        "LD_LIBRARY_PATH",
+        [
+            PathJoinSubstitution(
+                [pct_planner_root, "planner", "lib", "3rdparty", "gtsam-4.1.1", "install", "lib"]
+            ),
+            ":",
+            PathJoinSubstitution(
+                [pct_planner_root, "planner", "lib", "build", "src", "common", "smoothing"]
+            ),
+            ":",
+            EnvironmentVariable("LD_LIBRARY_PATH", default_value=""),
+        ],
+    )
+
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="false"),
@@ -202,8 +258,19 @@ def generate_launch_description():
             DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument("start_nav2", default_value="true"),
             DeclareLaunchArgument("start_external_nav", default_value="true"),
-            DeclareLaunchArgument("start_pct_adapter", default_value="true"),
+            DeclareLaunchArgument("start_pct_planner", default_value="true"),
+            DeclareLaunchArgument("start_pct_adapter", default_value="false"),
             DeclareLaunchArgument("start_body_scan", default_value="true"),
+            DeclareLaunchArgument(
+                "pct_planner_root",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/third_party/global_path_planning",
+            ),
+            DeclareLaunchArgument("pct_tomogram_file", default_value="output"),
+            DeclareLaunchArgument("pct_tomogram_dir", default_value="/rsc/tomogram/"),
+            DeclareLaunchArgument("pct_start_source", default_value="tf"),
+            DeclareLaunchArgument("pct_start_z_offset", default_value="0.0"),
+            DeclareLaunchArgument("pct_goal_z_offset", default_value="0.0"),
+            DeclareLaunchArgument("pct_goal_topic", default_value="/goal_3d"),
             DeclareLaunchArgument("pct_path_topic", default_value="/pct_path"),
             DeclareLaunchArgument("global_path_topic", default_value="global_path"),
             DeclareLaunchArgument("body_scan_topic", default_value="/scan_body"),
@@ -220,10 +287,12 @@ def generate_launch_description():
                     [EnvironmentVariable("HOME"), "venv", "m20_nav", "bin", "python"]
                 ),
             ),
+            pct_ld_library_path,
             localization,
             body_odom_bridge,
             body_scan,
             nav2_group,
+            pct_planner,
             pct_adapter,
             external_nav_group,
         ]

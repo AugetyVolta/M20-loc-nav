@@ -135,6 +135,7 @@ class FastLioOdomBridge(Node):
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("nav_base_frame", "base_footprint")
         self.declare_parameter("publish_tf", True)
+        self.declare_parameter("publish_flattened_nav", True)
         self.declare_parameter("reset_on_wall_time_gap", True)
         self.declare_parameter("bag_switch_wall_gap_sec", 1.5)
         self.declare_parameter(
@@ -154,6 +155,7 @@ class FastLioOdomBridge(Node):
         self.base_frame = str(self.get_parameter("base_frame").value)
         self.nav_base_frame = str(self.get_parameter("nav_base_frame").value)
         self.publish_tf = bool(self.get_parameter("publish_tf").value)
+        self.publish_flattened_nav = bool(self.get_parameter("publish_flattened_nav").value)
         self.reset_on_wall_time_gap = bool(self.get_parameter("reset_on_wall_time_gap").value)
         self.bag_switch_wall_gap_sec = float(self.get_parameter("bag_switch_wall_gap_sec").value)
 
@@ -194,7 +196,8 @@ class FastLioOdomBridge(Node):
         self.clock_sub = self.create_subscription(Clock, "/clock", self.clock_callback, 10)
         self.get_logger().info(
             f"bridging {source_topic} to {output_topic} as "
-            f"{self.map_frame}->{self.nav_odom_frame}->{self.nav_base_frame} (Nav2) and "
+            f"{self.map_frame}->{self.nav_odom_frame}->{self.nav_base_frame} "
+            f"(flattened_nav={self.publish_flattened_nav}) and "
             f"{self.odom_frame}->{self.base_frame} (3D)"
         )
 
@@ -302,6 +305,11 @@ class FastLioOdomBridge(Node):
             p_odom_body[2] + rotated_body_base[2],
         )
         q_odom_base = quat_multiply(q_odom_body, self.q_body_base)
+
+        if not self.publish_flattened_nav:
+            if self.publish_tf:
+                self.publish_transform(stamp, p_odom_base, q_odom_base, self.base_frame)
+            return
 
         # Fallback: if map->odom is not ready yet, keep the old planarization in odom.
         p_odom_nav = (p_odom_base[0], p_odom_base[1], 0.0)

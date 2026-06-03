@@ -4,6 +4,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -25,6 +26,7 @@ def generate_launch_description():
     scan_topic = LaunchConfiguration("scan_topic")
     output_odom_topic = LaunchConfiguration("output_odom_topic")
     start_scan = LaunchConfiguration("start_scan")
+    publish_flattened_nav = LaunchConfiguration("publish_flattened_nav")
     rviz = LaunchConfiguration("rviz")
 
     fastlio_config = PathJoinSubstitution(
@@ -100,6 +102,7 @@ def generate_launch_description():
                 "base_frame": "base_link",
                 "nav_base_frame": "base_footprint",
                 "publish_tf": True,
+                "publish_flattened_nav": ParameterValue(publish_flattened_nav, value_type=bool),
                 "reset_on_wall_time_gap": True,
                 "bag_switch_wall_gap_sec": 1.5,
                 "base_to_body_translation": [0.32713234, 0.01413551, 0.31238696],
@@ -187,6 +190,7 @@ def generate_launch_description():
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom"),
             DeclareLaunchArgument("start_scan", default_value="true"),
+            DeclareLaunchArgument("publish_flattened_nav", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="false"),
             SetEnvironmentVariable(
                 "LD_LIBRARY_PATH",
