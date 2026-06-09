@@ -100,17 +100,6 @@ def generate_launch_description():
             "waypoint_edit_radius": waypoint_edit_radius,
             "waypoint_enable_interactive_markers": waypoint_enable_interactive_markers,
             "waypoint_interactive_marker_ns": waypoint_interactive_marker_ns,
-            "global_path_topic": "global_path",
-            "pure_pursuit_plan_topic": "global_path",
-            "subgoal_topic": "subgoal",
-            "final_goal_topic": "final_goal",
-            "local_path_topic": "local_path",
-            "cmd_vel_topic": "/cmd_vel",
-            "nav_cmd_topic": "/NAV_CMD",
-            "global_frame": "map",
-            "robot_frame": "base_footprint",
-            "odom_frame": "odom_nav",
-            "path_target_frame": "odom_nav",
         }.items(),
     )
 
