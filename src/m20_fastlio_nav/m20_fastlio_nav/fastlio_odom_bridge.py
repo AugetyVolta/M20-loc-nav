@@ -72,7 +72,6 @@ def rotate_vector(q: Quaternion, v: Vector3) -> Vector3:
 
 
 def quat_from_yaw(yaw: float) -> Quaternion:
-    """Quaternion from yaw angle only (zero pitch, zero roll)."""
     half = yaw * 0.5
     return (0.0, 0.0, math.sin(half), math.cos(half))
 
@@ -128,14 +127,14 @@ class FastLioOdomBridge(Node):
         super().__init__("fastlio_odom_bridge")
 
         self.declare_parameter("source_odom_topic", "/Odometry_loc")
-        self.declare_parameter("output_odom_topic", "/odom")
+        self.declare_parameter("output_odom_topic", "/odom_body")
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("odom_frame", "odom")
-        self.declare_parameter("nav_odom_frame", "odom_nav")
+        self.declare_parameter("nav_odom_frame", "odom_body")
         self.declare_parameter("base_frame", "base_link")
-        self.declare_parameter("nav_base_frame", "base_footprint")
+        self.declare_parameter("nav_base_frame", "base_link")
         self.declare_parameter("publish_tf", True)
-        self.declare_parameter("publish_flattened_nav", False)
+        self.declare_parameter("publish_nav_base_tf", False)
         self.declare_parameter("reset_on_wall_time_gap", True)
         self.declare_parameter("bag_switch_wall_gap_sec", 1.5)
         self.declare_parameter(
@@ -155,7 +154,7 @@ class FastLioOdomBridge(Node):
         self.base_frame = str(self.get_parameter("base_frame").value)
         self.nav_base_frame = str(self.get_parameter("nav_base_frame").value)
         self.publish_tf = bool(self.get_parameter("publish_tf").value)
-        self.publish_flattened_nav = bool(self.get_parameter("publish_flattened_nav").value)
+        self.publish_nav_base_tf = bool(self.get_parameter("publish_nav_base_tf").value)
         self.reset_on_wall_time_gap = bool(self.get_parameter("reset_on_wall_time_gap").value)
         self.bag_switch_wall_gap_sec = float(self.get_parameter("bag_switch_wall_gap_sec").value)
 
@@ -185,6 +184,7 @@ class FastLioOdomBridge(Node):
         self.prev_stamp = None
         self.prev_pos = None
         self.prev_yaw = None
+        self.body_odom_anchor = None
         self.last_odom_stamp_ns = None
         self.last_clock_stamp_ns = None
         self.last_odom_wall_time = None
@@ -196,9 +196,9 @@ class FastLioOdomBridge(Node):
         self.clock_sub = self.create_subscription(Clock, "/clock", self.clock_callback, 10)
         self.get_logger().info(
             f"bridging {source_topic} to {output_topic} as "
-            f"{self.map_frame}->{self.nav_odom_frame}->{self.nav_base_frame} "
-            f"(flattened_nav={self.publish_flattened_nav}) and "
-            f"{self.odom_frame}->{self.base_frame} (3D)"
+            f"{self.map_frame}->{self.nav_odom_frame} body-plane and "
+            f"{self.odom_frame}->{self.base_frame} (3D), "
+            f"odom child={self.nav_base_frame}, publish_nav_base_tf={self.publish_nav_base_tf}"
         )
 
     @staticmethod
@@ -212,6 +212,7 @@ class FastLioOdomBridge(Node):
         self.prev_stamp = None
         self.prev_pos = None
         self.prev_yaw = None
+        self.body_odom_anchor = None
         self.reset_tf_buffer()
         self.get_logger().warn(f"Detected time discontinuity ({reason}); reset bridge TF buffer/state")
 
@@ -291,7 +292,7 @@ class FastLioOdomBridge(Node):
             self.invalid_odom_count += 1
             if self.invalid_odom_count == 1 or self.invalid_odom_count % 50 == 0:
                 self.get_logger().warn(
-                    "Ignoring invalid /Odometry_loc pose; not publishing /odom or TF "
+                    "Ignoring invalid /Odometry_loc pose; not publishing body-plane odom or TF "
                     f"(count={self.invalid_odom_count})"
                 )
             return
@@ -306,37 +307,45 @@ class FastLioOdomBridge(Node):
         )
         q_odom_base = quat_multiply(q_odom_body, self.q_body_base)
 
-        if not self.publish_flattened_nav:
-            if self.publish_tf:
-                self.publish_transform(stamp, p_odom_base, q_odom_base, self.base_frame)
-            return
+        if self.body_odom_anchor is None:
+            self.body_odom_anchor = p_odom_base
+            self.get_logger().info(
+                "body-plane odom anchor set at "
+                f"x={p_odom_base[0]:.3f}, y={p_odom_base[1]:.3f}, z={p_odom_base[2]:.3f}"
+            )
 
-        # Fallback: if map->odom is not ready yet, keep the old planarization in odom.
-        p_odom_nav = (p_odom_base[0], p_odom_base[1], 0.0)
+        p_odom_nav = (
+            p_odom_base[0] - self.body_odom_anchor[0],
+            p_odom_base[1] - self.body_odom_anchor[1],
+            0.0,
+        )
         q_odom_nav = quat_from_yaw(yaw_from_quat(q_odom_base))
         nav_odom_tf = None
 
         map_to_odom = self.lookup_map_to_odom()
         if map_to_odom is not None:
-            p_map_odom, q_map_odom, tf_stamp = map_to_odom
-            p_map_odom_nav, q_map_odom_nav = planarize_pose(p_map_odom, q_map_odom)
+            p_map_odom, q_map_odom, _tf_stamp = map_to_odom
             p_map_base, q_map_base = compose_transform(
                 p_map_odom,
                 q_map_odom,
                 p_odom_base,
                 q_odom_base,
             )
-            p_map_base_nav, q_map_base_nav = planarize_pose(p_map_base, q_map_base)
-            p_odom_nav_map, q_odom_nav_map = invert_transform(p_map_odom_nav, q_map_odom_nav)
-            p_odom_nav, q_odom_nav = compose_transform(
-                p_odom_nav_map,
-                q_odom_nav_map,
-                p_map_base_nav,
-                q_map_base_nav,
-            )
-            nav_odom_tf = (tf_stamp, p_map_odom_nav, q_map_odom_nav)
 
-        nav_yaw = yaw_from_quat(q_odom_nav)
+            # Body-plane Nav2 frame:
+            # - /odom_body keeps a small anchored planar pose for DWB progress and velocity math.
+            # - map -> odom_body is chosen so TF lookup odom_body -> base_link lands on
+            #   the real 3D base_link pose, including stair height and body plane.
+            q_map_odom_nav = quat_multiply(q_map_base, quat_conjugate(q_odom_nav))
+            rotated_nav_base = rotate_vector(q_map_odom_nav, p_odom_nav)
+            p_map_odom_nav = (
+                p_map_base[0] - rotated_nav_base[0],
+                p_map_base[1] - rotated_nav_base[1],
+                p_map_base[2] - rotated_nav_base[2],
+            )
+            nav_odom_tf = (stamp, p_map_odom_nav, q_map_odom_nav)
+
+        nav_yaw = yaw_from_quat(q_odom_base)
 
         out = Odometry()
         out.header.stamp = stamp
@@ -354,12 +363,12 @@ class FastLioOdomBridge(Node):
         if self.prev_stamp is not None and self.prev_pos is not None and self.prev_yaw is not None:
             dt = (stamp_ns - self.prev_stamp) * 1.0e-9
             if 0.001 <= dt <= 0.5:
-                delta_world = (
-                    p_odom_nav[0] - self.prev_pos[0],
-                    p_odom_nav[1] - self.prev_pos[1],
-                    0.0,
+                delta_odom = (
+                    p_odom_base[0] - self.prev_pos[0],
+                    p_odom_base[1] - self.prev_pos[1],
+                    p_odom_base[2] - self.prev_pos[2],
                 )
-                delta_base = rotate_vector(quat_conjugate(q_odom_nav), delta_world)
+                delta_base = rotate_vector(quat_conjugate(q_odom_base), delta_odom)
                 out.twist.twist.linear.x = delta_base[0] / dt
                 out.twist.twist.linear.y = delta_base[1] / dt
                 out.twist.twist.linear.z = 0.0
@@ -370,7 +379,7 @@ class FastLioOdomBridge(Node):
         out.twist.covariance[35] = 0.05
 
         self.prev_stamp = stamp_ns
-        self.prev_pos = p_odom_nav
+        self.prev_pos = p_odom_base
         self.prev_yaw = nav_yaw
 
         self.odom_pub.publish(out)
@@ -384,14 +393,21 @@ class FastLioOdomBridge(Node):
                     self.nav_odom_frame,
                     self.map_frame,
                 )
+            if self.publish_nav_base_tf:
+                self.publish_transform(
+                    stamp,
+                    p_odom_nav,
+                    q_odom_nav,
+                    self.nav_base_frame,
+                    self.nav_odom_frame,
+                )
             self.publish_transform(
                 stamp,
-                p_odom_nav,
-                q_odom_nav,
-                self.nav_base_frame,
-                self.nav_odom_frame,
+                p_odom_base,
+                q_odom_base,
+                self.base_frame,
+                self.odom_frame,
             )
-            self.publish_transform(stamp, p_odom_base, q_odom_base, self.base_frame)
 
     def publish_transform(
         self,

@@ -4,6 +4,19 @@ from glob import glob
 
 package_name = 'move'
 
+
+def collect_ckpt_data_files():
+    data_files = []
+    for root, _, files in os.walk('ckpts'):
+        if not files:
+            continue
+        data_files.append((
+            os.path.join('share', package_name, root),
+            [os.path.join(root, name) for name in files],
+        ))
+    return data_files
+
+
 setup(
     name=package_name,
     version='0.0.0',
@@ -14,7 +27,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'),
             glob('launch/*.launch.py')),
-    ],
+    ] + collect_ckpt_data_files(),
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='yang',
@@ -33,8 +46,6 @@ setup(
             ),
             'global_path_publisher = move.global_path_publisher:main',
             'global_path_seq_publisher = move.global_path_seq_publisher:main',
-            'pct_path_adapter = move.pct_path_adapter:main',
-            'pct_global_planner_ros2 = move.pct_global_planner_ros2:main',
         ],
     },
 )

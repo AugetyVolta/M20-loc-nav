@@ -28,8 +28,26 @@ if RL2PATH_ROOT.is_dir() and str(RL2PATH_ROOT) not in sys.path:
     sys.path.insert(0, str(RL2PATH_ROOT))
 
 MOVE_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_PATH = MOVE_PACKAGE_ROOT / "ckpts" / "ckpt_3" / "best_agent.pt"
-DEFAULT_AGENT_CFG_PATH = MOVE_PACKAGE_ROOT / "ckpts" / "ckpt_3" / "params" / "agent.pkl"
+
+
+def _find_move_ckpt_root() -> Path:
+    candidates = [MOVE_PACKAGE_ROOT]
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        candidates.append(Path(get_package_share_directory("move")))
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        if (candidate / "ckpts" / "ckpt_3" / "params" / "agent.pkl").is_file():
+            return candidate
+    return MOVE_PACKAGE_ROOT
+
+
+MOVE_CKPT_ROOT = _find_move_ckpt_root()
+DEFAULT_MODEL_PATH = MOVE_CKPT_ROOT / "ckpts" / "ckpt_3" / "best_agent.pt"
+DEFAULT_AGENT_CFG_PATH = MOVE_CKPT_ROOT / "ckpts" / "ckpt_3" / "params" / "agent.pkl"
 
 import numpy as np
 import rclpy
@@ -771,9 +789,12 @@ class RLLocalPlannerNodeROS2(Node):
             _sync_cuda()
             timings_ms[name] = (perf_counter() - t0) * 1000.0
 
-        # 1) PP 目标
+        # 1) PP 目标：优先使用外部 pure_pursuit 发布的 base_link 局部 subgoal。
         t0 = perf_counter()
-        goal_pp = self._pp_goal_from_global_path()
+        if self.subgoal_position is not None:
+            goal_pp = (float(self.subgoal_position[0]), float(self.subgoal_position[1]))
+        else:
+            goal_pp = self._pp_goal_from_global_path()
         _mark("pp_goal", t0)
         if goal_pp is None:
             timings_ms["total"] = (perf_counter() - t_all) * 1000.0

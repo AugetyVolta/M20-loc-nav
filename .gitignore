@@ -57,8 +57,8 @@ maps/fastlio/optimized_poses.txt
 maps/fastlio/times.txt
 maps/*
 
-# Vendored PCT planner build/runtime outputs. The source is tracked, but
-# generated pybind libraries and tomogram pickles should be rebuilt locally.
+# Old vendored PCT planner build/runtime outputs. Kept for branches that still
+# contain src/global_path_planning.
 src/global_path_planning/planner/lib/build/
 src/global_path_planning/planner/lib/*.so
 src/global_path_planning/planner/lib/3rdparty/gtsam-4.1.1/build/
@@ -67,3 +67,16 @@ src/global_path_planning/planner/lib/3rdparty/osqp/build/
 src/global_path_planning/planner/lib/3rdparty/osqp/install/
 src/global_path_planning/rsc/tomogram/*.pickle
 !src/global_path_planning/**/*.csv
+
+# Current vendored PCT planner build/runtime outputs. The source is tracked, but
+# generated libraries, generated tomograms, and demo PCDs should be rebuilt or
+# copied locally unless intentionally force-added.
+src/pct_planner_ros2/PCT_planner/planner/lib/build/
+src/pct_planner_ros2/PCT_planner/planner/lib/*.so
+src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/build/
+src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/install/
+src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/osqp/build/
+src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/osqp/install/
+src/pct_planner_ros2/PCT_planner/rsc/tomogram/*.pickle
+src/pct_planner_ros2/PCT_planner/rsc/pcd/*.pcd
+!src/pct_planner_ros2/PCT_planner/**/*.csv

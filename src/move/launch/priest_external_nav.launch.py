@@ -1,10 +1,10 @@
 """Launch the external M20 local navigation chain.
 
-RViz Publish Point drives the waypoint manager. This launch starts:
+This launch consumes an external global path, normally /pct_path from the
+separate PCT planner workspace, and starts:
 
-  /clicked_point -> global_path_seq_publisher.py -> /global_path
-  /global_path -> pure_pursuit.py -> /subgoal, /final_goal
-  /global_path + /subgoal -> priest_rl_publisher_nav_cmd_fast.py -> /local_path
+  /pct_path -> pure_pursuit.py -> /subgoal, /final_goal
+  /pct_path + /subgoal -> priest_rl_publisher_nav_cmd_fast.py -> /local_path
   /local_path -> priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py -> /NAV_CMD
 """
 
@@ -51,6 +51,7 @@ def generate_launch_description():
     odom_topic = LaunchConfiguration("odom_topic")
     scan_topic = LaunchConfiguration("scan_topic")
     global_plan_use_3d = LaunchConfiguration("global_plan_use_3d")
+    pure_pursuit_use_3d_path_distance = LaunchConfiguration("pure_pursuit_use_3d_path_distance")
     adapter_path_transform_use_3d = LaunchConfiguration("adapter_path_transform_use_3d")
 
     lookahead = LaunchConfiguration("lookahead")
@@ -126,6 +127,8 @@ def generate_launch_description():
             ["world_frame:=", global_frame],
             "-p",
             ["robot_frame:=", robot_frame],
+            "-p",
+            ["use_3d_path_distance:=", pure_pursuit_use_3d_path_distance],
         ],
         output="screen",
         additional_env=common_env,
@@ -226,9 +229,9 @@ def generate_launch_description():
             DeclareLaunchArgument("start_pure_pursuit", default_value="true"),
             DeclareLaunchArgument("start_rl_local_path", default_value="true"),
             DeclareLaunchArgument("start_adapter", default_value="true"),
-            DeclareLaunchArgument("start_rviz_waypoints", default_value="true"),
-            DeclareLaunchArgument("global_path_topic", default_value="global_path"),
-            DeclareLaunchArgument("pure_pursuit_plan_topic", default_value="global_path"),
+            DeclareLaunchArgument("start_rviz_waypoints", default_value="false"),
+            DeclareLaunchArgument("global_path_topic", default_value="/pct_path"),
+            DeclareLaunchArgument("pure_pursuit_plan_topic", default_value="/pct_path"),
             DeclareLaunchArgument("subgoal_topic", default_value="subgoal"),
             DeclareLaunchArgument("final_goal_topic", default_value="final_goal"),
             DeclareLaunchArgument("local_path_topic", default_value="local_path"),
@@ -250,8 +253,9 @@ def generate_launch_description():
             DeclareLaunchArgument("odom_frame", default_value="odom_body"),
             DeclareLaunchArgument("path_target_frame", default_value="odom_body"),
             DeclareLaunchArgument("odom_topic", default_value="/odom_body"),
-            DeclareLaunchArgument("scan_topic", default_value="/scan_body"),
+            DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("global_plan_use_3d", default_value="true"),
+            DeclareLaunchArgument("pure_pursuit_use_3d_path_distance", default_value="true"),
             DeclareLaunchArgument("adapter_path_transform_use_3d", default_value="true"),
             DeclareLaunchArgument("lookahead", default_value="1.8"),
             DeclareLaunchArgument("pure_pursuit_rate", default_value="10.0"),

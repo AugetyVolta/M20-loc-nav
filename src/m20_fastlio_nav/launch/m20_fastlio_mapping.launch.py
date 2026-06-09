@@ -125,7 +125,7 @@ def generate_launch_description():
             DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument(
                 "map_pcd",
-                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map.pcd",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_raw.pcd",
             ),
             DeclareLaunchArgument(
                 "map_save_dir",

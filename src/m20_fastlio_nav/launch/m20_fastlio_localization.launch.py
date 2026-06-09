@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
@@ -18,16 +18,17 @@ BASE_TO_SENSOR = [
     "0.96979969",
 ]
 
-
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     start_livox = LaunchConfiguration("start_livox")
     map_pcd = LaunchConfiguration("map_pcd")
     scan_topic = LaunchConfiguration("scan_topic")
-    output_odom_topic = LaunchConfiguration("output_odom_topic")
     start_scan = LaunchConfiguration("start_scan")
-    publish_flattened_nav = LaunchConfiguration("publish_flattened_nav")
+    scan_min_height = LaunchConfiguration("scan_min_height")
+    scan_max_height = LaunchConfiguration("scan_max_height")
+    output_odom_topic = LaunchConfiguration("output_odom_topic")
     rviz = LaunchConfiguration("rviz")
+    rviz_config = LaunchConfiguration("rviz_config")
 
     fastlio_config = PathJoinSubstitution(
         [FindPackageShare("m20_fastlio_nav"), "config", "fastlio_localization_mid360.yaml"]
@@ -37,7 +38,6 @@ def generate_launch_description():
     )
 
     open3d_lib_path = "/home/orin/drivers/Open3D/install/lib"
-
     livox_driver = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
@@ -98,11 +98,11 @@ def generate_launch_description():
                 "output_odom_topic": output_odom_topic,
                 "map_frame": "map",
                 "odom_frame": "odom",
-                "nav_odom_frame": "odom_nav",
+                "nav_odom_frame": "odom_body",
                 "base_frame": "base_link",
-                "nav_base_frame": "base_footprint",
+                "nav_base_frame": "base_link",
                 "publish_tf": True,
-                "publish_flattened_nav": ParameterValue(publish_flattened_nav, value_type=bool),
+                "publish_nav_base_tf": False,
                 "reset_on_wall_time_gap": True,
                 "bag_switch_wall_gap_sec": 1.5,
                 "base_to_body_translation": [0.32713234, 0.01413551, 0.31238696],
@@ -121,6 +121,13 @@ def generate_launch_description():
         executable="global_localization_node",
         name="global_localization_node",
         output="screen",
+        additional_env={
+            "LD_LIBRARY_PATH": [
+                open3d_lib_path,
+                ":",
+                EnvironmentVariable("LD_LIBRARY_PATH", default_value=""),
+            ]
+        },
         remappings=[
             ("/map", "/map_3d"),
             ("/scan", "/scan_3d"),
@@ -148,8 +155,8 @@ def generate_launch_description():
             {
                 "target_frame": "base_link",
                 "transform_tolerance": 0.05,
-                "min_height": -0.5,
-                "max_height": 0.35,
+                "min_height": ParameterValue(scan_min_height, value_type=float),
+                "max_height": ParameterValue(scan_max_height, value_type=float),
                 "angle_min": -3.14159,
                 "angle_max": 3.14159,
                 "angle_increment": 0.01745,
@@ -170,7 +177,7 @@ def generate_launch_description():
         parameters=[{"use_sim_time": use_sim_time}],
         arguments=[
             "-d",
-            PathJoinSubstitution([FindPackageShare("m20_fastlio_nav"), "config", "m20_nav3d.rviz"]),
+            rviz_config,
         ],
         condition=IfCondition(rviz),
     )
@@ -185,16 +192,19 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "map_pcd",
-                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd",
             ),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
-            DeclareLaunchArgument("output_odom_topic", default_value="/odom"),
             DeclareLaunchArgument("start_scan", default_value="true"),
-            DeclareLaunchArgument("publish_flattened_nav", default_value="false"),
-            DeclareLaunchArgument("rviz", default_value="false"),
-            SetEnvironmentVariable(
-                "LD_LIBRARY_PATH",
-                [open3d_lib_path, ":", EnvironmentVariable("LD_LIBRARY_PATH", default_value="")],
+            DeclareLaunchArgument("scan_min_height", default_value="0.1"),
+            DeclareLaunchArgument("scan_max_height", default_value="0.55"),
+            DeclareLaunchArgument("output_odom_topic", default_value="/odom_body"),
+            DeclareLaunchArgument("rviz", default_value="true"),
+            DeclareLaunchArgument(
+                "rviz_config",
+                default_value=PathJoinSubstitution(
+                    [FindPackageShare("m20_fastlio_nav"), "config", "m20_nav3d.rviz"]
+                ),
             ),
             livox_driver,
             odom_to_camera_init,

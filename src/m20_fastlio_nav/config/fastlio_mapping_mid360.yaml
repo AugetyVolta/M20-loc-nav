@@ -7,7 +7,7 @@
     filter_size_map: 0.3
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
-    map_file_path: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map.pcd"
+    map_file_path: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_raw.pcd"
 
     common:
       lid_topic: "/livox/lidar"

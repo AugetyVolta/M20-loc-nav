@@ -1,0 +1,30 @@
+pct_tomography_node:
+  ros__parameters:
+    pct_root: ""
+    scene_name: "Building"
+    pcd_file: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd"
+    output_tomogram_name: "m20_3d_map"
+    map_frame: "map"
+    publish_visualization: true
+    benchmark_repeats: 1
+
+    pointcloud_topic: "/global_points"
+    layer_g_topic_prefix: "/layer_G_"
+    layer_c_topic_prefix: "/layer_C_"
+    tomogram_topic: "/tomogram"
+
+    # m20 stair-friendly defaults. Tune here; m20_tomography_rviz.launch.py
+    # does not override these mapping/traversability parameters.
+    resolution: 0.15
+    ground_h: -1.0
+    slice_dh: 0.5
+    kernel_size: 5
+    interval_min: 0.45
+    interval_free: 0.3
+    slope_max: 0.6
+    step_max: 0.4
+    standable_ratio: 0.1
+    cost_barrier: 50.0
+    safe_margin: 0.15
+    safe_margin_gamma: 1.0
+    inflation: 0.05
