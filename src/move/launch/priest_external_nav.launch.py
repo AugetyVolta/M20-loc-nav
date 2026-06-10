@@ -61,6 +61,12 @@ def generate_launch_description():
     rl_virt_goal_min = LaunchConfiguration("rl_virt_goal_min")
     rl_virt_goal_max = LaunchConfiguration("rl_virt_goal_max")
     rl_virt_goal_pref = LaunchConfiguration("rl_virt_goal_pref")
+    rl_expand_external_subgoal = LaunchConfiguration("rl_expand_external_subgoal")
+    use_arc_length_lookahead = LaunchConfiguration("use_arc_length_lookahead")
+    heading_change_guard_enabled = LaunchConfiguration("heading_change_guard_enabled")
+    max_heading_change_deg = LaunchConfiguration("max_heading_change_deg")
+    turn_guard_min_lookahead = LaunchConfiguration("turn_guard_min_lookahead")
+    turn_guard_pre_distance = LaunchConfiguration("turn_guard_pre_distance")
     device = LaunchConfiguration("device")
     require_localization_confidence = LaunchConfiguration("require_localization_confidence")
     adapter_goal_send_hz = LaunchConfiguration("adapter_goal_send_hz")
@@ -129,6 +135,16 @@ def generate_launch_description():
             ["robot_frame:=", robot_frame],
             "-p",
             ["use_3d_path_distance:=", pure_pursuit_use_3d_path_distance],
+            "-p",
+            ["use_arc_length_lookahead:=", use_arc_length_lookahead],
+            "-p",
+            ["heading_change_guard_enabled:=", heading_change_guard_enabled],
+            "-p",
+            ["max_heading_change_deg:=", max_heading_change_deg],
+            "-p",
+            ["turn_guard_min_lookahead:=", turn_guard_min_lookahead],
+            "-p",
+            ["turn_guard_pre_distance:=", turn_guard_pre_distance],
         ],
         output="screen",
         additional_env=common_env,
@@ -175,6 +191,8 @@ def generate_launch_description():
             ["virt_goal_max:=", rl_virt_goal_max],
             "-p",
             ["virt_goal_pref:=", rl_virt_goal_pref],
+            "-p",
+            ["expand_external_subgoal:=", rl_expand_external_subgoal],
             "-p",
             ["device:=", device],
         ],
@@ -264,6 +282,12 @@ def generate_launch_description():
             DeclareLaunchArgument("rl_virt_goal_min", default_value="3.5"),
             DeclareLaunchArgument("rl_virt_goal_max", default_value="4.0"),
             DeclareLaunchArgument("rl_virt_goal_pref", default_value="4.0"),
+            DeclareLaunchArgument("rl_expand_external_subgoal", default_value="false"),
+            DeclareLaunchArgument("use_arc_length_lookahead", default_value="true"),
+            DeclareLaunchArgument("heading_change_guard_enabled", default_value="true"),
+            DeclareLaunchArgument("max_heading_change_deg", default_value="35.0"),
+            DeclareLaunchArgument("turn_guard_min_lookahead", default_value="0.6"),
+            DeclareLaunchArgument("turn_guard_pre_distance", default_value="0.7"),
             DeclareLaunchArgument("device", default_value="cuda"),
             DeclareLaunchArgument("require_localization_confidence", default_value="false"),
             DeclareLaunchArgument("adapter_goal_send_hz", default_value="3.0"),

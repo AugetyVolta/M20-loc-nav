@@ -208,6 +208,7 @@ class PlannerConfig:
     virt_goal_min: float = 3.5
     virt_goal_max: float = 4.0
     virt_goal_pref: float = 3.8
+    expand_external_subgoal: bool = False
 
     # 多局部目标采样
     num_local_goals: int = 5
@@ -253,6 +254,7 @@ class RLLocalPlannerNodeROS2(Node):
             virt_goal_min=float(declare_get("virt_goal_min", 3.5).double_value),
             virt_goal_max=float(declare_get("virt_goal_max", 4.0).double_value),
             virt_goal_pref=float(declare_get("virt_goal_pref", 4.0).double_value),
+            expand_external_subgoal=bool(declare_get("expand_external_subgoal", False).bool_value),
 
             num_local_goals=int(declare_get("num_local_goals", 1).integer_value),
             local_goal_span_m=float(declare_get("local_goal_span_m", 2.0).double_value),
@@ -627,10 +629,10 @@ class RLLocalPlannerNodeROS2(Node):
         return (float(pts_bl[-1, 0]), float(pts_bl[-1, 1]))
 
     # ---------- 虚拟目标半径约束 ----------
-    def _enforce_virtual_goal_radius(self, gxy: Tuple[float, float]) -> Tuple[float, float]:
+    def _enforce_virtual_goal_radius(self, gxy: Tuple[float, float], expand_min: bool = True) -> Tuple[float, float]:
         gx, gy = gxy
         d = math.hypot(gx, gy)
-        if d <= max(1e-6, self.cfg.virt_goal_min):
+        if expand_min and d <= max(1e-6, self.cfg.virt_goal_min):
             ux, uy = gx / (d + 1e-9), gy / (d + 1e-9)
             r_des = float(np.clip(self.cfg.virt_goal_pref, self.cfg.virt_goal_min, self.cfg.virt_goal_max))
             return (ux * r_des, uy * r_des)
@@ -791,7 +793,8 @@ class RLLocalPlannerNodeROS2(Node):
 
         # 1) PP 目标：优先使用外部 pure_pursuit 发布的 base_link 局部 subgoal。
         t0 = perf_counter()
-        if self.subgoal_position is not None:
+        used_external_subgoal = self.subgoal_position is not None
+        if used_external_subgoal:
             goal_pp = (float(self.subgoal_position[0]), float(self.subgoal_position[1]))
         else:
             goal_pp = self._pp_goal_from_global_path()
@@ -802,7 +805,8 @@ class RLLocalPlannerNodeROS2(Node):
 
         # 2) 虚拟半径约束
         t0 = perf_counter()
-        g_use_x, g_use_y = self._enforce_virtual_goal_radius(goal_pp)
+        expand_min_goal = (not used_external_subgoal) or self.cfg.expand_external_subgoal
+        g_use_x, g_use_y = self._enforce_virtual_goal_radius(goal_pp, expand_min=expand_min_goal)
         _mark("enforce_virtual_goal_radius", t0)
 
         # 3) 采样子目标

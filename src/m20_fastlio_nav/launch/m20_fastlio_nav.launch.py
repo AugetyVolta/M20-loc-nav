@@ -28,10 +28,6 @@ def generate_launch_description():
     output_odom_topic = LaunchConfiguration("output_odom_topic")
     global_path_topic = LaunchConfiguration("global_path_topic")
     rl_python_executable = LaunchConfiguration("rl_python_executable")
-    rl_pp_lookahead = LaunchConfiguration("rl_pp_lookahead")
-    rl_virt_goal_min = LaunchConfiguration("rl_virt_goal_min")
-    rl_virt_goal_max = LaunchConfiguration("rl_virt_goal_max")
-    rl_virt_goal_pref = LaunchConfiguration("rl_virt_goal_pref")
     pct_root = LaunchConfiguration("pct_root")
     pct_venv_site = LaunchConfiguration("pct_venv_site")
     pct_tomogram_file = LaunchConfiguration("pct_tomogram_file")
@@ -133,10 +129,6 @@ def generate_launch_description():
             "global_plan_use_3d": "true",
             "adapter_path_transform_use_3d": "true",
             "pure_pursuit_use_3d_path_distance": "true",
-            "rl_pp_lookahead": rl_pp_lookahead,
-            "rl_virt_goal_min": rl_virt_goal_min,
-            "rl_virt_goal_max": rl_virt_goal_max,
-            "rl_virt_goal_pref": rl_virt_goal_pref,
         }.items(),
     )
 
@@ -236,10 +228,6 @@ def generate_launch_description():
             DeclareLaunchArgument("output_odom_topic", default_value="/odom_body"),
             DeclareLaunchArgument("body_scan_min_height", default_value="0.1"),
             DeclareLaunchArgument("body_scan_max_height", default_value="0.55"),
-            DeclareLaunchArgument("rl_pp_lookahead", default_value="4.0"),
-            DeclareLaunchArgument("rl_virt_goal_min", default_value="3.5"),
-            DeclareLaunchArgument("rl_virt_goal_max", default_value="4.0"),
-            DeclareLaunchArgument("rl_virt_goal_pref", default_value="4.0"),
             DeclareLaunchArgument("pct_root", default_value=default_pct_root),
             DeclareLaunchArgument(
                 "pct_venv_site",

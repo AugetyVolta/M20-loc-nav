@@ -74,6 +74,11 @@ class PurePursuitNode(Node):
         self.declare_parameter('world_frame', 'map')
         self.declare_parameter('robot_frame', 'base_link')
         self.declare_parameter('use_3d_path_distance', False)
+        self.declare_parameter('use_arc_length_lookahead', True)
+        self.declare_parameter('heading_change_guard_enabled', True)
+        self.declare_parameter('max_heading_change_deg', 35.0)
+        self.declare_parameter('turn_guard_min_lookahead', 0.6)
+        self.declare_parameter('turn_guard_pre_distance', 0.7)
 
         self.lookahead = float(self.get_parameter('lookahead').value)
         self.rate = float(self.get_parameter('rate').value)
@@ -87,6 +92,11 @@ class PurePursuitNode(Node):
         self.world_frame = str(self.get_parameter('world_frame').value)
         self.robot_frame = str(self.get_parameter('robot_frame').value)
         self.use_3d_path_distance = bool(self.get_parameter('use_3d_path_distance').value)
+        self.use_arc_length_lookahead = bool(self.get_parameter('use_arc_length_lookahead').value)
+        self.heading_change_guard_enabled = bool(self.get_parameter('heading_change_guard_enabled').value)
+        self.max_heading_change_deg = float(self.get_parameter('max_heading_change_deg').value)
+        self.turn_guard_min_lookahead = float(self.get_parameter('turn_guard_min_lookahead').value)
+        self.turn_guard_pre_distance = float(self.get_parameter('turn_guard_pre_distance').value)
 
         # ---------------- TF2 ----------------
         self.tf_buffer = Buffer()
@@ -191,6 +201,104 @@ class PurePursuitNode(Node):
             return np.array([pos.x, pos.y, pos.z], dtype=float)
         return np.array([pos.x, pos.y], dtype=float)
 
+    def _path_distance(self, a: np.ndarray, b: np.ndarray) -> float:
+        return float(np.linalg.norm(np.asarray(a, dtype=float) - np.asarray(b, dtype=float)))
+
+    def _xy_heading(self, start: np.ndarray, end: np.ndarray):
+        delta = np.asarray(end[:2], dtype=float) - np.asarray(start[:2], dtype=float)
+        if np.linalg.norm(delta) < 1e-6:
+            return None
+        return float(np.arctan2(delta[1], delta[0]))
+
+    def _angle_diff(self, a: float, b: float) -> float:
+        return float(np.arctan2(np.sin(a - b), np.cos(a - b)))
+
+    def _point_at_path_distance(self, closest_pt: np.ndarray, closest_seg: int, distance: float) -> np.ndarray:
+        if self.path is None or len(self.path.poses) < 2:
+            return closest_pt
+
+        seg_max = len(self.path.poses) - 2
+        seg = int(np.clip(closest_seg, 0, seg_max))
+        cursor = np.asarray(closest_pt, dtype=float)
+        remaining = max(0.0, float(distance))
+
+        while seg <= seg_max:
+            p_end = self.path_point(seg + 1)
+            segment_len = self._path_distance(cursor, p_end)
+            if segment_len < 1e-6:
+                seg += 1
+                if seg <= seg_max:
+                    cursor = self.path_point(seg)
+                continue
+
+            if remaining <= segment_len:
+                return cursor + (p_end - cursor) * (remaining / segment_len)
+
+            remaining -= segment_len
+            seg += 1
+            cursor = p_end
+
+        return self.path_point(len(self.path.poses) - 1)
+
+    def _arc_length_goal(self, closest_pt: np.ndarray, closest_seg: int) -> np.ndarray:
+        if self.path is None or len(self.path.poses) < 2:
+            return closest_pt
+
+        lookahead = max(0.0, float(self.lookahead))
+        if lookahead < 1e-6:
+            return closest_pt
+
+        seg_max = len(self.path.poses) - 2
+        seg = int(np.clip(closest_seg, 0, seg_max))
+        cursor = np.asarray(closest_pt, dtype=float)
+        travelled = 0.0
+        cumulative_heading_change = 0.0
+        max_heading_change = np.deg2rad(max(0.0, self.max_heading_change_deg))
+        min_guard_lookahead = max(0.0, min(float(self.turn_guard_min_lookahead), lookahead))
+        previous_heading = self._xy_heading(cursor, self.path_point(seg + 1))
+
+        while seg <= seg_max:
+            p_end = self.path_point(seg + 1)
+            segment_len = self._path_distance(cursor, p_end)
+            if segment_len < 1e-6:
+                seg += 1
+                if seg <= seg_max:
+                    cursor = self.path_point(seg)
+                continue
+
+            if travelled + segment_len >= lookahead:
+                remain = lookahead - travelled
+                return cursor + (p_end - cursor) * (remain / segment_len)
+
+            travelled += segment_len
+
+            if self.heading_change_guard_enabled and seg < seg_max:
+                next_heading = self._xy_heading(p_end, self.path_point(seg + 2))
+                if previous_heading is not None and next_heading is not None:
+                    cumulative_heading_change += abs(self._angle_diff(next_heading, previous_heading))
+                    if (
+                        cumulative_heading_change >= max_heading_change
+                        and travelled >= min_guard_lookahead
+                    ):
+                        guarded_distance = max(
+                            min_guard_lookahead,
+                            travelled - max(0.0, float(self.turn_guard_pre_distance)),
+                        )
+                        self.get_logger().info(
+                            'PurePursuit heading guard: clamp arc lookahead '
+                            f'at {guarded_distance:.2f}m before cumulative turn '
+                            f'{np.rad2deg(cumulative_heading_change):.1f}deg',
+                            throttle_duration_sec=1.0,
+                        )
+                        return self._point_at_path_distance(closest_pt, closest_seg, guarded_distance)
+                if next_heading is not None:
+                    previous_heading = next_heading
+
+            seg += 1
+            cursor = p_end
+
+        return self.path_point(len(self.path.poses) - 1)
+
     # --------------- Geometry Helpers ---------------
     def find_closest_point(self, x: np.ndarray, seg: int = -1):
         """
@@ -257,6 +365,8 @@ class PurePursuitNode(Node):
         if self.path is None or len(self.path.poses) < 2:
             return None, None, None
 
+        closest_seg = seg
+
         # default: end pose info (used for final goal frame transform/orientation)
         end_pose = self.path.poses[-1].pose
         if self.use_3d_path_distance:
@@ -273,6 +383,8 @@ class PurePursuitNode(Node):
         if dist > self.lookahead:
             # far from path: drive toward closest point
             goal = pt
+        elif self.use_arc_length_lookahead:
+            goal = self._arc_length_goal(pt, closest_seg)
         else:
             seg_max = len(self.path.poses) - 2
 

@@ -154,6 +154,7 @@ source ./source_m20_nav.sh
 如果确认地面识别正确，再使用 `--ground-zero` 把地图高度归零：
 
 ```bash
+source ./source_m20_nav.sh
 "${M20_NAV_CUPY_PYTHON}" \
   src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py --ground-zero
 ```
@@ -231,7 +232,7 @@ cd /mnt/nvme/workspace/fast_lio_ws
 source ./source_m20_nav.sh
 
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
-  start_livox:=true \
+  start_livox:=false \
   map_pcd:="${M20_MAP_PCD}" \
   rviz:=true
 ```
