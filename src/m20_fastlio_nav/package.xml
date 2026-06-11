@@ -18,6 +18,7 @@
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>slam_mapping</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>traversability_layer</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>move</exec_depend>
