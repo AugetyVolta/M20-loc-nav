@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <Eigen/Dense>
 
 class DenseElevationMap {
@@ -33,7 +34,7 @@ class DenseElevationMap {
 
   double inline GetNominalCost(int layer, double x, double y) {
     auto idx = CoordsToIndex(layer, x, y);
-    return cost_(idx[0], idx[1]);
+    return EffectiveCost(idx[0], idx[1]);
   };
 
   std::array<int, 2> inline CoordsToIndex(int layer, double x, double y) {
@@ -43,6 +44,19 @@ class DenseElevationMap {
   }
 
   void SetDebug(const bool flag) { debug_ = flag; }
+  int UpdateGlobalPathPerception(const Eigen::MatrixXi& perception_indices,
+                             const double inflation_radius,
+                             const double inscribed_radius,
+                             const double peak_cost,
+                             const double cost_scaling_factor,
+                             const double stamp,
+                             const double persistence,
+                             const Eigen::Vector3i& clear_center,
+                             const double clear_radius);
+  int DecayGlobalPathPerception(const double stamp, const double persistence);
+  void ClearGlobalPathPerception();
+  bool HasGlobalPathPerception() const { return perception_active_cells_ > 0; }
+  int GetGlobalPathPerceptionCellCount() const { return perception_active_cells_; }
 
  private:
   int inline index(double coord) { return static_cast<int>(coord); }
@@ -61,6 +75,12 @@ class DenseElevationMap {
 
   double GetRealCostSafe(int layer, double x, double y,
                          const double height_hint);
+  double EffectiveCost(int row, int col) const;
+  double PerceptionInflationCost(int drow, int dcol, double inflation_radius,
+                              double inscribed_radius, double peak_cost,
+                              double cost_scaling_factor) const;
+  void SetPerceptionCost(int row, int col, double cost, double stamp);
+  int ClearPerceptionCircle(const Eigen::Vector3i& center, double radius);
 
  private:
   bool debug_ = false;
@@ -75,9 +95,12 @@ class DenseElevationMap {
   double safe_cost_threshold_ = 10;
 
   Eigen::MatrixXd cost_;
+  Eigen::MatrixXd perception_cost_;
+  Eigen::MatrixXd perception_stamp_;
   Eigen::MatrixXd ele_mask_;
   Eigen::MatrixXd height_;
   Eigen::MatrixXd ceiling_;
   Eigen::MatrixXd grad_x_;
   Eigen::MatrixXd grad_y_;
+  int perception_active_cells_ = 0;
 };

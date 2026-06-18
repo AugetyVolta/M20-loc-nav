@@ -27,6 +27,9 @@ class Node {
   double height = 0.0;
   double ele = 0;
   double cost = 0.0;
+  double static_cost = 0.0;
+  double perception_cost = 0.0;
+  double perception_stamp = -1.0;
   int layer = 0;
   Eigen::Vector3i idx = Eigen::Vector3i(0, 0, 0);  // layer, row, col
   Node* parent = nullptr;
@@ -72,6 +75,21 @@ class Astar {
 
   Eigen::MatrixXd GetCostLayer(int layer) const;
   Eigen::MatrixXd GetEleLayer(int layer) const;
+  Eigen::MatrixXd GetPerceptionCostLayer(int layer) const;
+
+  int UpdateGlobalPathPerception(const Eigen::MatrixXi& perception_indices,
+                             const double inflation_radius,
+                             const double inscribed_radius,
+                             const double peak_cost,
+                             const double cost_scaling_factor,
+                             const double stamp,
+                             const double persistence,
+                             const Eigen::Vector3i& clear_center,
+                             const double clear_radius);
+  int DecayGlobalPathPerception(const double stamp, const double persistence);
+  void ClearGlobalPathPerception();
+  bool HasGlobalPathPerception() const { return perception_active_cells_ > 0; }
+  int GetGlobalPathPerceptionCellCount() const { return perception_active_cells_; }
 
  private:
   double CalculateStepCost(const Node* node1, const Node* node2) const;
@@ -95,6 +113,14 @@ class Astar {
   double GetNeighborAverageCost(const Node* node1);
 
   bool IsValidNodeCoord(int layer, int y, int x) const;
+  double EffectiveCost(const Node& node) const;
+  void RefreshNodeCost(Node& node);
+  double PerceptionInflationCost(int drow, int dcol, double inflation_radius,
+                              double inscribed_radius, double peak_cost,
+                              double cost_scaling_factor) const;
+  void MarkPerceptionCell(int layer, int row, int col, double cell_cost,
+                       double stamp);
+  int ClearPerceptionCircle(const Eigen::Vector3i& center, double radius);
 
   //后端路径重新优化，选取代价更低的路径
   bool RefinePathSerach();
@@ -112,6 +138,7 @@ class Astar {
   MultiLayerGridMap grid_map_;
   double cost_threshold_ = 35;
   double step_cost_weight_ = 1.0;
+  int perception_active_cells_ = 0;
 
   // int search_layer_depth_ = 1;
   std::vector<int> search_layers_offset_;

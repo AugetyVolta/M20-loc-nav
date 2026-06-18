@@ -23,6 +23,20 @@ class OfflineElePlanner {
 
   bool Plan(const Eigen::Vector3i& start, const Eigen::Vector3i& goal,
             const bool optimize = true);
+  int UpdateGlobalPathPerception(const Eigen::MatrixXi& perception_indices,
+                             const double inflation_radius,
+                             const double inscribed_radius,
+                             const double peak_cost,
+                             const double cost_scaling_factor,
+                             const double stamp,
+                             const double persistence,
+                             const Eigen::Vector3i& clear_center,
+                             const double clear_radius);
+  int DecayGlobalPathPerception(const double stamp, const double persistence);
+  void ClearGlobalPathPerception();
+  int GetGlobalPathPerceptionCellCount() const {
+    return path_finder_.GetGlobalPathPerceptionCellCount();
+  }
 
   void SetReferenceHeight(const double height) {
     trajectory_optimizer_wnoj_.SetReferenceHeight(height);

@@ -12,6 +12,14 @@ PYBIND11_MODULE(ele_planner, m) {
            py::arg("use_quintic") = false)
       .def("init_map", &OfflineElePlanner::InitMap)
       .def("plan", &OfflineElePlanner::Plan)
+      .def("update_global_path_perception",
+           &OfflineElePlanner::UpdateGlobalPathPerception)
+      .def("decay_global_path_perception",
+           &OfflineElePlanner::DecayGlobalPathPerception)
+      .def("clear_global_path_perception",
+           &OfflineElePlanner::ClearGlobalPathPerception)
+      .def("get_global_path_perception_cell_count",
+           &OfflineElePlanner::GetGlobalPathPerceptionCellCount)
       .def("debug", &OfflineElePlanner::Debug)
       .def("set_reference_height", &OfflineElePlanner::SetReferenceHeight)
       .def("set_max_iterations", &OfflineElePlanner::set_max_iterations)

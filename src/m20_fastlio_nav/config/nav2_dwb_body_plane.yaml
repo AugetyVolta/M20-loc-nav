@@ -28,13 +28,13 @@ controller_server:
 
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.60
+      max_vel_x: 0.70
       max_vel_y: 0.0
       max_vel_theta: 0.65
 
       # Keep the stable 2D DWB tuning; only cap forward speed for 3D testing.
       min_speed_xy: 0.20
-      max_speed_xy: 0.60
+      max_speed_xy: 0.70
       min_speed_theta: 0.40
 
       acc_lim_x: 1.20
@@ -202,7 +202,7 @@ velocity_smoother:
     scale_velocities: False
     feedback: "OPEN_LOOP"
 
-    max_velocity: [0.60, 0.0, 0.65]
+    max_velocity: [0.70, 0.0, 0.65]
     min_velocity: [0.0, 0.0, -0.65]
 
     max_accel: [0.9, 0.0, 4.3]

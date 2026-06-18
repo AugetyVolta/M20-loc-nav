@@ -25,11 +25,21 @@ pct_planner_node:
     replan_interval: 1.0
     position_epsilon: 0.01
     auto_plan: true
+    always_replan: false
 
-    # Upstream planner_wrapper hard-coded these as init_map(20, 15, ..., 1).
-    # Stairs often have high traversability cost but are not absolute barriers,
-    # so m20 can raise a_star_cost_threshold when testing stair traversal.
+    # Main PCT traversability threshold. The M20 launch overrides this to 45.0
+    # for stair-friendly navigation.
     a_star_cost_threshold: 20.0
-    safe_cost_margin: 15.0
-    step_cost_weight: 1.0
-    layer_match_height_tolerance: 1.0
+    max_heading_rate: 10.0
+    layer_match_height_tolerance: 1.2
+
+    # Optional global-path perception update. This mirrors the small set of
+    # knobs used by Nav2's local costmap/inflation layer; advanced filtering
+    # and layer-matching settings use pct_planner_node defaults.
+    global_path_perception_enabled: false
+    global_path_perception_scan_topic: "/scan"
+    global_path_perception_width: 4.0
+    global_path_perception_height: 4.0
+    global_path_perception_inflation_radius: 0.60
+    global_path_perception_cost_scaling_factor: 5.0
+    global_path_perception_persistence: 1.0

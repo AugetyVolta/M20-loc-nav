@@ -34,11 +34,19 @@ def generate_launch_description():
     pct_start_source = LaunchConfiguration("pct_start_source")
     pct_replan_interval = LaunchConfiguration("pct_replan_interval")
     pct_position_epsilon = LaunchConfiguration("pct_position_epsilon")
+    pct_always_replan = LaunchConfiguration("pct_always_replan")
     pct_a_star_cost_threshold = LaunchConfiguration("pct_a_star_cost_threshold")
     pct_safe_cost_margin = LaunchConfiguration("pct_safe_cost_margin")
     pct_step_cost_weight = LaunchConfiguration("pct_step_cost_weight")
+    pct_max_heading_rate = LaunchConfiguration("pct_max_heading_rate")
     pct_layer_match_height_tolerance = LaunchConfiguration("pct_layer_match_height_tolerance")
     pct_use_interactive_markers = LaunchConfiguration("pct_use_interactive_markers")
+    pct_global_path_perception_enabled = LaunchConfiguration("pct_global_path_perception_enabled")
+    pct_global_path_perception_width = LaunchConfiguration("pct_global_path_perception_width")
+    pct_global_path_perception_height = LaunchConfiguration("pct_global_path_perception_height")
+    pct_global_path_perception_inflation_radius = LaunchConfiguration("pct_global_path_perception_inflation_radius")
+    pct_global_path_perception_cost_scaling_factor = LaunchConfiguration("pct_global_path_perception_cost_scaling_factor")
+    pct_global_path_perception_persistence = LaunchConfiguration("pct_global_path_perception_persistence")
 
     pct_pkg_share = FindPackageShare("pct_planner_ros2")
     default_pct_root = PathJoinSubstitution([pct_pkg_share, "PCT_planner"])
@@ -163,6 +171,7 @@ def generate_launch_description():
                                 "robot_frame": "base_link",
                                 "replan_interval": ParameterValue(pct_replan_interval, value_type=float),
                                 "position_epsilon": ParameterValue(pct_position_epsilon, value_type=float),
+                                "always_replan": ParameterValue(pct_always_replan, value_type=bool),
                                 "a_star_cost_threshold": ParameterValue(
                                     pct_a_star_cost_threshold,
                                     value_type=float,
@@ -175,6 +184,10 @@ def generate_launch_description():
                                     pct_step_cost_weight,
                                     value_type=float,
                                 ),
+                                "max_heading_rate": ParameterValue(
+                                    pct_max_heading_rate,
+                                    value_type=float,
+                                ),
                                 "layer_match_height_tolerance": ParameterValue(
                                     pct_layer_match_height_tolerance,
                                     value_type=float,
@@ -182,6 +195,31 @@ def generate_launch_description():
                                 "use_interactive_markers": ParameterValue(
                                     pct_use_interactive_markers,
                                     value_type=bool,
+                                ),
+                                "global_path_perception_enabled": ParameterValue(
+                                    pct_global_path_perception_enabled,
+                                    value_type=bool,
+                                ),
+                                "global_path_perception_scan_topic": scan_topic,
+                                "global_path_perception_width": ParameterValue(
+                                    pct_global_path_perception_width,
+                                    value_type=float,
+                                ),
+                                "global_path_perception_height": ParameterValue(
+                                    pct_global_path_perception_height,
+                                    value_type=float,
+                                ),
+                                "global_path_perception_inflation_radius": ParameterValue(
+                                    pct_global_path_perception_inflation_radius,
+                                    value_type=float,
+                                ),
+                                "global_path_perception_cost_scaling_factor": ParameterValue(
+                                    pct_global_path_perception_cost_scaling_factor,
+                                    value_type=float,
+                                ),
+                                "global_path_perception_persistence": ParameterValue(
+                                    pct_global_path_perception_persistence,
+                                    value_type=float,
                                 ),
                             },
                         ],
@@ -237,11 +275,19 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_start_source", default_value="tf"),
             DeclareLaunchArgument("pct_replan_interval", default_value="1.0"),
             DeclareLaunchArgument("pct_position_epsilon", default_value="0.2"),
+            DeclareLaunchArgument("pct_always_replan", default_value="true"),
             DeclareLaunchArgument("pct_a_star_cost_threshold", default_value="45.0"),
             DeclareLaunchArgument("pct_safe_cost_margin", default_value="15.0"),
             DeclareLaunchArgument("pct_step_cost_weight", default_value="1.0"),
+            DeclareLaunchArgument("pct_max_heading_rate", default_value="1.2"),
             DeclareLaunchArgument("pct_layer_match_height_tolerance", default_value="1.2"),
             DeclareLaunchArgument("pct_use_interactive_markers", default_value="true"),
+            DeclareLaunchArgument("pct_global_path_perception_enabled", default_value="true"),
+            DeclareLaunchArgument("pct_global_path_perception_width", default_value="6.0"),
+            DeclareLaunchArgument("pct_global_path_perception_height", default_value="6.0"),
+            DeclareLaunchArgument("pct_global_path_perception_inflation_radius", default_value="0.60"),
+            DeclareLaunchArgument("pct_global_path_perception_cost_scaling_factor", default_value="5.0"),
+            DeclareLaunchArgument("pct_global_path_perception_persistence", default_value="1.0"),
             DeclareLaunchArgument(
                 "rl_python_executable",
                 default_value=PathJoinSubstitution(

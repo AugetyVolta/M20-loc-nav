@@ -68,6 +68,46 @@ class TomogramPlanner(object):
         self._precompute_grid_xy()
         self.initPlanner(trav, trav_gx, trav_gy, elev_g, elev_c)
       
+    def update_global_path_perception(
+        self,
+        perception_indices,
+        inflation_radius,
+        inscribed_radius,
+        perception_cost,
+        cost_scaling_factor,
+        stamp,
+        persistence,
+        clear_center,
+        clear_radius,
+    ):
+        perception_indices = np.asarray(perception_indices, dtype=np.int32)
+        if perception_indices.size == 0:
+            perception_indices = np.zeros((0, 3), dtype=np.int32)
+        perception_indices = perception_indices.reshape((-1, 3))
+        clear_center = np.asarray(clear_center, dtype=np.int32).reshape((3,))
+        return int(
+            self.planner.update_global_path_perception(
+                perception_indices,
+                float(inflation_radius),
+                float(inscribed_radius),
+                float(perception_cost),
+                float(cost_scaling_factor),
+                float(stamp),
+                float(persistence),
+                clear_center,
+                float(clear_radius),
+            )
+        )
+
+    def decay_global_path_perception(self, stamp, persistence):
+        return int(self.planner.decay_global_path_perception(float(stamp), float(persistence)))
+
+    def clear_global_path_perception(self):
+        self.planner.clear_global_path_perception()
+
+    def global_path_perception_cell_count(self):
+        return int(self.planner.get_global_path_perception_cell_count())
+
 
 
     def _precompute_grid_xy(self):
@@ -126,26 +166,29 @@ class TomogramPlanner(object):
 
         # 迭代所有layer（可优化：先粗筛再细查，减少迭代次数）
         for layer_idx in range(self.n_slice):
-            # 获取该layer下XY对应的真实高度
-            layer_height = self.get_layer_height_by_xy(layer_idx, x, y)
-            # 跳过无效层
-            if layer_height == -100.0:
-                continue
-            # 计算高度差值（绝对值）
-            diff = abs(layer_height - target_height)
             # 先将物理XY坐标转换为网格索引（用于查costmap）
             height, width = self.tomogram[0][layer_idx].shape
             # 安全地 clip 行和列索引
             row = np.clip(grid_idx[1], 0, height - 1)
             col = np.clip(grid_idx[0], 0, width - 1)
+            exact_height = float(self.layer_elev_grids[layer_idx][row][col])
+            # 必须使用当前XY格子的真实高度。全图 nearest 插值会把远处楼层
+            # 拿来匹配，导致当前机器人位置被分到无效/错误楼层。
+            if exact_height <= -99.0 or not np.isfinite(exact_height):
+                continue
+            # 计算高度差值（绝对值）
+            diff = abs(exact_height - target_height)
             # 然后安全访问
             layer_cost_ = self.tomogram[0][layer_idx][row][col]
             #去除代价不存在的层级，即没有tomogram分析点云
             if layer_cost_==0:
                 continue
 
+            blocked = layer_cost_ >= self.a_star_cost_threshold
+            in_height_band = diff <= self.layer_match_height_tolerance
             fallback_candidate = (
-                layer_cost_ >= self.a_star_cost_threshold,
+                blocked,
+                not in_height_band,
                 layer_cost_,
                 diff,
             )
@@ -153,10 +196,15 @@ class TomogramPlanner(object):
                 fallback_key = fallback_candidate
                 fallback_layer = layer_idx
 
-            if diff > self.layer_match_height_tolerance:
+            if blocked and not in_height_band:
                 continue
 
-            candidate = (layer_cost_, diff)
+            candidate = (
+                blocked,
+                not in_height_band,
+                layer_cost_,
+                diff,
+            )
             if best_key is None or candidate < best_key:
                 best_key = candidate
                 best_layer = layer_idx

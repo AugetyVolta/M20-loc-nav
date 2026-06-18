@@ -19,6 +19,39 @@ void OfflineElePlanner::InitMap(
       GPMPOptimizer(safe_cost_margin, max_heading_rate_, map_);
 }
 
+int OfflineElePlanner::UpdateGlobalPathPerception(
+    const Eigen::MatrixXi& perception_indices, const double inflation_radius,
+    const double inscribed_radius, const double peak_cost,
+    const double cost_scaling_factor, const double stamp,
+    const double persistence, const Eigen::Vector3i& clear_center,
+    const double clear_radius) {
+  int changed = path_finder_.UpdateGlobalPathPerception(
+      perception_indices, inflation_radius, inscribed_radius, peak_cost,
+      cost_scaling_factor, stamp, persistence, clear_center, clear_radius);
+  if (map_) {
+    map_->UpdateGlobalPathPerception(
+        perception_indices, inflation_radius, inscribed_radius, peak_cost,
+        cost_scaling_factor, stamp, persistence, clear_center, clear_radius);
+  }
+  return changed;
+}
+
+int OfflineElePlanner::DecayGlobalPathPerception(const double stamp,
+                                             const double persistence) {
+  int changed = path_finder_.DecayGlobalPathPerception(stamp, persistence);
+  if (map_) {
+    map_->DecayGlobalPathPerception(stamp, persistence);
+  }
+  return changed;
+}
+
+void OfflineElePlanner::ClearGlobalPathPerception() {
+  path_finder_.ClearGlobalPathPerception();
+  if (map_) {
+    map_->ClearGlobalPathPerception();
+  }
+}
+
 bool OfflineElePlanner::Plan(const Eigen::Vector3i& start,
                              const Eigen::Vector3i& goal, const bool optimize) {
 
