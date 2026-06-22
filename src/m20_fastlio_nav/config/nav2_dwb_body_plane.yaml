@@ -150,6 +150,13 @@ local_costmap:
         # 是否发布调试点云 slope_map，用 intensity 表示 cost，方便 RViz 看可通行性结果。
         publish_slope_map: true
 
+        # 订阅原始 /scan，按 traversability cost 过滤后发布给 PCT 全局动态避障使用。
+        # 只有 endpoint 落在已知高代价格子时才保留；可通行、未知、无地面区域都会置为 inf。
+        publish_filtered_scan: true
+        filtered_scan_input_topic: /scan
+        filtered_scan_topic: /traversability_filtered_scan
+        filtered_scan_min_cost: 160.0
+
         # traversability 内部二维地面网格分辨率，单位 m。
         # 0 或负数会使用 costmap resolution。越小越细，但 CPU/内存更高。
         cell_resolution: 0.0

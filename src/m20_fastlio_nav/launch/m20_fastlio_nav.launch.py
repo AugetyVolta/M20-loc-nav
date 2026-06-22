@@ -38,10 +38,10 @@ def generate_launch_description():
     pct_a_star_cost_threshold = LaunchConfiguration("pct_a_star_cost_threshold")
     pct_safe_cost_margin = LaunchConfiguration("pct_safe_cost_margin")
     pct_step_cost_weight = LaunchConfiguration("pct_step_cost_weight")
-    pct_max_heading_rate = LaunchConfiguration("pct_max_heading_rate")
     pct_layer_match_height_tolerance = LaunchConfiguration("pct_layer_match_height_tolerance")
     pct_use_interactive_markers = LaunchConfiguration("pct_use_interactive_markers")
     pct_global_path_perception_enabled = LaunchConfiguration("pct_global_path_perception_enabled")
+    pct_global_path_perception_scan_topic = LaunchConfiguration("pct_global_path_perception_scan_topic")
     pct_global_path_perception_width = LaunchConfiguration("pct_global_path_perception_width")
     pct_global_path_perception_height = LaunchConfiguration("pct_global_path_perception_height")
     pct_global_path_perception_inflation_radius = LaunchConfiguration("pct_global_path_perception_inflation_radius")
@@ -184,10 +184,6 @@ def generate_launch_description():
                                     pct_step_cost_weight,
                                     value_type=float,
                                 ),
-                                "max_heading_rate": ParameterValue(
-                                    pct_max_heading_rate,
-                                    value_type=float,
-                                ),
                                 "layer_match_height_tolerance": ParameterValue(
                                     pct_layer_match_height_tolerance,
                                     value_type=float,
@@ -200,7 +196,7 @@ def generate_launch_description():
                                     pct_global_path_perception_enabled,
                                     value_type=bool,
                                 ),
-                                "global_path_perception_scan_topic": scan_topic,
+                                "global_path_perception_scan_topic": pct_global_path_perception_scan_topic,
                                 "global_path_perception_width": ParameterValue(
                                     pct_global_path_perception_width,
                                     value_type=float,
@@ -279,15 +275,15 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_a_star_cost_threshold", default_value="45.0"),
             DeclareLaunchArgument("pct_safe_cost_margin", default_value="15.0"),
             DeclareLaunchArgument("pct_step_cost_weight", default_value="1.0"),
-            DeclareLaunchArgument("pct_max_heading_rate", default_value="1.2"),
             DeclareLaunchArgument("pct_layer_match_height_tolerance", default_value="1.2"),
             DeclareLaunchArgument("pct_use_interactive_markers", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_enabled", default_value="true"),
+            DeclareLaunchArgument("pct_global_path_perception_scan_topic", default_value="/traversability_filtered_scan"),
             DeclareLaunchArgument("pct_global_path_perception_width", default_value="6.0"),
             DeclareLaunchArgument("pct_global_path_perception_height", default_value="6.0"),
-            DeclareLaunchArgument("pct_global_path_perception_inflation_radius", default_value="0.60"),
-            DeclareLaunchArgument("pct_global_path_perception_cost_scaling_factor", default_value="5.0"),
-            DeclareLaunchArgument("pct_global_path_perception_persistence", default_value="1.0"),
+            DeclareLaunchArgument("pct_global_path_perception_inflation_radius", default_value="0.45"),
+            DeclareLaunchArgument("pct_global_path_perception_cost_scaling_factor", default_value="8.0"),
+            DeclareLaunchArgument("pct_global_path_perception_persistence", default_value="0.6"),
             DeclareLaunchArgument(
                 "rl_python_executable",
                 default_value=PathJoinSubstitution(

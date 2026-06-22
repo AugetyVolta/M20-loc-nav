@@ -254,23 +254,30 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 | `pct_start_source` | `tf` | PCT 起点默认来自 TF `map -> base_link`，会随机器人位置更新 |
 | `pct_replan_interval` | `1.0` | 每 1 秒检查是否需要重规划 |
 | `pct_position_epsilon` | `0.2` | 起点或终点变化超过 0.2m 才重规划 |
-| `pct_always_replan` | `true` | 主导航默认每个 replan tick 都尝试更新 `/pct_path`，便于动态障碍变化后及时刷新 |
-| `pct_max_heading_rate` | `1.2` | 限制 PCT 优化后的路径切线变化，避免给 DWB 过陡的路径方向 |
-| `pct_global_path_perception_enabled` | `true` | 主导航默认用 `/scan` 触发 PCT 全局路径感知更新 |
+| `pct_always_replan` | `true` | 主导航默认按 `pct_replan_interval` 定周期更新 `/pct_path`；动态感知只更新代价层，不单独触发即时重规划 |
+| `pct_global_path_perception_enabled` | `true` | 主导航默认用 traversability 过滤后的 scan 触发 PCT 全局路径感知更新 |
+| `pct_global_path_perception_scan_topic` | `/traversability_filtered_scan` | PCT 动态避障输入；楼梯/平台交界处由 traversability_layer 先过滤 |
 | `pct_global_path_perception_width` | `6.0` | PCT 全局路径感知窗口宽度，覆盖机器人前后左右近场障碍 |
 | `pct_global_path_perception_height` | `6.0` | PCT 全局路径感知窗口高度，覆盖机器人前后左右近场障碍 |
-| `pct_global_path_perception_inflation_radius` | `0.60` | 与 local costmap inflation radius 保持一致 |
-| `pct_global_path_perception_cost_scaling_factor` | `5.0` | 与 local costmap cost scaling factor 保持一致 |
-| `pct_global_path_perception_persistence` | `1.0` | 全局路径感知更新的短时观测保留时间 |
+| `pct_global_path_perception_inflation_radius` | `0.45` | PCT 动态障碍膨胀半径；小一点可减少楼梯转角大绕行 |
+| `pct_global_path_perception_cost_scaling_factor` | `8.0` | 动态代价衰减速度；大一点让代价更快衰减，减少窄空间抖动 |
+| `pct_global_path_perception_persistence` | `0.6` | 动态观测保留时间；短一点可减少楼梯/平台附近旧障碍残留 |
 | `scan_topic` | `/scan` | costmap 与 RL 使用同一个 LaserScan |
 | `output_odom_topic` | `/odom_body` | DWB、RL 和 adapter 使用的 body-plane odom |
 | `start_pure_pursuit` | `true` | 默认启动 pure pursuit |
 | `start_rl_local_path` | `true` | 默认启动 RL local path |
 | `start_adapter` | `true` | 默认启动 `/local_path -> /NAV_CMD` 适配 |
-| `body_scan_min_height` | `0.1` | 从 body 点云生成 scan 的最低高度 |
+| `body_scan_min_height` | `-0.1` | 从 body 点云生成 scan 的最低高度 |
 | `body_scan_max_height` | `0.55` | 从 body 点云生成 scan 的最高高度 |
 
-PCT 全局路径感知更新在 C++ core 中维护，不会修改或重新生成完整 tomogram；离线 3D tomogram 仍是长期地形地图。运行时只把 `/scan` 中机器人近场观测到的局部环境投到当前高度附近的 PCT layer，按 Nav2 inflation 风格写入临时代价：默认 `0.35m` 内为高代价，`0.35m` 到 `0.60m` 按距离指数衰减，`0.60m` 外不受该动态观测影响。临时代价带时间戳，并会在无新观测或机器人经过清理半径后恢复为静态 tomogram cost。
+PCT 全局路径感知更新在 C++ core 中维护，不会修改或重新生成完整 tomogram；离线 3D tomogram 仍是长期地形地图。主导航默认不再直接使用原始 `/scan`，而是使用 `traversability_layer` 发布的 `/traversability_filtered_scan`。这个 scan 来自原始 `/scan`，但只有 endpoint 落在 traversability 明确判为高代价/不可通行的格子时才保留；可通行、未知、无地面区域都会置为 `inf`。PCT 仍按 Nav2 inflation 风格写入临时代价，并在无新观测或机器人经过清理半径后恢复为静态 tomogram cost。
+
+如需对比原始 `/scan`：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  pct_global_path_perception_scan_topic:=/scan
+```
 
 修改 PCT C++ core 后需要重新构建 pybind：
 

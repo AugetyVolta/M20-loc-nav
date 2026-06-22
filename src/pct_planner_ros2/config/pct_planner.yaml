@@ -30,7 +30,6 @@ pct_planner_node:
     # Main PCT traversability threshold. The M20 launch overrides this to 45.0
     # for stair-friendly navigation.
     a_star_cost_threshold: 20.0
-    max_heading_rate: 10.0
     layer_match_height_tolerance: 1.2
 
     # Optional global-path perception update. This mirrors the small set of

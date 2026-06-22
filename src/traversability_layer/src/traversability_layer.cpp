@@ -43,6 +43,10 @@ void TraversabilityLayer::onInitialize()
   declareParameter("observation_persistence", rclcpp::ParameterValue(5.0));
   declareParameter("cloud_buffer_size", rclcpp::ParameterValue(5));
   declareParameter("publish_slope_map", rclcpp::ParameterValue(false));
+  declareParameter("publish_filtered_scan", rclcpp::ParameterValue(false));
+  declareParameter("filtered_scan_input_topic", rclcpp::ParameterValue(std::string("/scan")));
+  declareParameter("filtered_scan_topic", rclcpp::ParameterValue(std::string("/traversability_filtered_scan")));
+  declareParameter("filtered_scan_min_cost", rclcpp::ParameterValue(128.0));
   declareParameter("cell_resolution", rclcpp::ParameterValue(0.0));
   declareParameter("num_threads", rclcpp::ParameterValue(0));
   declareParameter("voxel_z_resolution", rclcpp::ParameterValue(0.1));
@@ -70,6 +74,10 @@ void TraversabilityLayer::onInitialize()
   node->get_parameter(name_ + ".observation_persistence", observation_persistence_);
   node->get_parameter(name_ + ".cloud_buffer_size", cloud_buffer_size_);
   node->get_parameter(name_ + ".publish_slope_map", publish_slope_map_);
+  node->get_parameter(name_ + ".publish_filtered_scan", publish_filtered_scan_);
+  node->get_parameter(name_ + ".filtered_scan_input_topic", filtered_scan_input_topic_);
+  node->get_parameter(name_ + ".filtered_scan_topic", filtered_scan_topic_);
+  node->get_parameter(name_ + ".filtered_scan_min_cost", filtered_scan_min_cost_);
   node->get_parameter(name_ + ".cell_resolution", cell_resolution_);
   node->get_parameter(name_ + ".num_threads", num_threads_);
   node->get_parameter(name_ + ".voxel_z_resolution", voxel_z_resolution_);
@@ -102,14 +110,18 @@ void TraversabilityLayer::onInitialize()
     "TraversabilityLayer(v3d): step_height=%.3f, max_slope=%.1fdeg, slope_start=%.1fdeg, "
     "topic=%s, sensor_frame=%s, base_frame=%s, cell_res=%.3f, voxel_z_res=%.3f, z_range=[%.1f,%.1f], "
     "ground_hit_thr=%d, free_space_thr=%d, free_space_win=%d, "
-    "interp_radius=%d, min_interp=%d, obstacle_ratio_thr=%.2f, obstacle_hit_thr=%d, num_threads=%d",
+    "interp_radius=%d, min_interp=%d, obstacle_ratio_thr=%.2f, obstacle_hit_thr=%d, "
+    "filtered_scan=%d input=%s output=%s min_cost=%.1f, num_threads=%d",
     step_height_threshold_, max_slope_traversable_ * 180.0 / M_PI,
     slope_cost_start_ * 180.0 / M_PI, pointcloud_topic_.c_str(),
     sensor_frame_.c_str(), base_frame_.c_str(),
     cell_resolution_, voxel_z_resolution_, min_obstacle_height_, max_obstacle_height_,
     ground_hit_threshold_, free_space_threshold_, free_space_window_,
     interp_search_radius_, min_interp_neighbors_,
-    obstacle_ratio_threshold_, obstacle_hit_threshold_, num_threads_);
+    obstacle_ratio_threshold_, obstacle_hit_threshold_,
+    static_cast<int>(publish_filtered_scan_), filtered_scan_input_topic_.c_str(),
+    filtered_scan_topic_.c_str(),
+    filtered_scan_min_cost_, num_threads_);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -123,6 +135,13 @@ void TraversabilityLayer::onInitialize()
   if (publish_slope_map_) {
     slope_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
       "slope_map", rclcpp::QoS(1));
+  }
+  if (publish_filtered_scan_) {
+    filtered_scan_pub_ = node->create_publisher<sensor_msgs::msg::LaserScan>(
+      filtered_scan_topic_, rclcpp::SensorDataQoS());
+    filtered_scan_sub_ = node->create_subscription<sensor_msgs::msg::LaserScan>(
+      filtered_scan_input_topic_, rclcpp::SensorDataQoS(),
+      std::bind(&TraversabilityLayer::filteredScanCallback, this, std::placeholders::_1));
   }
 
   matchSize();
@@ -279,6 +298,58 @@ void TraversabilityLayer::pointCloudCallback(const sensor_msgs::msg::PointCloud2
     "[TraversabilityLayer] Cloud: received=%u processed=%u frame_counter=%u pts=%zu",
     cloud_received_, cloud_processed_, static_cast<unsigned int>(frame_counter_),
     transformed_cloud.size());
+}
+
+void TraversabilityLayer::filteredScanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
+{
+  if (!enabled_ || !publish_filtered_scan_ || !filtered_scan_pub_) {
+    return;
+  }
+
+  sensor_msgs::msg::LaserScan filtered = *msg;
+  int kept = 0;
+  int removed = 0;
+  int invalid = 0;
+
+  const std::string scan_frame = msg->header.frame_id.empty() ? base_frame_ : msg->header.frame_id;
+  const bool frame_ok = scan_frame.empty() || base_frame_.empty() ||
+    scan_frame == base_frame_ || scan_frame == ("/" + base_frame_);
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (size_t i = 0; i < filtered.ranges.size(); ++i) {
+    const float range = filtered.ranges[i];
+    if (!std::isfinite(range) || range < filtered.range_min || range > filtered.range_max) {
+      invalid++;
+      continue;
+    }
+
+    // M20 launch generates /scan in base_link. If another frame is fed in,
+    // keep the beam instead of filtering with a wrong transform.
+    if (!frame_ok) {
+      kept++;
+      continue;
+    }
+
+    const double angle = static_cast<double>(filtered.angle_min) +
+      static_cast<double>(i) * static_cast<double>(filtered.angle_increment);
+    const double x_base = static_cast<double>(range) * std::cos(angle);
+    const double y_base = static_cast<double>(range) * std::sin(angle);
+
+    if (shouldKeepScanPoint(x_base, y_base)) {
+      kept++;
+    } else {
+      filtered.ranges[i] = std::numeric_limits<float>::infinity();
+      removed++;
+    }
+  }
+
+  filtered_scan_pub_->publish(filtered);
+
+  static auto clock = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
+  RCLCPP_DEBUG_THROTTLE(
+    rclcpp::get_logger("traversability_layer"), *clock, 2000,
+    "[TraversabilityLayer] filtered scan: input=%zu kept=%d removed=%d invalid=%d frame=%s",
+    msg->ranges.size(), kept, removed, invalid, scan_frame.c_str());
 }
 
 void TraversabilityLayer::shiftVoxelGrid(int shift_x, int shift_y)
@@ -964,6 +1035,41 @@ unsigned char TraversabilityLayer::computeCost(const GroundCell & cell) const
   return obstacle_cost;
 }
 
+bool TraversabilityLayer::shouldKeepScanPoint(double x_base, double y_base) const
+{
+  if (!voxel_grid_valid_ || !robot_pose_valid_ || ground_map_.empty() || cell_resolution_ <= 0.0) {
+    return false;
+  }
+
+  const double c = std::cos(last_robot_yaw_);
+  const double s = std::sin(last_robot_yaw_);
+  const double wx = last_robot_x_ + c * x_base - s * y_base;
+  const double wy = last_robot_y_ + s * x_base + c * y_base;
+  const int cx = static_cast<int>(std::floor((wx - voxel_ox_) / cell_resolution_));
+  const int cy = static_cast<int>(std::floor((wy - voxel_oy_) / cell_resolution_));
+
+  if (cx < 0 || cy < 0 ||
+      cx >= static_cast<int>(ground_size_x_) ||
+      cy >= static_cast<int>(ground_size_y_))
+  {
+    return false;
+  }
+
+  const auto & cell = ground_map_[groundIndex(
+      static_cast<unsigned int>(cx),
+      static_cast<unsigned int>(cy))];
+  if (!cell.has_ground) {
+    return false;
+  }
+
+  const unsigned char cost = computeCost(cell);
+  if (cost == nav2_costmap_2d::NO_INFORMATION) {
+    return false;
+  }
+
+  return static_cast<double>(cost) >= filtered_scan_min_cost_;
+}
+
 void TraversabilityLayer::updateBounds(
   double robot_x, double robot_y, double robot_yaw,
   double * min_x, double * min_y, double * max_x, double * max_y)
@@ -973,6 +1079,10 @@ void TraversabilityLayer::updateBounds(
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
+  last_robot_x_ = robot_x;
+  last_robot_y_ = robot_y;
+  last_robot_yaw_ = robot_yaw;
+  robot_pose_valid_ = true;
 
   nav2_costmap_2d::Costmap2D * master_grid = layered_costmap_->getCostmap();
   double ox = master_grid->getOriginX();
@@ -1209,12 +1319,21 @@ void TraversabilityLayer::activate()
     slope_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
       "slope_map", rclcpp::QoS(1));
   }
+  if (publish_filtered_scan_) {
+    filtered_scan_pub_ = node->create_publisher<sensor_msgs::msg::LaserScan>(
+      filtered_scan_topic_, rclcpp::SensorDataQoS());
+    filtered_scan_sub_ = node->create_subscription<sensor_msgs::msg::LaserScan>(
+      filtered_scan_input_topic_, rclcpp::SensorDataQoS(),
+      std::bind(&TraversabilityLayer::filteredScanCallback, this, std::placeholders::_1));
+  }
 }
 
 void TraversabilityLayer::deactivate()
 {
   cloud_sub_.reset();
   slope_pub_.reset();
+  filtered_scan_pub_.reset();
+  filtered_scan_sub_.reset();
 }
 
 }  // namespace traversability_layer

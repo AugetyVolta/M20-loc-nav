@@ -72,6 +72,9 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_path_perception_min_changed_cells", 3)
         self.declare_parameter("global_path_perception_max_points", 720)
         self.declare_parameter("global_path_perception_mark_all_layers", False)
+        self.declare_parameter("global_path_perception_skip_static_obstacles", True)
+        self.declare_parameter("global_path_perception_static_skip_cost", -1.0)
+        self.declare_parameter("global_path_perception_path_corridor_radius", 0.45)
 
         self.pct_root = self.get_parameter("pct_root").value
         self.tomogram_file = tomogram_stem(self.get_parameter("tomogram_file").value)
@@ -126,6 +129,20 @@ class PctPlannerNode(Node):
         self.global_path_perception_mark_all_layers = bool(
             self.get_parameter("global_path_perception_mark_all_layers").value
         )
+        self.global_path_perception_skip_static_obstacles = bool(
+            self.get_parameter("global_path_perception_skip_static_obstacles").value
+        )
+        self.global_path_perception_static_skip_cost = float(
+            self.get_parameter("global_path_perception_static_skip_cost").value
+        )
+        if self.global_path_perception_static_skip_cost <= 0.0:
+            self.global_path_perception_static_skip_cost = float(
+                self.get_parameter("a_star_cost_threshold").value
+            )
+        self.global_path_perception_path_corridor_radius = max(
+            0.0,
+            float(self.get_parameter("global_path_perception_path_corridor_radius").value),
+        )
 
         self.start_pos = np.array(
             vector3(self.get_parameter("initial_start").value, [-5.5, 6.0, 0.5]),
@@ -137,9 +154,8 @@ class PctPlannerNode(Node):
         )
         self.last_planned_start = None
         self.last_planned_goal = None
-        self.last_planned_perception_seq = -1
+        self.last_path_xy = None
         self.planning = False
-        self.perception_layer_seq = 0
         self.last_perception_update_time = None
         self.last_perception_update_wall_time = 0.0
 
@@ -219,7 +235,9 @@ class PctPlannerNode(Node):
                 f"window={self.global_path_perception_width:.2f}x{self.global_path_perception_height:.2f}m, "
                 f"inflation={self.global_path_perception_inflation_radius:.2f}m, "
                 f"scale={self.global_path_perception_cost_scaling_factor:.2f}, "
-                f"cost={self.global_path_perception_cost:.1f}"
+                f"cost={self.global_path_perception_cost:.1f}, "
+                f"path_corridor={self.global_path_perception_path_corridor_radius:.2f}m, "
+                f"skip_static={int(self.global_path_perception_skip_static_obstacles)}"
             )
 
         if cloud_topic:
@@ -316,7 +334,6 @@ class PctPlannerNode(Node):
         return (
             np.linalg.norm(self.start_pos - self.last_planned_start) >= self.position_epsilon
             or np.linalg.norm(self.goal_pos - self.last_planned_goal) >= self.position_epsilon
-            or self.perception_layer_seq != self.last_planned_perception_seq
         )
 
     def _plan_and_publish(self):
@@ -334,7 +351,8 @@ class PctPlannerNode(Node):
             self.path_pub.publish(self._traj_to_path(traj_3d))
             self.last_planned_start = self.start_pos.copy()
             self.last_planned_goal = self.goal_pos.copy()
-            self.last_planned_perception_seq = self.perception_layer_seq
+            traj_np = np.asarray(traj_3d, dtype=np.float32)
+            self.last_path_xy = traj_np[:, :2].copy() if traj_np.ndim == 2 and traj_np.shape[0] > 0 else None
             dt_ms = (time.perf_counter() - start_time) * 1000.0
             self.get_logger().info(
                 f"Published /pct_path with {len(traj_3d)} poses in {dt_ms:.1f} ms"
@@ -447,11 +465,10 @@ class PctPlannerNode(Node):
             self.last_perception_update_time = self.get_clock().now()
             return
 
-        self.perception_layer_seq += 1
         active_cells = self.planner.global_path_perception_cell_count()
         self.get_logger().info(
             f"Updated C++ PCT global path perception: active_cells={active_cells}, "
-            f"changed_cells={changed_cells}, seq={self.perception_layer_seq}",
+            f"changed_cells={changed_cells}",
             throttle_duration_sec=1.0,
         )
         self.last_perception_update_time = self.get_clock().now()
@@ -526,6 +543,8 @@ class PctPlannerNode(Node):
                 continue
             if np.linalg.norm(delta_xy) < self.global_path_perception_clear_robot_radius:
                 continue
+            if not self._global_path_perception_near_current_path(point[:2]):
+                continue
 
             grid_idx = self.planner.pos2idx(point[:2]).astype(int)
             center_row = int(grid_idx[1])
@@ -541,11 +560,48 @@ class PctPlannerNode(Node):
                 continue
 
             for layer in candidate_layers:
+                if self._global_path_perception_is_static_obstacle(layer, center_row, center_col):
+                    continue
                 indices.append((int(layer), center_row, center_col))
 
         if not indices:
             return np.zeros((0, 3), dtype=np.int32)
         return np.unique(np.asarray(indices, dtype=np.int32), axis=0)
+
+    def _global_path_perception_near_current_path(self, point_xy):
+        radius = self.global_path_perception_path_corridor_radius
+        if radius <= 0.0:
+            return True
+        path_xy = self.last_path_xy
+        if path_xy is None or path_xy.shape[0] < 2:
+            return False
+
+        point = np.asarray(point_xy, dtype=np.float32)
+        segments = path_xy[1:] - path_xy[:-1]
+        seg_len_sq = np.einsum("ij,ij->i", segments, segments)
+        valid = seg_len_sq > 1.0e-6
+        if not np.any(valid):
+            return False
+
+        starts = path_xy[:-1][valid]
+        segs = segments[valid]
+        lengths = seg_len_sq[valid]
+        t = np.einsum("ij,ij->i", point - starts, segs) / lengths
+        t = np.clip(t, 0.0, 1.0)
+        closest = starts + segs * t[:, None]
+        dist_sq = np.einsum("ij,ij->i", closest - point, closest - point)
+        return bool(np.min(dist_sq) <= radius * radius)
+
+    def _global_path_perception_is_static_obstacle(self, layer, row, col):
+        if not self.global_path_perception_skip_static_obstacles:
+            return False
+        try:
+            static_cost = float(self.planner.tomogram[0][int(layer)][int(row)][int(col)])
+        except Exception:
+            return False
+        if not math.isfinite(static_cost):
+            return False
+        return static_cost >= self.global_path_perception_static_skip_cost
 
     def _global_path_perception_candidate_layers(self, layer_heights, row, col, point_height):
         heights = layer_heights[:, row, col]
@@ -579,12 +635,11 @@ class PctPlannerNode(Node):
             self.global_path_perception_persistence,
         )
         if changed_cells > 0:
-            self.perception_layer_seq += 1
             if self.planner.global_path_perception_cell_count() == 0:
                 self.last_perception_update_time = None
             self.get_logger().info(
                 f"Decayed stale C++ PCT global path perception after {age:.2f}s, "
-                f"changed_cells={changed_cells}, seq={self.perception_layer_seq}",
+                f"changed_cells={changed_cells}",
                 throttle_duration_sec=1.0,
             )
 

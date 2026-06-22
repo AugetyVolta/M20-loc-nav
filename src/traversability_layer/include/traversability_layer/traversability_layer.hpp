@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "nav2_costmap_2d/layer.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
@@ -78,6 +79,7 @@ public:
 
 private:
   void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+  void filteredScanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
   void updateVoxelGrid(
     const std::vector<Point3D> & transformed_pts,
     const Point3D & sensor_pos);
@@ -88,6 +90,7 @@ private:
   void interpolateGround();
   void computeGroundSlope();
   unsigned char computeCost(const GroundCell & cell) const;
+  bool shouldKeepScanPoint(double x_base, double y_base) const;
   void resetMaps();
 
   inline size_t voxelIndex(unsigned int ix, unsigned int iy, unsigned int iz) const
@@ -121,6 +124,10 @@ private:
   int cloud_buffer_size_;
   bool enabled_;
   bool publish_slope_map_;
+  bool publish_filtered_scan_;
+  std::string filtered_scan_input_topic_;
+  std::string filtered_scan_topic_;
+  double filtered_scan_min_cost_;
   double cell_resolution_;
   int num_threads_;
 
@@ -165,8 +172,14 @@ private:
   double sensor_global_z_ = 0.0;
   double base_global_z_ = 0.0;
   bool cloud_updated_ = false;
+  double last_robot_x_ = 0.0;
+  double last_robot_y_ = 0.0;
+  double last_robot_yaw_ = 0.0;
+  bool robot_pose_valid_ = false;
 
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr slope_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr filtered_scan_pub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr filtered_scan_sub_;
 
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;

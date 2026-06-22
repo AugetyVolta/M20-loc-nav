@@ -5,6 +5,7 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
+        - /LaserScan1
         - /Odometry1/Shape1
       Splitter Ratio: 0.5
     Tree Height: 483
@@ -97,8 +98,8 @@ Visualization Manager:
     - Alpha: 0.6000000238418579
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 20.34546661376953
-        Min Value: -1.351806402206421
+        Max Value: 18.903865814208984
+        Min Value: -2.3298282623291016
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -226,7 +227,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /scan
+        Value: /traversability_filtered_scan
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -477,7 +478,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 38.28114318847656
+      Distance: 37.729896545410156
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -492,10 +493,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.31479766964912415
+      Pitch: 0.5297980904579163
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 2.907695770263672
+      Yaw: 1.432695746421814
     Saved: ~
 Window Geometry:
   Displays:

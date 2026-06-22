@@ -53,7 +53,6 @@ def generate_launch_description():
             DeclareLaunchArgument("a_star_cost_threshold", default_value="45.0"),
             DeclareLaunchArgument("safe_cost_margin", default_value="15.0"),
             DeclareLaunchArgument("step_cost_weight", default_value="1.0"),
-            DeclareLaunchArgument("max_heading_rate", default_value="1.2"),
             DeclareLaunchArgument("layer_match_height_tolerance", default_value="1.2"),
             DeclareLaunchArgument("global_path_perception_enabled", default_value="false"),
             DeclareLaunchArgument("global_path_perception_scan_topic", default_value="/scan"),
@@ -91,10 +90,6 @@ def generate_launch_description():
                         ),
                         "step_cost_weight": ParameterValue(
                             LaunchConfiguration("step_cost_weight"),
-                            value_type=float,
-                        ),
-                        "max_heading_rate": ParameterValue(
-                            LaunchConfiguration("max_heading_rate"),
                             value_type=float,
                         ),
                         "layer_match_height_tolerance": ParameterValue(
