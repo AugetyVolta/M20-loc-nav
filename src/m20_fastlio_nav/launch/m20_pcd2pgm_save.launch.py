@@ -61,16 +61,16 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "pcd_file",
-                default_value="/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/global_map.pcd",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd",
             ),
             DeclareLaunchArgument(
                 "output_map",
-                default_value="/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_2d_map",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map",
                 description="Output prefix for Nav2 2D map .pgm/.yaml files.",
             ),
             DeclareLaunchArgument(
                 "output_pcd",
-                default_value="/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd",
+                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd",
                 description="Output path for the leveled 3D PCD used by Open3D localization.",
             ),
             DeclareLaunchArgument(
