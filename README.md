@@ -6,7 +6,7 @@
 当前工作空间是独立复制出来的，不依赖 `m20_ws/src` 里的软链接。除非明确说明，本 README 里的命令都在：
 
 ```text
-/mnt/nvme/workspace/fast_lio_ws
+/mnt/nvme/workspace/fast_lio_ws_stable_localization
 ```
 
 ## 分支定位
@@ -35,7 +35,7 @@ git switch point-lio-lidar-localization
 ## 当前稳定版要点
 
 - 3D 建图：`fast_lio_map` 前端保存 `m20_map.pcd`，`slam_mapping/alaserPGO` 后端保存 `global_map.pcd` 和 `sc_database.txt`。
-- 3D 定位：Open3D 使用 `/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd`。
+- 3D 定位：Open3D 使用 `/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd`。
 - 2D 地图：`pcd2pgm` 默认输入 `global_map.pcd`，内部完成摆平、地面基准对齐，再生成 `m20_2d_map.pgm/.yaml`。
 - Nav2：`m20_fastlio_nav.launch.py` 启动 Fast-LIO 定位、Open3D、`/scan`、map server 和 Nav2 navigation，不启动 AMCL。
 - 局部路径：`global_path` -> `pure_pursuit` 发布 `subgoal` -> RL/PRIEST 发布 `local_path` -> DWB adapter 转成 `/NAV_CMD`。
@@ -107,7 +107,7 @@ map
 ## 工作空间结构
 
 ```text
-/mnt/nvme/workspace/fast_lio_ws/
+/mnt/nvme/workspace/fast_lio_ws_stable_localization/
 ├── README.md
 ├── maps/                         # 本地生成数据，默认不再进入 Git
 │   └── fastlio/
@@ -283,7 +283,7 @@ src/m20_fastlio_nav/scripts/level_pcd.py
 ROS 2:      /opt/ros/humble
 Livox:      ~/liv_ws
 Open3D:     /home/orin/drivers/Open3D/install
-工作空间:   /mnt/nvme/workspace/fast_lio_ws
+工作空间:   /mnt/nvme/workspace/fast_lio_ws_stable_localization
 ```
 
 Open3D 是 C++ 链接使用，不是只靠 Python venv。`open3d_loc` 的 CMake 指向：
@@ -295,7 +295,7 @@ Open3D 是 C++ 链接使用，不是只靠 Python venv。`open3d_loc` 的 CMake 
 ### 完整构建
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
 export CMAKE_BUILD_PARALLEL_LEVEL=1
@@ -322,7 +322,7 @@ colcon build --symlink-install --executor sequential \
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
-source /mnt/nvme/workspace/fast_lio_ws/install/setup.bash
+source /mnt/nvme/workspace/fast_lio_ws_stable_localization/install/setup.bash
 
 ros2 pkg prefix fast_lio
 ros2 pkg prefix fast_lio_map
@@ -356,7 +356,7 @@ source ~/.bashrc
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
-source /mnt/nvme/workspace/fast_lio_ws/install/setup.bash
+source /mnt/nvme/workspace/fast_lio_ws_stable_localization/install/setup.bash
 ```
 
 如果还要运行 RL local path 相关 Python，继续留在 `fast_lio_ws`，只需要额外进入 `~/venv/m20_nav`。
@@ -396,14 +396,14 @@ ros2 topic echo /livox/imu --once
 另开终端：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
 source install/setup.bash
 
 export LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0
 ros2 launch m20_fastlio_nav m20_fastlio_mapping.launch.py \
-  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map.pcd \
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map.pcd \
   rviz:=true
 ```
 
@@ -439,7 +439,7 @@ ros2 service list | grep save_pgo_map
 Terminal 1：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
 source install/setup.bash
@@ -453,7 +453,7 @@ ros2 launch m20_fastlio_nav m20_fastlio_mapping.launch.py \
 Terminal 2：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
 source install/setup.bash
@@ -480,7 +480,7 @@ ros2 service call /map_save std_srvs/srv/Trigger {}
 默认保存到：
 
 ```text
-/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map.pcd
+/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map.pcd
 ```
 
 保存后端 PGO 地图：
@@ -492,19 +492,19 @@ ros2 service call /save_pgo_map std_srvs/srv/Trigger {}
 默认保存到：
 
 ```text
-/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd
-/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/sc_database.txt
+/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/global_map.pcd
+/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/sc_database.txt
 ```
 
 确认文件存在：
 
 ```bash
-ls -lh /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map.pcd
-ls -lh /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd
-ls -lh /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/sc_database.txt
+ls -lh /mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map.pcd
+ls -lh /mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/global_map.pcd
+ls -lh /mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/sc_database.txt
 ```
 
-## Step 3: 生成 Nav2 2D 地图
+## Step 3: 一次生成 Nav2 2D 地图和 3D 定位地图
 
 `pcd2pgm` 现在会在转图流程里完成三件事：
 
@@ -512,24 +512,26 @@ ls -lh /mnt/nvme/workspace/fast_lio_ws/maps/fastlio/sc_database.txt
 2. 可选拟合地面平面做小角度细修正。
 3. 自动检测地面高度并平移到 `z=0`，然后用 `thre_z_min/thre_z_max` 按相对高度切片。
 
-因此生成 2D 图时默认直接输入原始/优化后的 3D PCD，不需要先生成 `m20_map_leveled.pcd`：
+因此生成地图时默认直接输入原始/优化后的 3D PCD；同一个 launch 会同时输出 Nav2 2D 地图和 Open3D 定位用的 `m20_map_leveled.pcd`：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
 ros2 launch m20_fastlio_nav m20_pcd2pgm_save.launch.py \
-  pcd_file:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd \
-  output_map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map
+  pcd_file:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/global_map.pcd \
+  output_map:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_2d_map \
+  output_pcd:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd
 ```
 
 输出：
 
 ```text
-/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.pgm
-/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml
+/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_2d_map.pgm
+/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_2d_map.yaml
+/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd
 ```
 
 `pcd2pgm` 参数在：
@@ -543,6 +545,9 @@ src/m20_fastlio_nav/config/pcd2pgm_m20.yaml
 | 参数 | 当前值 | 说明 |
 |---|---:|---|
 | `pcd_file` | `global_map.pcd` | 默认输入原始/优化 3D PCD，`m20_pcd2pgm_save.launch.py` 的 `pcd_file:=...` 会覆盖它 |
+| `output_map` | `m20_2d_map` | 输出 Nav2 2D 地图前缀，最终生成 `.pgm/.yaml` |
+| `output_pcd` | `m20_map_leveled.pcd` | 输出 Open3D 定位用的摆正后 3D PCD |
+| `level_pcd_python` | `/home/orin/venv/m20_nav/bin/python` | 运行 `level_pcd.py` 的 Python，需要有 `open3d/scipy` |
 | `odom_to_lidar_odom` | `[0,0,0,0,0,0]` | 转图前额外施加的已知位姿修正，通常保持全 0 |
 | `enable_leveling` | `true` | 启用内置 PCD 摆平，替代单独运行 `src/m20_fastlio_nav/scripts/level_pcd.py` |
 | `leveling_quaternion_xyzw` | MID360 外参四元数 | 用 `base_link -> livox_frame` 外参补偿雷达安装倾角 |
@@ -560,11 +565,14 @@ src/m20_fastlio_nav/config/pcd2pgm_m20.yaml
 
 常规调参只需要动 `thre_z_min/thre_z_max`。当前 `0.15 / 0.6` 表示取 2D map 基准面上方 15cm 到 60cm 的点云投影成 2D 占据图；如果需要包含地面下方点，再把 `thre_z_min` 设成负数。不要再手算 `0.84` 这类绝对高度。
 
-`src/m20_fastlio_nav/scripts/level_pcd.py` 仍保留为离线检查工具；只有需要生成或复核 3D 定位用的
-`m20_map_leveled.pcd` 时才需要运行：
+`m20_pcd2pgm_save.launch.py` 会自动调用 `src/m20_fastlio_nav/scripts/level_pcd.py` 生成 3D 定位地图。系统默认
+`python3` 没有安装 `open3d`，所以 launch 默认使用 `/home/orin/venv/m20_nav/bin/python`；如果换环境，可以通过
+`level_pcd_python:=/path/to/python` 覆盖。
+
+`src/m20_fastlio_nav/scripts/level_pcd.py` 仍保留为离线检查工具，只有需要单独复核 3D 定位 PCD 时才手动运行：
 
 ```bash
-python3 src/m20_fastlio_nav/scripts/level_pcd.py \
+/home/orin/venv/m20_nav/bin/python src/m20_fastlio_nav/scripts/level_pcd.py \
   maps/fastlio/global_map.pcd \
   maps/fastlio/m20_map_leveled.pcd
 ```
@@ -574,25 +582,25 @@ python3 src/m20_fastlio_nav/scripts/level_pcd.py \
 确保已经有：
 
 ```text
-/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd  # 摆正后的 3D PCD（给 Open3D）
-/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml      # 2D 地图（pcd2pgm 从 global_map.pcd 生成）
+/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd  # 摆正后的 3D PCD（给 Open3D）
+/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_2d_map.yaml      # 2D 地图（pcd2pgm 从 global_map.pcd 生成）
 ```
 
 注意：Open3D 的 3D 定位地图和 Nav2 的 2D 地图是两个文件。当前稳定版中，Open3D 仍读取
-`m20_map_leveled.pcd`；2D map 由 `pcd2pgm` 从 `global_map.pcd` 生成，并在转图过程中内部摆平和对齐地面基准。
+`m20_map_leveled.pcd`；2D map 由 `pcd2pgm` 从 `global_map.pcd` 生成，并在转图过程中内部摆平和对齐地面基准。Step 3 的 launch 会同时生成这两个定位/导航必需文件。
 
 启动：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
 source install/setup.bash
 
 LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
-  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
-  map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml \
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd \
+  map:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_2d_map.yaml \
   rviz:=true
 ```
 
@@ -615,7 +623,7 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 
 ```bash
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
-  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd \
   map:=/mnt/nvme/workspace/m20_ws/src/move/map/lab.yaml
 ```
 
@@ -640,15 +648,15 @@ RViz Publish Point(/clicked_point)
 推荐启动：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
 source install/setup.bash
 
 LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
-  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
-  map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml \
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd \
+  map:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_2d_map.yaml \
   rviz:=true \
   start_external_nav:=true
 ```
@@ -742,7 +750,7 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py start_external_nav:=false
 需要回退到旧的手动发布方式时，先用 `start_external_nav:=false` 启动主 launch，然后手动运行 global path、pure pursuit、RL local path 和 adapter。当前拷贝到本工作区的 `move` / `RL2Path` 默认按 2D 链路运行：`global_path(map)` -> `subgoal(map)` -> `local_path(base_footprint)` -> adapter 输出到 `odom_nav`。
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
@@ -766,7 +774,7 @@ python3 src/move/move/pure_pursuit.py --ros-args -r plan:=global_path
 RL local path：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 source ~/venv/m20_nav/bin/activate
@@ -787,7 +795,7 @@ src/move/ckpts/ckpt_3/params/agent.pkl
 adapter 用当前实车验证效果最好的文件：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
@@ -816,13 +824,13 @@ Orin 上没有显示器，需要在笔记本上跑 RViz。前提：笔记本和 
 ```bash
 # 在笔记本上执行
 # 定位+导航全景模式（推荐，含3D点云+2D地图+costmap+plan）：
-scp orin@10.196.232.109:/mnt/nvme/workspace/fast_lio_ws/src/m20_fastlio_nav/config/m20_nav3d.rviz ~/
+scp orin@10.196.232.109:/mnt/nvme/workspace/fast_lio_ws_stable_localization/src/m20_fastlio_nav/config/m20_nav3d.rviz ~/
 
 # 纯 3D 定位模式（仅点云和 TF）：
-scp orin@10.196.232.109:/mnt/nvme/workspace/fast_lio_ws/src/open3d_loc/rviz_cfg/fastlio.rviz ~/
+scp orin@10.196.232.109:/mnt/nvme/workspace/fast_lio_ws_stable_localization/src/open3d_loc/rviz_cfg/fastlio.rviz ~/
 
 # 建图模式：
-scp orin@10.196.232.109:/mnt/nvme/workspace/fast_lio_ws/src/fast_lio_map/rviz/fastlio.rviz ~/
+scp orin@10.196.232.109:/mnt/nvme/workspace/fast_lio_ws_stable_localization/src/fast_lio_map/rviz/fastlio.rviz ~/
 ```
 
 ### 2) 启动 RViz
@@ -1167,8 +1175,8 @@ rosbag 调试时必须让整条定位导航链路使用仿真时间，否则包�
 ```bash
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   use_sim_time:=true \
-  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
-  map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd \
+  map:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_2d_map.yaml
 ```
 
 然后播放 bag：
@@ -1200,21 +1208,21 @@ ros2 launch livox_ros_driver2 msg_MID360_launch.py
 Terminal 2: Fast-LIO + Open3D + Nav2
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source ~/liv_ws/install/setup.bash
 source install/setup.bash
 LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0 \
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
-  map_pcd:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd \
-  map:=/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map.yaml \
+  map_pcd:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_map_leveled.pcd \
+  map:=/mnt/nvme/workspace/fast_lio_ws_stable_localization/maps/fastlio/m20_2d_map.yaml \
   rviz:=false
 ```
 
 Terminal 3: global path
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 python3 src/move/move/global_path_publisher.py
@@ -1229,7 +1237,7 @@ python3 src/move/move/global_path_seq_publisher.py
 Terminal 4: pure pursuit subgoal
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 python3 src/move/move/pure_pursuit.py --ros-args -r plan:=global_path
@@ -1238,7 +1246,7 @@ python3 src/move/move/pure_pursuit.py --ros-args -r plan:=global_path
 Terminal 5: RL local path
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 source ~/venv/m20_nav/bin/activate
@@ -1248,7 +1256,7 @@ python src/move/move/priest_rl_publisher_nav_cmd_fast.py
 Terminal 6: adapter / debug
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 python src/move/move/priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py
@@ -1269,7 +1277,7 @@ ros2 run tf2_ros tf2_echo map base_link
 只清 Fast-LIO 工作区：
 
 ```bash
-cd /mnt/nvme/workspace/fast_lio_ws
+cd /mnt/nvme/workspace/fast_lio_ws_stable_localization
 rm -rf build install log
 ```
 
