@@ -281,9 +281,9 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_global_path_perception_scan_topic", default_value="/traversability_filtered_scan"),
             DeclareLaunchArgument("pct_global_path_perception_width", default_value="6.0"),
             DeclareLaunchArgument("pct_global_path_perception_height", default_value="6.0"),
-            DeclareLaunchArgument("pct_global_path_perception_inflation_radius", default_value="0.45"),
-            DeclareLaunchArgument("pct_global_path_perception_cost_scaling_factor", default_value="8.0"),
-            DeclareLaunchArgument("pct_global_path_perception_persistence", default_value="0.6"),
+            DeclareLaunchArgument("pct_global_path_perception_inflation_radius", default_value="0.60"),
+            DeclareLaunchArgument("pct_global_path_perception_cost_scaling_factor", default_value="5.0"),
+            DeclareLaunchArgument("pct_global_path_perception_persistence", default_value="1.0"),
             DeclareLaunchArgument(
                 "rl_python_executable",
                 default_value=PathJoinSubstitution(

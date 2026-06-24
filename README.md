@@ -270,7 +270,12 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 | `body_scan_min_height` | `-0.1` | 从 body 点云生成 scan 的最低高度 |
 | `body_scan_max_height` | `0.55` | 从 body 点云生成 scan 的最高高度 |
 
-PCT 全局路径感知更新在 C++ core 中维护，不会修改或重新生成完整 tomogram；离线 3D tomogram 仍是长期地形地图。主导航默认不再直接使用原始 `/scan`，而是使用 `traversability_layer` 发布的 `/traversability_filtered_scan`。这个 scan 来自原始 `/scan`，但只有 endpoint 落在 traversability 明确判为高代价/不可通行的格子时才保留；可通行、未知、无地面区域都会置为 `inf`。PCT 仍按 Nav2 inflation 风格写入临时代价，并在无新观测或机器人经过清理半径后恢复为静态 tomogram cost。
+PCT 全局路径感知更新在 C++ core 中维护，不会修改或重新生成完整 tomogram；离线 3D tomogram 仍是长期地形地图。主导航默认不再直接使用原始 `/scan`，而是使用 `traversability_layer` 发布的 `/traversability_filtered_scan`。这个 scan 来自原始 `/scan`，但只有 endpoint 落在 traversability 明确判为高代价/不可通行的格子时才保留；可通行、未知、无地面区域都会置为 `inf`。当前 `local_costmap` 是 `5m x 5m`，filtered scan 的有效范围先受 local costmap 限制。PCT 仍按 Nav2 inflation 风格写入临时代价，并在无新观测或机器人经过清理半径后恢复为静态 tomogram cost。
+
+PCT 动态层保留两个过滤保护，避免楼梯平台墙壁把全局路径推歪：
+
+- `global_path_perception_path_corridor_radius=0.4`：只有距离最新 `/pct_path` 中心线 0.4m 内的 filtered scan 点会写入动态代价层。
+- `global_path_perception_skip_static_obstacles=true`：静态 tomogram cost 已经高于阈值的点不会重复写入动态层。`global_path_perception_static_skip_cost=-1.0` 表示自动使用 `a_star_cost_threshold`，主导航里实际是 45.0。
 
 如需对比原始 `/scan`：
 

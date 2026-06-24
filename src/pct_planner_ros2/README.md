@@ -171,9 +171,13 @@ global_path_perception_height = 4.0                   # 单独 PCT RViz 调试 l
 global_path_perception_inflation_radius = 0.45       # M20 主导航推荐值，减少楼梯转角大绕行
 global_path_perception_cost_scaling_factor = 8.0     # M20 主导航推荐值，让动态代价更快衰减
 global_path_perception_persistence = 0.6             # M20 主导航推荐值，减少旧障碍残留
+global_path_perception_path_corridor_radius = 0.4    # 只让最新路径附近的动态点影响全局路径
+global_path_perception_skip_static_obstacles = true  # 静态 tomogram 高代价点不重复写入动态层
 ```
 
 完整 M20 导航 launch 会覆盖为 `global_path_perception_width=6.0`、`global_path_perception_height=6.0`、`global_path_perception_scan_topic=/traversability_filtered_scan`、`global_path_perception_inflation_radius=0.45`、`global_path_perception_cost_scaling_factor=8.0`、`global_path_perception_persistence=0.6`，并默认开启全局路径感知。其余滤波、层匹配、机器人清除半径和感知峰值 cost 使用节点默认值；峰值 cost 默认自动取 `a_star_cost_threshold + 5`。
+
+动态层变化只更新 C++ 临时代价层，不会单独立即触发重规划。主导航默认 `always_replan=true`，所以 `/pct_path` 按 `replan_interval=1.0s` 定周期刷新。`global_path_perception_path_corridor_radius=0.4` 使用最新 `/pct_path` 做路径中心线，只让路径附近的动态点影响全局路径；`global_path_perception_skip_static_obstacles=true` 会忽略静态 tomogram 中已经高于 `a_star_cost_threshold` 的墙体/结构点。
 
 因为全局路径感知更新改在 PCT C++/pybind core 内，修改后需要重新构建 core：
 
