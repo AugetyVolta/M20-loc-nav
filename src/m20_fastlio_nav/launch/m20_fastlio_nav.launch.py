@@ -47,6 +47,15 @@ def generate_launch_description():
     pct_global_path_perception_inflation_radius = LaunchConfiguration("pct_global_path_perception_inflation_radius")
     pct_global_path_perception_cost_scaling_factor = LaunchConfiguration("pct_global_path_perception_cost_scaling_factor")
     pct_global_path_perception_persistence = LaunchConfiguration("pct_global_path_perception_persistence")
+    pct_global_path_perception_raytrace_enabled = LaunchConfiguration(
+        "pct_global_path_perception_raytrace_enabled"
+    )
+    pct_global_path_perception_raytrace_max_range = LaunchConfiguration(
+        "pct_global_path_perception_raytrace_max_range"
+    )
+    pct_global_path_perception_raytrace_max_rays = LaunchConfiguration(
+        "pct_global_path_perception_raytrace_max_rays"
+    )
 
     pct_pkg_share = FindPackageShare("pct_planner_ros2")
     default_pct_root = PathJoinSubstitution([pct_pkg_share, "PCT_planner"])
@@ -163,6 +172,7 @@ def generate_launch_description():
                             {
                                 "pct_root": pct_root,
                                 "tomogram_file": pct_tomogram_file,
+                                "use_sim_time": ParameterValue(use_sim_time, value_type=bool),
                                 "frame_id": "map",
                                 "path_topic": global_path_topic,
                                 "start_source": pct_start_source,
@@ -216,6 +226,18 @@ def generate_launch_description():
                                 "global_path_perception_persistence": ParameterValue(
                                     pct_global_path_perception_persistence,
                                     value_type=float,
+                                ),
+                                "global_path_perception_raytrace_enabled": ParameterValue(
+                                    pct_global_path_perception_raytrace_enabled,
+                                    value_type=bool,
+                                ),
+                                "global_path_perception_raytrace_max_range": ParameterValue(
+                                    pct_global_path_perception_raytrace_max_range,
+                                    value_type=float,
+                                ),
+                                "global_path_perception_raytrace_max_rays": ParameterValue(
+                                    pct_global_path_perception_raytrace_max_rays,
+                                    value_type=int,
                                 ),
                             },
                         ],
@@ -283,7 +305,10 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_global_path_perception_height", default_value="6.0"),
             DeclareLaunchArgument("pct_global_path_perception_inflation_radius", default_value="0.60"),
             DeclareLaunchArgument("pct_global_path_perception_cost_scaling_factor", default_value="5.0"),
-            DeclareLaunchArgument("pct_global_path_perception_persistence", default_value="1.0"),
+            DeclareLaunchArgument("pct_global_path_perception_persistence", default_value="5.0"),
+            DeclareLaunchArgument("pct_global_path_perception_raytrace_enabled", default_value="true"),
+            DeclareLaunchArgument("pct_global_path_perception_raytrace_max_range", default_value="0.0"),
+            DeclareLaunchArgument("pct_global_path_perception_raytrace_max_rays", default_value="360"),
             DeclareLaunchArgument(
                 "rl_python_executable",
                 default_value=PathJoinSubstitution(

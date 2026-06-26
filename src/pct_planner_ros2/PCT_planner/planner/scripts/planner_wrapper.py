@@ -102,11 +102,66 @@ class TomogramPlanner(object):
     def decay_global_path_perception(self, stamp, persistence):
         return int(self.planner.decay_global_path_perception(float(stamp), float(persistence)))
 
+    def clear_global_path_perception_indices(self, clear_indices):
+        clear_indices = np.asarray(clear_indices, dtype=np.int32)
+        if clear_indices.size == 0:
+            clear_indices = np.zeros((0, 3), dtype=np.int32)
+        clear_indices = clear_indices.reshape((-1, 3))
+        return int(self.planner.clear_global_path_perception_indices(clear_indices))
+
     def clear_global_path_perception(self):
         self.planner.clear_global_path_perception()
 
     def global_path_perception_cell_count(self):
         return int(self.planner.get_global_path_perception_cell_count())
+
+    def points2rowcol(self, points_xy):
+        points_xy = np.asarray(points_xy, dtype=np.float32)
+        if points_xy.size == 0:
+            return np.zeros((0, 2), dtype=np.int32)
+        points_xy = points_xy.reshape((-1, 2))
+        idx = np.rint((points_xy - self.center[:2]) / self.resolution).astype(np.int32)
+        idx += self.offset
+        return idx.astype(np.int32, copy=False)
+
+    def build_global_path_perception_mark_indices(
+        self,
+        mark_cells,
+        current_layer,
+        robot_height,
+        skip_static_obstacles,
+        static_skip_cost,
+    ):
+        mark_cells = np.asarray(mark_cells, dtype=np.int32)
+        if mark_cells.size == 0:
+            mark_cells = np.zeros((0, 2), dtype=np.int32)
+        mark_cells = mark_cells.reshape((-1, 2))
+        return self.planner.build_global_path_perception_mark_indices(
+            mark_cells,
+            int(current_layer),
+            float(robot_height),
+            bool(skip_static_obstacles),
+            float(static_skip_cost),
+        )
+
+    def build_global_path_perception_clear_indices(
+        self,
+        origin_cell,
+        endpoint_cells,
+        current_layer,
+        robot_height,
+    ):
+        origin_cell = np.asarray(origin_cell, dtype=np.int32).reshape((2,))
+        endpoint_cells = np.asarray(endpoint_cells, dtype=np.int32)
+        if endpoint_cells.size == 0:
+            endpoint_cells = np.zeros((0, 3), dtype=np.int32)
+        endpoint_cells = endpoint_cells.reshape((-1, 3))
+        return self.planner.build_global_path_perception_clear_indices(
+            origin_cell,
+            endpoint_cells,
+            int(current_layer),
+            float(robot_height),
+        )
 
 
 

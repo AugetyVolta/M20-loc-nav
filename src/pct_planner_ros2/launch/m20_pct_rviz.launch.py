@@ -46,7 +46,8 @@ def generate_launch_description():
             DeclareLaunchArgument("venv_site", default_value="/home/orin/venv/m20_nav_cupy/lib/python3.10/site-packages"),
             DeclareLaunchArgument("tomogram_file", default_value="m20_3d_map"),
             DeclareLaunchArgument("pcd_file", default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd"),
-            DeclareLaunchArgument("start_source", default_value="fixed"),
+            DeclareLaunchArgument("use_sim_time", default_value="false"),
+            DeclareLaunchArgument("start_source", default_value="tf"),
             DeclareLaunchArgument("odom_topic", default_value="/odom_body"),
             DeclareLaunchArgument("global_frame", default_value="map"),
             DeclareLaunchArgument("robot_frame", default_value="base_link"),
@@ -76,6 +77,7 @@ def generate_launch_description():
                     {
                         "pct_root": pct_root,
                         "tomogram_file": LaunchConfiguration("tomogram_file"),
+                        "use_sim_time": ParameterValue(LaunchConfiguration("use_sim_time"), value_type=bool),
                         "start_source": LaunchConfiguration("start_source"),
                         "odom_topic": LaunchConfiguration("odom_topic"),
                         "global_frame": LaunchConfiguration("global_frame"),

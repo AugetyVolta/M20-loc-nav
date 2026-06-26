@@ -37,6 +37,7 @@ void Astar::Init(const double cost_threshold, const int num_layers,
   max_layers_ = num_layers;
   xy_size_ = max_x_ * max_y_;
   perception_active_cells_ = 0;
+  perception_source_active_cells_ = 0;
 
   int row_offset = 0;
   grid_map_.resize(max_layers_);
@@ -51,7 +52,7 @@ void Astar::Init(const double cost_threshold, const int num_layers,
         grid_map_[i][j][k] = Node(Eigen::Vector3i(z, j, k), nullptr);
         grid_map_[i][j][k].static_cost = cost_map(j + row_offset, k);
         grid_map_[i][j][k].perception_cost = 0.0;
-        grid_map_[i][j][k].perception_stamp = -1.0;
+        grid_map_[i][j][k].perception_source_stamp = -1.0;
         grid_map_[i][j][k].cost = grid_map_[i][j][k].static_cost;
         grid_map_[i][j][k].height = height;
         grid_map_[i][j][k].ele = ele_map(j + row_offset, k);
@@ -83,6 +84,28 @@ void Astar::RefreshNodeCost(Node& node) {
   node.cost = EffectiveCost(node);
 }
 
+bool Astar::UpdatePerceptionInflationParams(double inflation_radius,
+                                            double inscribed_radius,
+                                            double peak_cost,
+                                            double cost_scaling_factor) {
+  inflation_radius = std::max(0.0, inflation_radius);
+  inscribed_radius = std::max(0.0, inscribed_radius);
+  peak_cost = std::max(0.0, peak_cost);
+  cost_scaling_factor = std::max(0.0, cost_scaling_factor);
+
+  const bool changed =
+      std::abs(perception_inflation_radius_ - inflation_radius) > 1.0e-9 ||
+      std::abs(perception_inscribed_radius_ - inscribed_radius) > 1.0e-9 ||
+      std::abs(perception_peak_cost_ - peak_cost) > 1.0e-9 ||
+      std::abs(perception_cost_scaling_factor_ - cost_scaling_factor) > 1.0e-9;
+
+  perception_inflation_radius_ = inflation_radius;
+  perception_inscribed_radius_ = inscribed_radius;
+  perception_peak_cost_ = peak_cost;
+  perception_cost_scaling_factor_ = cost_scaling_factor;
+  return changed;
+}
+
 double Astar::PerceptionInflationCost(int drow, int dcol, double inflation_radius,
                                    double inscribed_radius,
                                    double peak_cost,
@@ -111,25 +134,37 @@ double Astar::PerceptionInflationCost(int drow, int dcol, double inflation_radiu
   return lethal_cost * std::exp(-scale * (distance - inscribed));
 }
 
-void Astar::MarkPerceptionCell(int layer, int row, int col, double cell_cost,
-                            double stamp) {
+bool Astar::MarkPerceptionSource(int layer, int row, int col, double stamp) {
   if (layer < 0 || layer >= max_layers_ || row < 0 || row >= max_y_ ||
       col < 0 || col >= max_x_) {
-    return;
-  }
-  if (cell_cost <= 0.0) {
-    return;
+    return false;
   }
   Node& node = grid_map_[layer][row][col];
-  if (node.perception_cost <= 0.0) {
-    perception_active_cells_ += 1;
+  const bool was_inactive = !node.HasPerceptionSource();
+  if (was_inactive) {
+    perception_source_active_cells_ += 1;
   }
-  node.perception_cost = std::max(node.perception_cost, cell_cost);
-  node.perception_stamp = stamp;
-  RefreshNodeCost(node);
+  node.perception_source_stamp = stamp;
+  return was_inactive;
 }
 
-int Astar::ClearPerceptionCircle(const Eigen::Vector3i& center,
+bool Astar::ClearPerceptionSource(int layer, int row, int col) {
+  if (layer < 0 || layer >= max_layers_ || row < 0 || row >= max_y_ ||
+      col < 0 || col >= max_x_) {
+    return false;
+  }
+
+  Node& node = grid_map_[layer][row][col];
+  if (!node.HasPerceptionSource()) {
+    return false;
+  }
+
+  node.perception_source_stamp = -1.0;
+  perception_source_active_cells_ = std::max(0, perception_source_active_cells_ - 1);
+  return true;
+}
+
+int Astar::ClearPerceptionSourceCircle(const Eigen::Vector3i& center,
                               double radius) {
   if (radius < 0.0 || resolution_ <= 0.0 ||
       center[0] < 0 || center[0] >= max_layers_ ||
@@ -156,12 +191,7 @@ int Astar::ClearPerceptionCircle(const Eigen::Vector3i& center,
       if (drow * drow + dcol * dcol > radius_sq) {
         continue;
       }
-      Node& node = grid_map_[layer][row][col];
-      if (node.perception_cost > 0.0) {
-        node.perception_cost = 0.0;
-        node.perception_stamp = -1.0;
-        perception_active_cells_ = std::max(0, perception_active_cells_ - 1);
-        RefreshNodeCost(node);
+      if (ClearPerceptionSource(layer, row, col)) {
         changed += 1;
       }
     }
@@ -169,9 +199,172 @@ int Astar::ClearPerceptionCircle(const Eigen::Vector3i& center,
   return changed;
 }
 
-int Astar::DecayGlobalPathPerception(const double stamp,
-                                 const double persistence) {
-  if (perception_active_cells_ <= 0) {
+int Astar::SelectPerceptionLayerForCell(int row, int col, int current_layer,
+                                        double robot_height) const {
+  if (row < 0 || row >= max_y_ || col < 0 || col >= max_x_) {
+    return -1;
+  }
+
+  auto valid_layer = [&](int layer) {
+    if (layer < 0 || layer >= max_layers_) {
+      return false;
+    }
+    const double height = grid_map_[layer][row][col].height;
+    return std::isfinite(height) && height > -99.0;
+  };
+
+  if (valid_layer(current_layer)) {
+    return current_layer;
+  }
+
+  int best_layer = -1;
+  double best_diff = std::numeric_limits<double>::infinity();
+  for (int layer = 0; layer < max_layers_; ++layer) {
+    if (!valid_layer(layer)) {
+      continue;
+    }
+    const double diff =
+        std::abs(grid_map_[layer][row][col].height - robot_height);
+    if (diff < best_diff) {
+      best_diff = diff;
+      best_layer = layer;
+    }
+  }
+  return best_layer;
+}
+
+bool Astar::IsStaticObstacleCell(int layer, int row, int col,
+                                 double static_skip_cost) const {
+  if (layer < 0 || layer >= max_layers_ || row < 0 || row >= max_y_ ||
+      col < 0 || col >= max_x_) {
+    return false;
+  }
+  const double static_cost = grid_map_[layer][row][col].static_cost;
+  return std::isfinite(static_cost) && static_cost >= static_skip_cost;
+}
+
+std::vector<Eigen::Vector2i> Astar::BresenhamCells(int row0, int col0,
+                                                   int row1, int col1) const {
+  std::vector<Eigen::Vector2i> cells;
+  const int dcol = std::abs(col1 - col0);
+  const int drow = -std::abs(row1 - row0);
+  const int step_col = col0 < col1 ? 1 : -1;
+  const int step_row = row0 < row1 ? 1 : -1;
+  int error = dcol + drow;
+  int row = row0;
+  int col = col0;
+
+  while (true) {
+    cells.emplace_back(row, col);
+    if (row == row1 && col == col1) {
+      break;
+    }
+    const int double_error = 2 * error;
+    if (double_error >= drow) {
+      error += drow;
+      col += step_col;
+    }
+    if (double_error <= dcol) {
+      error += dcol;
+      row += step_row;
+    }
+  }
+  return cells;
+}
+
+Eigen::MatrixXi Astar::BuildGlobalPathPerceptionMarkIndices(
+    const Eigen::MatrixXi& mark_cells, const int current_layer,
+    const double robot_height, const bool skip_static_obstacles,
+    const double static_skip_cost) const {
+  if (mark_cells.cols() < 2 || mark_cells.rows() <= 0) {
+    return Eigen::MatrixXi(0, 3);
+  }
+
+  std::vector<Eigen::Vector3i> indices;
+  indices.reserve(mark_cells.rows());
+  std::unordered_set<int> seen;
+  seen.reserve(mark_cells.rows());
+
+  for (int i = 0; i < mark_cells.rows(); ++i) {
+    const int row = mark_cells(i, 0);
+    const int col = mark_cells(i, 1);
+    const int layer =
+        SelectPerceptionLayerForCell(row, col, current_layer, robot_height);
+    if (layer < 0) {
+      continue;
+    }
+    if (skip_static_obstacles &&
+        IsStaticObstacleCell(layer, row, col, static_skip_cost)) {
+      continue;
+    }
+    const int key = (layer * max_y_ + row) * max_x_ + col;
+    if (seen.insert(key).second) {
+      indices.emplace_back(layer, row, col);
+    }
+  }
+
+  Eigen::MatrixXi result(indices.size(), 3);
+  for (int i = 0; i < static_cast<int>(indices.size()); ++i) {
+    result.row(i) = indices[i].transpose();
+  }
+  return result;
+}
+
+Eigen::MatrixXi Astar::BuildGlobalPathPerceptionClearIndices(
+    const Eigen::Vector2i& origin_cell, const Eigen::MatrixXi& endpoint_cells,
+    const int current_layer, const double robot_height) const {
+  if (endpoint_cells.cols() < 3 || endpoint_cells.rows() <= 0) {
+    return Eigen::MatrixXi(0, 3);
+  }
+
+  const int origin_row = origin_cell[0];
+  const int origin_col = origin_cell[1];
+  if (origin_row < 0 || origin_row >= max_y_ ||
+      origin_col < 0 || origin_col >= max_x_) {
+    return Eigen::MatrixXi(0, 3);
+  }
+
+  std::vector<Eigen::Vector3i> indices;
+  std::unordered_set<int> seen;
+  seen.reserve(endpoint_cells.rows() * 8);
+
+  for (int i = 0; i < endpoint_cells.rows(); ++i) {
+    const int end_row = endpoint_cells(i, 0);
+    const int end_col = endpoint_cells(i, 1);
+    const bool ray_has_hit = endpoint_cells(i, 2) != 0;
+    std::vector<Eigen::Vector2i> cells =
+        BresenhamCells(origin_row, origin_col, end_row, end_col);
+    if (cells.empty()) {
+      continue;
+    }
+    if (ray_has_hit && cells.size() > 1) {
+      cells.pop_back();
+    }
+
+    for (const auto& cell : cells) {
+      const int row = cell[0];
+      const int col = cell[1];
+      const int layer =
+          SelectPerceptionLayerForCell(row, col, current_layer, robot_height);
+      if (layer < 0) {
+        continue;
+      }
+      const int key = (layer * max_y_ + row) * max_x_ + col;
+      if (seen.insert(key).second) {
+        indices.emplace_back(layer, row, col);
+      }
+    }
+  }
+
+  Eigen::MatrixXi result(indices.size(), 3);
+  for (int i = 0; i < static_cast<int>(indices.size()); ++i) {
+    result.row(i) = indices[i].transpose();
+  }
+  return result;
+}
+
+int Astar::DecayGlobalPathPerceptionSources(double stamp, double persistence) {
+  if (perception_source_active_cells_ <= 0) {
     return 0;
   }
 
@@ -181,14 +374,13 @@ int Astar::DecayGlobalPathPerception(const double stamp,
     for (int row = 0; row < max_y_; ++row) {
       for (int col = 0; col < max_x_; ++col) {
         Node& node = grid_map_[layer][row][col];
-        if (node.perception_cost <= 0.0) {
+        if (!node.HasPerceptionSource()) {
           continue;
         }
-        if (clear_all || stamp - node.perception_stamp > persistence) {
-          node.perception_cost = 0.0;
-          node.perception_stamp = -1.0;
-          perception_active_cells_ = std::max(0, perception_active_cells_ - 1);
-          RefreshNodeCost(node);
+        if (clear_all || stamp - node.perception_source_stamp > persistence) {
+          node.perception_source_stamp = -1.0;
+          perception_source_active_cells_ =
+              std::max(0, perception_source_active_cells_ - 1);
           changed += 1;
         }
       }
@@ -197,8 +389,112 @@ int Astar::DecayGlobalPathPerception(const double stamp,
   return changed;
 }
 
+int Astar::RebuildGlobalPathPerceptionCosts() {
+  const int total_cells = max_layers_ * max_y_ * max_x_;
+  std::vector<double> previous_costs;
+  previous_costs.reserve(total_cells);
+
+  for (int layer = 0; layer < max_layers_; ++layer) {
+    for (int row = 0; row < max_y_; ++row) {
+      for (int col = 0; col < max_x_; ++col) {
+        Node& node = grid_map_[layer][row][col];
+        previous_costs.emplace_back(node.perception_cost);
+        node.perception_cost = 0.0;
+      }
+    }
+  }
+
+  if (perception_source_active_cells_ > 0 && resolution_ > 0.0 &&
+      perception_peak_cost_ > 0.0) {
+    const int radius = std::max(
+        0, static_cast<int>(std::ceil(perception_inflation_radius_ /
+                                      resolution_)));
+    const int radius_sq = radius * radius;
+    for (int layer = 0; layer < max_layers_; ++layer) {
+      for (int source_row = 0; source_row < max_y_; ++source_row) {
+        for (int source_col = 0; source_col < max_x_; ++source_col) {
+          const Node& source = grid_map_[layer][source_row][source_col];
+          if (!source.HasPerceptionSource()) {
+            continue;
+          }
+          for (int row = source_row - radius; row <= source_row + radius; ++row) {
+            if (row < 0 || row >= max_y_) {
+              continue;
+            }
+            for (int col = source_col - radius; col <= source_col + radius; ++col) {
+              if (col < 0 || col >= max_x_) {
+                continue;
+              }
+              const int drow = row - source_row;
+              const int dcol = col - source_col;
+              if (drow * drow + dcol * dcol > radius_sq) {
+                continue;
+              }
+              const double cell_cost = PerceptionInflationCost(
+                  drow, dcol, perception_inflation_radius_,
+                  perception_inscribed_radius_, perception_peak_cost_,
+                  perception_cost_scaling_factor_);
+              Node& node = grid_map_[layer][row][col];
+              node.perception_cost = std::max(node.perception_cost, cell_cost);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  int changed = 0;
+  int active = 0;
+  int index = 0;
+  for (int layer = 0; layer < max_layers_; ++layer) {
+    for (int row = 0; row < max_y_; ++row) {
+      for (int col = 0; col < max_x_; ++col) {
+        Node& node = grid_map_[layer][row][col];
+        if (node.perception_cost > 0.0) {
+          active += 1;
+        }
+        if (std::abs(node.perception_cost - previous_costs[index]) > 1.0e-9) {
+          changed += 1;
+        }
+        RefreshNodeCost(node);
+        index += 1;
+      }
+    }
+  }
+  perception_active_cells_ = active;
+  return changed;
+}
+
+int Astar::DecayGlobalPathPerception(const double stamp,
+                                 const double persistence) {
+  const int changed_sources =
+      DecayGlobalPathPerceptionSources(stamp, persistence);
+  if (changed_sources <= 0) {
+    return 0;
+  }
+  return RebuildGlobalPathPerceptionCosts();
+}
+
+int Astar::ClearGlobalPathPerceptionIndices(const Eigen::MatrixXi& clear_indices) {
+  if (perception_source_active_cells_ <= 0 || clear_indices.cols() < 3) {
+    return 0;
+  }
+
+  int changed_sources = 0;
+  for (int i = 0; i < clear_indices.rows(); ++i) {
+    if (ClearPerceptionSource(clear_indices(i, 0), clear_indices(i, 1),
+                              clear_indices(i, 2))) {
+      changed_sources += 1;
+    }
+  }
+  if (changed_sources <= 0) {
+    return 0;
+  }
+  return RebuildGlobalPathPerceptionCosts();
+}
+
 void Astar::ClearGlobalPathPerception() {
-  if (perception_active_cells_ <= 0) {
+  if (perception_active_cells_ <= 0 && perception_source_active_cells_ <= 0) {
     return;
   }
 
@@ -206,15 +502,14 @@ void Astar::ClearGlobalPathPerception() {
     for (int row = 0; row < max_y_; ++row) {
       for (int col = 0; col < max_x_; ++col) {
         Node& node = grid_map_[layer][row][col];
-        if (node.perception_cost > 0.0) {
-          node.perception_cost = 0.0;
-          node.perception_stamp = -1.0;
-          RefreshNodeCost(node);
-        }
+        node.perception_cost = 0.0;
+        node.perception_source_stamp = -1.0;
+        RefreshNodeCost(node);
       }
     }
   }
   perception_active_cells_ = 0;
+  perception_source_active_cells_ = 0;
 }
 
 int Astar::UpdateGlobalPathPerception(const Eigen::MatrixXi& perception_indices,
@@ -226,54 +521,26 @@ int Astar::UpdateGlobalPathPerception(const Eigen::MatrixXi& perception_indices,
                                   const double persistence,
                                   const Eigen::Vector3i& clear_center,
                                   const double clear_radius) {
-  int changed = DecayGlobalPathPerception(stamp, persistence);
-  if (resolution_ <= 0.0) {
-    return changed;
-  }
+  const bool params_changed = UpdatePerceptionInflationParams(
+      inflation_radius, inscribed_radius, peak_cost, cost_scaling_factor);
+  int changed_sources = DecayGlobalPathPerceptionSources(stamp, persistence);
   if (clear_radius >= 0.0) {
-    changed += ClearPerceptionCircle(clear_center, clear_radius);
+    changed_sources += ClearPerceptionSourceCircle(clear_center, clear_radius);
   }
 
-  const int radius = std::max(
-      0, static_cast<int>(std::ceil(std::max(0.0, inflation_radius) /
-                                    resolution_)));
-  const int radius_sq = radius * radius;
   for (int i = 0; i < perception_indices.rows(); ++i) {
     const int layer = perception_indices(i, 0);
     const int center_row = perception_indices(i, 1);
     const int center_col = perception_indices(i, 2);
-    if (layer < 0 || layer >= max_layers_ ||
-        center_row < 0 || center_row >= max_y_ ||
-        center_col < 0 || center_col >= max_x_) {
-      continue;
-    }
-    for (int row = center_row - radius; row <= center_row + radius; ++row) {
-      if (row < 0 || row >= max_y_) {
-        continue;
-      }
-      for (int col = center_col - radius; col <= center_col + radius; ++col) {
-        if (col < 0 || col >= max_x_) {
-          continue;
-        }
-        const int drow = row - center_row;
-        const int dcol = col - center_col;
-        if (drow * drow + dcol * dcol > radius_sq) {
-          continue;
-        }
-        Node& node = grid_map_[layer][row][col];
-        const double before = node.perception_cost;
-        const double cell_cost = PerceptionInflationCost(
-            drow, dcol, inflation_radius, inscribed_radius, peak_cost,
-            cost_scaling_factor);
-        MarkPerceptionCell(layer, row, col, cell_cost, stamp);
-        if (node.perception_cost != before) {
-          changed += 1;
-        }
-      }
+    if (MarkPerceptionSource(layer, center_row, center_col, stamp)) {
+      changed_sources += 1;
     }
   }
 
-  return changed;
+  if (changed_sources <= 0 && !params_changed) {
+    return 0;
+  }
+  return RebuildGlobalPathPerceptionCosts();
 }
 
 void Astar::Reset() {

@@ -25,6 +25,8 @@ PYBIND11_MODULE(a_star, m) {
       .def("get_ele_layer", &Astar::GetEleLayer)
       .def("update_global_path_perception", &Astar::UpdateGlobalPathPerception)
       .def("decay_global_path_perception", &Astar::DecayGlobalPathPerception)
+      .def("clear_global_path_perception_indices",
+           &Astar::ClearGlobalPathPerceptionIndices)
       .def("clear_global_path_perception", &Astar::ClearGlobalPathPerception)
       .def("get_global_path_perception_cell_count",
            &Astar::GetGlobalPathPerceptionCellCount)

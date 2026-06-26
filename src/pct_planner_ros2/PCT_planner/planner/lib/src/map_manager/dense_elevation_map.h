@@ -54,6 +54,7 @@ class DenseElevationMap {
                              const Eigen::Vector3i& clear_center,
                              const double clear_radius);
   int DecayGlobalPathPerception(const double stamp, const double persistence);
+  int ClearGlobalPathPerceptionIndices(const Eigen::MatrixXi& clear_indices);
   void ClearGlobalPathPerception();
   bool HasGlobalPathPerception() const { return perception_active_cells_ > 0; }
   int GetGlobalPathPerceptionCellCount() const { return perception_active_cells_; }
@@ -76,11 +77,18 @@ class DenseElevationMap {
   double GetRealCostSafe(int layer, double x, double y,
                          const double height_hint);
   double EffectiveCost(int row, int col) const;
+  bool UpdatePerceptionInflationParams(double inflation_radius,
+                                       double inscribed_radius,
+                                       double peak_cost,
+                                       double cost_scaling_factor);
   double PerceptionInflationCost(int drow, int dcol, double inflation_radius,
                               double inscribed_radius, double peak_cost,
                               double cost_scaling_factor) const;
-  void SetPerceptionCost(int row, int col, double cost, double stamp);
-  int ClearPerceptionCircle(const Eigen::Vector3i& center, double radius);
+  bool MarkPerceptionSource(int row, int col, double stamp);
+  bool ClearPerceptionSource(int row, int col);
+  int ClearPerceptionSourceCircle(const Eigen::Vector3i& center, double radius);
+  int DecayGlobalPathPerceptionSources(double stamp, double persistence);
+  int RebuildGlobalPathPerceptionCosts();
 
  private:
   bool debug_ = false;
@@ -96,11 +104,16 @@ class DenseElevationMap {
 
   Eigen::MatrixXd cost_;
   Eigen::MatrixXd perception_cost_;
-  Eigen::MatrixXd perception_stamp_;
+  Eigen::MatrixXd perception_source_stamp_;
   Eigen::MatrixXd ele_mask_;
   Eigen::MatrixXd height_;
   Eigen::MatrixXd ceiling_;
   Eigen::MatrixXd grad_x_;
   Eigen::MatrixXd grad_y_;
   int perception_active_cells_ = 0;
+  int perception_source_active_cells_ = 0;
+  double perception_inflation_radius_ = 0.0;
+  double perception_inscribed_radius_ = 0.0;
+  double perception_peak_cost_ = 0.0;
+  double perception_cost_scaling_factor_ = 0.0;
 };

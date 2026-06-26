@@ -29,10 +29,12 @@ class Node {
   double cost = 0.0;
   double static_cost = 0.0;
   double perception_cost = 0.0;
-  double perception_stamp = -1.0;
+  double perception_source_stamp = -1.0;
   int layer = 0;
   Eigen::Vector3i idx = Eigen::Vector3i(0, 0, 0);  // layer, row, col
   Node* parent = nullptr;
+
+  bool HasPerceptionSource() const { return perception_source_stamp >= 0.0; }
 };
 
 struct NodeCompare {
@@ -87,9 +89,21 @@ class Astar {
                              const Eigen::Vector3i& clear_center,
                              const double clear_radius);
   int DecayGlobalPathPerception(const double stamp, const double persistence);
+  int ClearGlobalPathPerceptionIndices(const Eigen::MatrixXi& clear_indices);
   void ClearGlobalPathPerception();
   bool HasGlobalPathPerception() const { return perception_active_cells_ > 0; }
   int GetGlobalPathPerceptionCellCount() const { return perception_active_cells_; }
+  Eigen::MatrixXi BuildGlobalPathPerceptionMarkIndices(
+      const Eigen::MatrixXi& mark_cells,
+      const int current_layer,
+      const double robot_height,
+      const bool skip_static_obstacles,
+      const double static_skip_cost) const;
+  Eigen::MatrixXi BuildGlobalPathPerceptionClearIndices(
+      const Eigen::Vector2i& origin_cell,
+      const Eigen::MatrixXi& endpoint_cells,
+      const int current_layer,
+      const double robot_height) const;
 
  private:
   double CalculateStepCost(const Node* node1, const Node* node2) const;
@@ -115,12 +129,24 @@ class Astar {
   bool IsValidNodeCoord(int layer, int y, int x) const;
   double EffectiveCost(const Node& node) const;
   void RefreshNodeCost(Node& node);
+  bool UpdatePerceptionInflationParams(double inflation_radius,
+                                       double inscribed_radius,
+                                       double peak_cost,
+                                       double cost_scaling_factor);
   double PerceptionInflationCost(int drow, int dcol, double inflation_radius,
                               double inscribed_radius, double peak_cost,
                               double cost_scaling_factor) const;
-  void MarkPerceptionCell(int layer, int row, int col, double cell_cost,
-                       double stamp);
-  int ClearPerceptionCircle(const Eigen::Vector3i& center, double radius);
+  bool MarkPerceptionSource(int layer, int row, int col, double stamp);
+  bool ClearPerceptionSource(int layer, int row, int col);
+  int ClearPerceptionSourceCircle(const Eigen::Vector3i& center, double radius);
+  int DecayGlobalPathPerceptionSources(double stamp, double persistence);
+  int RebuildGlobalPathPerceptionCosts();
+  int SelectPerceptionLayerForCell(int row, int col, int current_layer,
+                                   double robot_height) const;
+  bool IsStaticObstacleCell(int layer, int row, int col,
+                            double static_skip_cost) const;
+  std::vector<Eigen::Vector2i> BresenhamCells(int row0, int col0, int row1,
+                                              int col1) const;
 
   //后端路径重新优化，选取代价更低的路径
   bool RefinePathSerach();
@@ -139,6 +165,11 @@ class Astar {
   double cost_threshold_ = 35;
   double step_cost_weight_ = 1.0;
   int perception_active_cells_ = 0;
+  int perception_source_active_cells_ = 0;
+  double perception_inflation_radius_ = 0.0;
+  double perception_inscribed_radius_ = 0.0;
+  double perception_peak_cost_ = 0.0;
+  double perception_cost_scaling_factor_ = 0.0;
 
   // int search_layer_depth_ = 1;
   std::vector<int> search_layers_offset_;

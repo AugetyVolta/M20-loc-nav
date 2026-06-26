@@ -33,7 +33,7 @@ controller_server:
       max_vel_theta: 0.65
 
       # Keep the stable 2D DWB tuning; only cap forward speed for 3D testing.
-      min_speed_xy: 0.20
+      min_speed_xy: 0.00
       max_speed_xy: 0.70
       min_speed_theta: 0.40
 

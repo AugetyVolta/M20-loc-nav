@@ -153,7 +153,7 @@ layer_match_height_tolerance = 1.2
 tomogram_visual_cost_max = 45.0
 ```
 
-全局路径感知更新默认在单独调试 launch 中关闭，在 `m20_fastlio_nav.launch.py` 主导航中默认开启。它不会在线重建完整 tomogram，也不会修改静态 tomogram；C++ core 会单独维护一层带时间戳的临时代价，A* 和后端 DenseElevationMap 查询时使用 `max(static_cost, perception_cost)`。主导航默认输入是 `traversability_layer` 发布的 `/traversability_filtered_scan`，也就是原始 `/scan` 经过可通行层过滤后的障碍 scan：只有明确高代价/不可通行的 endpoint 保留，可通行、未知、无地面 endpoint 置为 `inf`。临时代价使用和 Nav2 local costmap inflation 类似的距离衰减，无新观测超时或机器人经过清理半径后会自动恢复为静态 tomogram cost。动态层变化只更新代价层，不再单独触发即时重规划；主导航用 `replan_interval` 定周期发布新路径。
+全局路径感知更新默认在单独调试 launch 中关闭，在 `m20_fastlio_nav.launch.py` 主导航中默认开启。它不会在线重建完整 tomogram，也不会修改静态 tomogram；C++ core 会单独维护一层动态 source grid，再由 source grid 统一重算 Nav2 inflation 风格的 `perception_cost`，A* 和后端 DenseElevationMap 查询时使用 `max(static_cost, perception_cost)`。主导航默认输入是 `traversability_layer` 发布的 `/traversability_filtered_scan`，也就是原始 `/scan` 经过可通行层过滤后的障碍 scan：只有明确高代价/不可通行的 endpoint 保留，可通行、未知、无地面 endpoint 置为 `inf`。有限 hit beam 清到障碍前一格再 mark endpoint，`inf`/远距离 beam 清到 raytrace 最大距离；source 变化后会重新生成整层动态膨胀代价。`persistence` 只是兜底超时清除。动态层变化只更新代价层，不再单独触发即时重规划；主导航用 `replan_interval` 定周期发布新路径。
 
 单独调试时启用：
 
@@ -168,16 +168,19 @@ ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py \
 ```text
 global_path_perception_width = 4.0                    # 单独 PCT RViz 调试 launch 默认值
 global_path_perception_height = 4.0                   # 单独 PCT RViz 调试 launch 默认值
-global_path_perception_inflation_radius = 0.45       # M20 主导航推荐值，减少楼梯转角大绕行
-global_path_perception_cost_scaling_factor = 8.0     # M20 主导航推荐值，让动态代价更快衰减
-global_path_perception_persistence = 0.6             # M20 主导航推荐值，减少旧障碍残留
-global_path_perception_path_corridor_radius = 0.4    # 只让最新路径附近的动态点影响全局路径
+global_path_perception_inflation_radius = 0.60       # M20 主导航推荐值，对齐 2D local costmap
+global_path_perception_cost_scaling_factor = 5.0     # M20 主导航推荐值，对齐 Nav2 inflation
+global_path_perception_persistence = 5.0             # M20 主导航推荐值；兜底过期时间，主要靠 raytrace clearing 清除
+global_path_perception_raytrace_enabled = true       # 用 LaserScan 自由射线清除动态层
+global_path_perception_raytrace_max_range = 0.0      # 0.0 表示自动使用感知窗口和 scan range_max 的较小值
+global_path_perception_raytrace_max_rays = 360       # 每次最多处理的清除射线数
+global_path_perception_path_corridor_radius = 0.0    # 默认不按已有路径裁剪动态障碍
 global_path_perception_skip_static_obstacles = true  # 静态 tomogram 高代价点不重复写入动态层
 ```
 
-完整 M20 导航 launch 会覆盖为 `global_path_perception_width=6.0`、`global_path_perception_height=6.0`、`global_path_perception_scan_topic=/traversability_filtered_scan`、`global_path_perception_inflation_radius=0.45`、`global_path_perception_cost_scaling_factor=8.0`、`global_path_perception_persistence=0.6`，并默认开启全局路径感知。其余滤波、层匹配、机器人清除半径和感知峰值 cost 使用节点默认值；峰值 cost 默认自动取 `a_star_cost_threshold + 5`。
+完整 M20 导航 launch 会覆盖为 `global_path_perception_width=6.0`、`global_path_perception_height=6.0`、`global_path_perception_scan_topic=/traversability_filtered_scan`、`global_path_perception_inflation_radius=0.60`、`global_path_perception_cost_scaling_factor=5.0`、`global_path_perception_persistence=5.0`，并默认开启全局路径感知和 raytrace clearing。其余滤波、层匹配、机器人清除半径和感知峰值 cost 使用节点默认值；峰值 cost 默认自动取 `a_star_cost_threshold + 5`。
 
-动态层变化只更新 C++ 临时代价层，不会单独立即触发重规划。主导航默认 `always_replan=true`，所以 `/pct_path` 按 `replan_interval=1.0s` 定周期刷新。`global_path_perception_path_corridor_radius=0.4` 使用最新 `/pct_path` 做路径中心线，只让路径附近的动态点影响全局路径；`global_path_perception_skip_static_obstacles=true` 会忽略静态 tomogram 中已经高于 `a_star_cost_threshold` 的墙体/结构点。
+动态层变化只更新 C++ 临时代价层，不会单独立即触发重规划。主导航默认 `always_replan=true`，所以 `/pct_path` 按 `replan_interval=1.0s` 定周期刷新。LaserScan 输入默认写当前机器人匹配到的 PCT layer，避免上下楼时用 2D scan endpoint 的 z 抖动误选楼层；LaserScan 的 mark cell、raytrace clear cell、静态障碍跳过和去重在 C++ core 中批量生成，Python 只做 TF 和向量化坐标转换。PointCloud2 输入仍按点高匹配 layer。`global_path_perception_skip_static_obstacles=true` 会忽略静态 tomogram 中已经高于 `a_star_cost_threshold` 的墙体/结构点。
 
 因为全局路径感知更新改在 PCT C++/pybind core 内，修改后需要重新构建 core：
 
@@ -210,7 +213,7 @@ ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py \
 
 ## 是否会定期重新规划
 
-会定期检查，但不会无条件一直重新规划。
+默认会按周期重新规划。
 
 当前参数在：
 
@@ -224,13 +227,15 @@ src/pct_planner_ros2/config/pct_planner.yaml
 auto_plan: true
 replan_interval: 1.0
 position_epsilon: 0.01
+always_replan: true
 ```
 
 含义：
 
 ```text
-每 1 秒检查一次。
-只有起点/终点变化超过 0.01m，或全局路径感知更新改变时，才重新规划。
+每 1 秒规划并发布一次 /pct_path。
+动态感知层只更新 PCT 临时代价层，不单独触发即时重规划。
+如果显式把 always_replan 改成 false，才会退回到起点/终点变化超过 position_epsilon 后重规划。
 ```
 
 如果 `start_source:=fixed`，拖动 `start_pos/end_pos` 后会重新规划。

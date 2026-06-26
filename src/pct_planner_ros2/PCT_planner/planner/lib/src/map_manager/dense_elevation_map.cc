@@ -19,8 +19,10 @@ void DenseElevationMap::Init(const double resolution, const int num_layers,
   xy_size_ = max_x_ * max_y_;
   cost_ = cost_map;
   perception_cost_ = Eigen::MatrixXd::Zero(cost_map.rows(), cost_map.cols());
-  perception_stamp_ = Eigen::MatrixXd::Constant(cost_map.rows(), cost_map.cols(), -1.0);
+  perception_source_stamp_ =
+      Eigen::MatrixXd::Constant(cost_map.rows(), cost_map.cols(), -1.0);
   perception_active_cells_ = 0;
+  perception_source_active_cells_ = 0;
   ele_mask_ = ele_mask;
   height_ = height;
   ceiling_ = ceiling;
@@ -35,6 +37,27 @@ double DenseElevationMap::EffectiveCost(int row, int col) const {
     return cost_(row, col);
   }
   return std::max(cost_(row, col), perception_cost_(row, col));
+}
+
+bool DenseElevationMap::UpdatePerceptionInflationParams(
+    double inflation_radius, double inscribed_radius, double peak_cost,
+    double cost_scaling_factor) {
+  inflation_radius = std::max(0.0, inflation_radius);
+  inscribed_radius = std::max(0.0, inscribed_radius);
+  peak_cost = std::max(0.0, peak_cost);
+  cost_scaling_factor = std::max(0.0, cost_scaling_factor);
+
+  const bool changed =
+      std::abs(perception_inflation_radius_ - inflation_radius) > 1.0e-9 ||
+      std::abs(perception_inscribed_radius_ - inscribed_radius) > 1.0e-9 ||
+      std::abs(perception_peak_cost_ - peak_cost) > 1.0e-9 ||
+      std::abs(perception_cost_scaling_factor_ - cost_scaling_factor) > 1.0e-9;
+
+  perception_inflation_radius_ = inflation_radius;
+  perception_inscribed_radius_ = inscribed_radius;
+  perception_peak_cost_ = peak_cost;
+  perception_cost_scaling_factor_ = cost_scaling_factor;
+  return changed;
 }
 
 double DenseElevationMap::PerceptionInflationCost(int drow, int dcol,
@@ -66,23 +89,35 @@ double DenseElevationMap::PerceptionInflationCost(int drow, int dcol,
   return lethal_cost * std::exp(-scale * (distance - inscribed));
 }
 
-void DenseElevationMap::SetPerceptionCost(int row, int col, double cost,
-                                       double stamp) {
-  if (row < 0 || row >= perception_cost_.rows() || col < 0 ||
-      col >= perception_cost_.cols()) {
-    return;
+bool DenseElevationMap::MarkPerceptionSource(int row, int col, double stamp) {
+  if (row < 0 || row >= perception_source_stamp_.rows() || col < 0 ||
+      col >= perception_source_stamp_.cols()) {
+    return false;
   }
-  if (cost <= 0.0) {
-    return;
+  const bool was_inactive = perception_source_stamp_(row, col) < 0.0;
+  if (was_inactive) {
+    perception_source_active_cells_ += 1;
   }
-  if (perception_cost_(row, col) <= 0.0) {
-    perception_active_cells_ += 1;
-  }
-  perception_cost_(row, col) = std::max(perception_cost_(row, col), cost);
-  perception_stamp_(row, col) = stamp;
+  perception_source_stamp_(row, col) = stamp;
+  return was_inactive;
 }
 
-int DenseElevationMap::ClearPerceptionCircle(const Eigen::Vector3i& center,
+bool DenseElevationMap::ClearPerceptionSource(int row, int col) {
+  if (row < 0 || row >= perception_source_stamp_.rows() || col < 0 ||
+      col >= perception_source_stamp_.cols()) {
+    return false;
+  }
+  if (perception_source_stamp_(row, col) < 0.0) {
+    return false;
+  }
+
+  perception_source_stamp_(row, col) = -1.0;
+  perception_source_active_cells_ =
+      std::max(0, perception_source_active_cells_ - 1);
+  return true;
+}
+
+int DenseElevationMap::ClearPerceptionSourceCircle(const Eigen::Vector3i& center,
                                           double radius) {
   if (radius < 0.0 || resolution_ <= 0.0 ||
       center[0] < 0 || center[0] >= max_layers_ ||
@@ -110,10 +145,7 @@ int DenseElevationMap::ClearPerceptionCircle(const Eigen::Vector3i& center,
         continue;
       }
       const int matrix_row = row + layer * max_y_;
-      if (perception_cost_(matrix_row, col) > 0.0) {
-        perception_cost_(matrix_row, col) = 0.0;
-        perception_stamp_(matrix_row, col) = -1.0;
-        perception_active_cells_ = std::max(0, perception_active_cells_ - 1);
+      if (ClearPerceptionSource(matrix_row, col)) {
         changed += 1;
       }
     }
@@ -121,23 +153,24 @@ int DenseElevationMap::ClearPerceptionCircle(const Eigen::Vector3i& center,
   return changed;
 }
 
-int DenseElevationMap::DecayGlobalPathPerception(const double stamp,
-                                             const double persistence) {
-  if (perception_active_cells_ <= 0 || perception_cost_.size() == 0) {
+int DenseElevationMap::DecayGlobalPathPerceptionSources(
+    double stamp, double persistence) {
+  if (perception_source_active_cells_ <= 0 ||
+      perception_source_stamp_.size() == 0) {
     return 0;
   }
 
   int changed = 0;
   const bool clear_all = persistence <= 0.0;
-  for (int row = 0; row < perception_cost_.rows(); ++row) {
-    for (int col = 0; col < perception_cost_.cols(); ++col) {
-      if (perception_cost_(row, col) <= 0.0) {
+  for (int row = 0; row < perception_source_stamp_.rows(); ++row) {
+    for (int col = 0; col < perception_source_stamp_.cols(); ++col) {
+      if (perception_source_stamp_(row, col) < 0.0) {
         continue;
       }
-      if (clear_all || stamp - perception_stamp_(row, col) > persistence) {
-        perception_cost_(row, col) = 0.0;
-        perception_stamp_(row, col) = -1.0;
-        perception_active_cells_ = std::max(0, perception_active_cells_ - 1);
+      if (clear_all || stamp - perception_source_stamp_(row, col) > persistence) {
+        perception_source_stamp_(row, col) = -1.0;
+        perception_source_active_cells_ =
+            std::max(0, perception_source_active_cells_ - 1);
         changed += 1;
       }
     }
@@ -145,13 +178,115 @@ int DenseElevationMap::DecayGlobalPathPerception(const double stamp,
   return changed;
 }
 
-void DenseElevationMap::ClearGlobalPathPerception() {
+int DenseElevationMap::RebuildGlobalPathPerceptionCosts() {
   if (perception_cost_.size() == 0) {
+    return 0;
+  }
+
+  Eigen::MatrixXd previous_costs = perception_cost_;
+  perception_cost_.setZero();
+
+  if (perception_source_active_cells_ > 0 && resolution_ > 0.0 &&
+      perception_peak_cost_ > 0.0) {
+    const int radius = std::max(
+        0, static_cast<int>(std::ceil(perception_inflation_radius_ /
+                                      resolution_)));
+    const int radius_sq = radius * radius;
+    for (int layer = 0; layer < max_layers_; ++layer) {
+      for (int source_row = 0; source_row < max_y_; ++source_row) {
+        const int matrix_source_row = source_row + layer * max_y_;
+        for (int source_col = 0; source_col < max_x_; ++source_col) {
+          if (perception_source_stamp_(matrix_source_row, source_col) < 0.0) {
+            continue;
+          }
+          for (int row = source_row - radius; row <= source_row + radius; ++row) {
+            if (row < 0 || row >= max_y_) {
+              continue;
+            }
+            const int matrix_row = row + layer * max_y_;
+            for (int col = source_col - radius; col <= source_col + radius; ++col) {
+              if (col < 0 || col >= max_x_) {
+                continue;
+              }
+              const int drow = row - source_row;
+              const int dcol = col - source_col;
+              if (drow * drow + dcol * dcol > radius_sq) {
+                continue;
+              }
+              const double cell_cost = PerceptionInflationCost(
+                  drow, dcol, perception_inflation_radius_,
+                  perception_inscribed_radius_, perception_peak_cost_,
+                  perception_cost_scaling_factor_);
+              perception_cost_(matrix_row, col) =
+                  std::max(perception_cost_(matrix_row, col), cell_cost);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  int changed = 0;
+  int active = 0;
+  for (int row = 0; row < perception_cost_.rows(); ++row) {
+    for (int col = 0; col < perception_cost_.cols(); ++col) {
+      if (perception_cost_(row, col) > 0.0) {
+        active += 1;
+      }
+      if (std::abs(perception_cost_(row, col) - previous_costs(row, col)) >
+          1.0e-9) {
+        changed += 1;
+      }
+    }
+  }
+  perception_active_cells_ = active;
+  return changed;
+}
+
+int DenseElevationMap::DecayGlobalPathPerception(const double stamp,
+                                             const double persistence) {
+  const int changed_sources =
+      DecayGlobalPathPerceptionSources(stamp, persistence);
+  if (changed_sources <= 0) {
+    return 0;
+  }
+  return RebuildGlobalPathPerceptionCosts();
+}
+
+int DenseElevationMap::ClearGlobalPathPerceptionIndices(
+    const Eigen::MatrixXi& clear_indices) {
+  if (perception_source_active_cells_ <= 0 || perception_cost_.size() == 0 ||
+      clear_indices.cols() < 3) {
+    return 0;
+  }
+
+  int changed_sources = 0;
+  for (int i = 0; i < clear_indices.rows(); ++i) {
+    const int layer = clear_indices(i, 0);
+    const int row = clear_indices(i, 1);
+    const int col = clear_indices(i, 2);
+    if (layer < 0 || layer >= max_layers_ || row < 0 || row >= max_y_ ||
+        col < 0 || col >= max_x_) {
+      continue;
+    }
+    if (ClearPerceptionSource(row + layer * max_y_, col)) {
+      changed_sources += 1;
+    }
+  }
+  if (changed_sources <= 0) {
+    return 0;
+  }
+  return RebuildGlobalPathPerceptionCosts();
+}
+
+void DenseElevationMap::ClearGlobalPathPerception() {
+  if (perception_cost_.size() == 0 && perception_source_stamp_.size() == 0) {
     return;
   }
   perception_cost_.setZero();
-  perception_stamp_.setConstant(-1.0);
+  perception_source_stamp_.setConstant(-1.0);
   perception_active_cells_ = 0;
+  perception_source_active_cells_ = 0;
 }
 
 int DenseElevationMap::UpdateGlobalPathPerception(
@@ -160,18 +295,13 @@ int DenseElevationMap::UpdateGlobalPathPerception(
     const double cost_scaling_factor, const double stamp,
     const double persistence, const Eigen::Vector3i& clear_center,
     const double clear_radius) {
-  int changed = DecayGlobalPathPerception(stamp, persistence);
-  if (resolution_ <= 0.0) {
-    return changed;
-  }
+  const bool params_changed = UpdatePerceptionInflationParams(
+      inflation_radius, inscribed_radius, peak_cost, cost_scaling_factor);
+  int changed_sources = DecayGlobalPathPerceptionSources(stamp, persistence);
   if (clear_radius >= 0.0) {
-    changed += ClearPerceptionCircle(clear_center, clear_radius);
+    changed_sources += ClearPerceptionSourceCircle(clear_center, clear_radius);
   }
 
-  const int radius = std::max(
-      0, static_cast<int>(std::ceil(std::max(0.0, inflation_radius) /
-                                    resolution_)));
-  const int radius_sq = radius * radius;
   for (int i = 0; i < perception_indices.rows(); ++i) {
     const int layer = perception_indices(i, 0);
     const int center_row = perception_indices(i, 1);
@@ -181,32 +311,14 @@ int DenseElevationMap::UpdateGlobalPathPerception(
         center_col < 0 || center_col >= max_x_) {
       continue;
     }
-    for (int row = center_row - radius; row <= center_row + radius; ++row) {
-      if (row < 0 || row >= max_y_) {
-        continue;
-      }
-      for (int col = center_col - radius; col <= center_col + radius; ++col) {
-        if (col < 0 || col >= max_x_) {
-          continue;
-        }
-        const int drow = row - center_row;
-        const int dcol = col - center_col;
-        if (drow * drow + dcol * dcol > radius_sq) {
-          continue;
-        }
-        const int matrix_row = row + layer * max_y_;
-        const double before = perception_cost_(matrix_row, col);
-        const double cell_cost = PerceptionInflationCost(
-            drow, dcol, inflation_radius, inscribed_radius, peak_cost,
-            cost_scaling_factor);
-        SetPerceptionCost(matrix_row, col, cell_cost, stamp);
-        if (perception_cost_(matrix_row, col) != before) {
-          changed += 1;
-        }
-      }
+    if (MarkPerceptionSource(center_row + layer * max_y_, center_col, stamp)) {
+      changed_sources += 1;
     }
   }
-  return changed;
+  if (changed_sources <= 0 && !params_changed) {
+    return 0;
+  }
+  return RebuildGlobalPathPerceptionCosts();
 }
 
 double DenseElevationMap::GetRealCost(int layer, double x, double y,

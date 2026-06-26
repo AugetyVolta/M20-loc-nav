@@ -16,10 +16,16 @@ PYBIND11_MODULE(ele_planner, m) {
            &OfflineElePlanner::UpdateGlobalPathPerception)
       .def("decay_global_path_perception",
            &OfflineElePlanner::DecayGlobalPathPerception)
+      .def("clear_global_path_perception_indices",
+           &OfflineElePlanner::ClearGlobalPathPerceptionIndices)
       .def("clear_global_path_perception",
            &OfflineElePlanner::ClearGlobalPathPerception)
       .def("get_global_path_perception_cell_count",
            &OfflineElePlanner::GetGlobalPathPerceptionCellCount)
+      .def("build_global_path_perception_mark_indices",
+           &OfflineElePlanner::BuildGlobalPathPerceptionMarkIndices)
+      .def("build_global_path_perception_clear_indices",
+           &OfflineElePlanner::BuildGlobalPathPerceptionClearIndices)
       .def("debug", &OfflineElePlanner::Debug)
       .def("set_reference_height", &OfflineElePlanner::SetReferenceHeight)
       .def("set_max_iterations", &OfflineElePlanner::set_max_iterations)

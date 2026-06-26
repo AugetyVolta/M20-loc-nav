@@ -33,10 +33,22 @@ class OfflineElePlanner {
                              const Eigen::Vector3i& clear_center,
                              const double clear_radius);
   int DecayGlobalPathPerception(const double stamp, const double persistence);
+  int ClearGlobalPathPerceptionIndices(const Eigen::MatrixXi& clear_indices);
   void ClearGlobalPathPerception();
   int GetGlobalPathPerceptionCellCount() const {
     return path_finder_.GetGlobalPathPerceptionCellCount();
   }
+  Eigen::MatrixXi BuildGlobalPathPerceptionMarkIndices(
+      const Eigen::MatrixXi& mark_cells,
+      const int current_layer,
+      const double robot_height,
+      const bool skip_static_obstacles,
+      const double static_skip_cost) const;
+  Eigen::MatrixXi BuildGlobalPathPerceptionClearIndices(
+      const Eigen::Vector2i& origin_cell,
+      const Eigen::MatrixXi& endpoint_cells,
+      const int current_layer,
+      const double robot_height) const;
 
   void SetReferenceHeight(const double height) {
     trajectory_optimizer_wnoj_.SetReferenceHeight(height);

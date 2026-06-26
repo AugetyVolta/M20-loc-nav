@@ -49,7 +49,7 @@ class PctPlannerNode(Node):
         self.declare_parameter("replan_interval", 0.5)
         self.declare_parameter("position_epsilon", 0.01)
         self.declare_parameter("auto_plan", True)
-        self.declare_parameter("always_replan", False)
+        self.declare_parameter("always_replan", True)
         self.declare_parameter("a_star_cost_threshold", 20.0)
         self.declare_parameter("safe_cost_margin", 15.0)
         self.declare_parameter("step_cost_weight", 1.0)
@@ -72,7 +72,10 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_path_perception_min_changed_cells", 3)
         self.declare_parameter("global_path_perception_max_points", 720)
         self.declare_parameter("global_path_perception_mark_all_layers", False)
-        self.declare_parameter("global_path_perception_path_corridor_radius", 0.4)
+        self.declare_parameter("global_path_perception_raytrace_enabled", True)
+        self.declare_parameter("global_path_perception_raytrace_max_range", 0.0)
+        self.declare_parameter("global_path_perception_raytrace_max_rays", 360)
+        self.declare_parameter("global_path_perception_path_corridor_radius", 0.0)
         self.declare_parameter("global_path_perception_skip_static_obstacles", True)
         self.declare_parameter("global_path_perception_static_skip_cost", -1.0)
 
@@ -129,6 +132,17 @@ class PctPlannerNode(Node):
         self.global_path_perception_mark_all_layers = bool(
             self.get_parameter("global_path_perception_mark_all_layers").value
         )
+        self.global_path_perception_raytrace_enabled = bool(
+            self.get_parameter("global_path_perception_raytrace_enabled").value
+        )
+        self.global_path_perception_raytrace_max_range = float(
+            self.get_parameter("global_path_perception_raytrace_max_range").value
+        )
+        if self.global_path_perception_raytrace_max_range <= 0.0:
+            self.global_path_perception_raytrace_max_range = self.global_path_perception_window_range
+        self.global_path_perception_raytrace_max_rays = int(
+            self.get_parameter("global_path_perception_raytrace_max_rays").value
+        )
         self.global_path_perception_path_corridor_radius = max(
             0.0,
             float(self.get_parameter("global_path_perception_path_corridor_radius").value),
@@ -165,8 +179,13 @@ class PctPlannerNode(Node):
             reliability=ReliabilityPolicy.RELIABLE,
         )
         self.path_pub = self.create_publisher(Path, self.get_parameter("path_topic").value, path_qos)
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.tf_buffer = tf2_ros.Buffer(node=self)
+        self.tf_listener_node = rclpy.create_node(f"{self.get_name()}_tf_listener")
+        self.tf_listener = tf2_ros.TransformListener(
+            self.tf_buffer,
+            self.tf_listener_node,
+            spin_thread=True,
+        )
 
         self._load_pct_core()
         self.planner.loadTomogram(self.tomogram_file)
@@ -212,7 +231,29 @@ class PctPlannerNode(Node):
         if bool(self.get_parameter("use_interactive_markers").value):
             self._init_interactive_markers()
 
-        self.timer = self.create_timer(float(self.get_parameter("replan_interval").value), self._timer_cb)
+        replan_interval = float(self.get_parameter("replan_interval").value)
+        self.get_logger().info(
+            "PCT planning loop: "
+            f"auto_plan={int(self.auto_plan)}, always_replan={int(self.always_replan)}, "
+            f"replan_interval={replan_interval:.3f}s, start_source={self.start_source}, "
+            f"global_frame={self.global_frame}, robot_frame={self.robot_frame}, "
+            f"odom_topic={self.get_parameter('odom_topic').value}"
+        )
+        self.timer = self.create_timer(replan_interval, self._timer_cb)
+
+    def destroy_node(self):
+        listener = getattr(self, "tf_listener", None)
+        listener_executor = getattr(listener, "executor", None)
+        if listener_executor is not None:
+            listener_executor.shutdown()
+        listener_thread = getattr(listener, "dedicated_listener_thread", None)
+        if listener_thread is not None:
+            listener_thread.join(timeout=1.0)
+        tf_listener_node = getattr(self, "tf_listener_node", None)
+        if tf_listener_node is not None:
+            tf_listener_node.destroy_node()
+            self.tf_listener_node = None
+        return super().destroy_node()
 
     def _init_global_path_perception_inputs(self):
         if not self.global_path_perception_enabled:
@@ -237,7 +278,8 @@ class PctPlannerNode(Node):
                 f"scale={self.global_path_perception_cost_scaling_factor:.2f}, "
                 f"cost={self.global_path_perception_cost:.1f}, "
                 f"path_corridor={self.global_path_perception_path_corridor_radius:.2f}m, "
-                f"skip_static={int(self.global_path_perception_skip_static_obstacles)}"
+                f"skip_static={int(self.global_path_perception_skip_static_obstacles)}, "
+                f"raytrace={int(self.global_path_perception_raytrace_enabled)}"
             )
 
         if cloud_topic:
@@ -357,8 +399,10 @@ class PctPlannerNode(Node):
             else:
                 self.last_path_xy = None
             dt_ms = (time.perf_counter() - start_time) * 1000.0
+            traj_first = traj_np[0, :3].tolist() if traj_np.ndim == 2 and traj_np.shape[0] > 0 else []
             self.get_logger().info(
-                f"Published /pct_path with {len(traj_3d)} poses in {dt_ms:.1f} ms"
+                f"Published /pct_path with {len(traj_3d)} poses in {dt_ms:.1f} ms, "
+                f"start={self.start_pos.tolist()}, traj_first={traj_first}"
             )
         except Exception as exc:
             self.get_logger().error(f"PCT planning failed: {exc}")
@@ -390,31 +434,41 @@ class PctPlannerNode(Node):
         if not self._global_path_perception_update_due():
             return
 
-        ranges = np.asarray(msg.ranges, dtype=np.float32)
-        if ranges.size == 0:
+        ranges_raw = np.asarray(msg.ranges, dtype=np.float32)
+        if ranges_raw.size == 0:
             return
-        angles = msg.angle_min + np.arange(ranges.size, dtype=np.float32) * msg.angle_increment
-        valid = np.isfinite(ranges)
-        valid &= ranges >= max(float(msg.range_min), self.global_path_perception_min_range)
-        range_max = self.global_path_perception_window_range
-        if math.isfinite(float(msg.range_max)) and msg.range_max > 0.0:
-            range_max = min(range_max, float(msg.range_max))
-        valid &= ranges <= range_max
-        if not np.any(valid):
-            self._apply_global_path_perception_points(np.empty((0, 3), dtype=np.float32), msg.header.frame_id)
-            return
+        angles_raw = msg.angle_min + np.arange(ranges_raw.size, dtype=np.float32) * msg.angle_increment
+        min_range = max(float(msg.range_min), self.global_path_perception_min_range)
+        obstacle_range_max = self._global_path_perception_scan_max_range(msg)
 
-        ranges = ranges[valid]
-        angles = angles[valid]
-        if self.global_path_perception_max_points > 0 and ranges.size > self.global_path_perception_max_points:
-            step = max(1, int(math.ceil(ranges.size / self.global_path_perception_max_points)))
-            ranges = ranges[::step][: self.global_path_perception_max_points]
-            angles = angles[::step][: self.global_path_perception_max_points]
+        hit_valid = np.isfinite(ranges_raw)
+        hit_valid &= ranges_raw >= min_range
+        hit_valid &= ranges_raw <= obstacle_range_max
+        hit_ranges = ranges_raw[hit_valid]
+        hit_angles = angles_raw[hit_valid]
+        hit_ranges, hit_angles = self._subsample_scan_vectors(
+            hit_ranges, hit_angles, self.global_path_perception_max_points
+        )
 
-        points = np.zeros((ranges.size, 3), dtype=np.float32)
-        points[:, 0] = ranges * np.cos(angles)
-        points[:, 1] = ranges * np.sin(angles)
-        self._apply_global_path_perception_points(points, msg.header.frame_id)
+        hit_points = np.zeros((hit_ranges.size, 3), dtype=np.float32)
+        if hit_ranges.size > 0:
+            hit_points[:, 0] = hit_ranges * np.cos(hit_angles)
+            hit_points[:, 1] = hit_ranges * np.sin(hit_angles)
+
+        clear_points = None
+        clear_hit_mask = None
+        if self.global_path_perception_raytrace_enabled:
+            clear_points, clear_hit_mask = self._build_global_path_perception_clear_rays(
+                msg, ranges_raw, angles_raw, min_range
+            )
+
+        self._apply_global_path_perception_points(
+            hit_points,
+            msg.header.frame_id,
+            clear_points,
+            clear_hit_mask,
+            use_current_layer=True,
+        )
 
     def _on_global_path_perception_cloud(self, msg):
         if not self._global_path_perception_update_due():
@@ -445,15 +499,96 @@ class PctPlannerNode(Node):
         self.last_perception_update_wall_time = now
         return True
 
-    def _apply_global_path_perception_points(self, points_sensor, source_frame):
+    def _global_path_perception_scan_max_range(self, msg):
+        range_max = self.global_path_perception_window_range
+        if math.isfinite(float(msg.range_max)) and msg.range_max > 0.0:
+            range_max = min(range_max, float(msg.range_max))
+        return range_max
+
+    def _build_global_path_perception_clear_rays(self, msg, ranges, angles, min_range):
+        clear_range_max = min(
+            self._global_path_perception_scan_max_range(msg),
+            self.global_path_perception_raytrace_max_range,
+        )
+        if clear_range_max <= min_range:
+            return None, None
+
+        finite = np.isfinite(ranges)
+        positive_inf = np.isposinf(ranges)
+        clear_valid = positive_inf | (finite & (ranges >= min_range))
+        if not np.any(clear_valid):
+            return None, None
+
+        clear_ranges = np.where(finite, np.minimum(ranges, clear_range_max), clear_range_max)
+        clear_valid &= np.isfinite(clear_ranges)
+        clear_valid &= clear_ranges >= min_range
+
+        ray_ranges = clear_ranges[clear_valid]
+        ray_angles = angles[clear_valid]
+        hit_mask = finite[clear_valid] & (ranges[clear_valid] <= clear_range_max)
+        if ray_ranges.size == 0:
+            return None, None
+
+        ray_ranges, ray_angles, hit_mask = self._subsample_scan_vectors(
+            ray_ranges,
+            ray_angles,
+            self.global_path_perception_raytrace_max_rays,
+            hit_mask,
+        )
+        clear_points = np.zeros((ray_ranges.size, 3), dtype=np.float32)
+        clear_points[:, 0] = ray_ranges * np.cos(ray_angles)
+        clear_points[:, 1] = ray_ranges * np.sin(ray_angles)
+        return clear_points, hit_mask.astype(bool, copy=False)
+
+    @staticmethod
+    def _subsample_scan_vectors(ranges, angles, max_count, extra=None):
+        if max_count <= 0 or ranges.size <= max_count:
+            if extra is None:
+                return ranges, angles
+            return ranges, angles, extra
+        step = max(1, int(math.ceil(ranges.size / max_count)))
+        ranges = ranges[::step][:max_count]
+        angles = angles[::step][:max_count]
+        if extra is None:
+            return ranges, angles
+        return ranges, angles, extra[::step][:max_count]
+
+    def _apply_global_path_perception_points(
+        self,
+        points_sensor,
+        source_frame,
+        clear_points_sensor=None,
+        clear_hit_mask=None,
+        use_current_layer=False,
+    ):
         source_frame = (source_frame or self.robot_frame).lstrip("/")
-        points_map = self._transform_points_to_map(points_sensor, source_frame)
-        if points_map is None:
+        transform = self._lookup_transform_to_map(source_frame)
+        if transform is None:
             return
 
-        perception_indices = self._build_global_path_perception_indices(points_map)
+        points_map = self._transform_points_with_transform(points_sensor, transform)
+
+        changed_cells = 0
+        clear_cells = 0
+        if clear_points_sensor is not None and clear_hit_mask is not None:
+            clear_points_map = self._transform_points_with_transform(clear_points_sensor, transform)
+            origin_map = self._transform_origin_with_transform(transform)
+            clear_indices = self._build_global_path_perception_clear_indices(
+                origin_map,
+                clear_points_map,
+                clear_hit_mask,
+                use_current_layer=use_current_layer,
+            )
+            if clear_indices.size > 0:
+                clear_cells = self.planner.clear_global_path_perception_indices(clear_indices)
+                changed_cells += clear_cells
+
+        perception_indices = self._build_global_path_perception_indices(
+            points_map,
+            use_current_layer=use_current_layer,
+        )
         clear_center = self._current_robot_grid_index()
-        changed_cells = self.planner.update_global_path_perception(
+        mark_changed_cells = self.planner.update_global_path_perception(
             perception_indices,
             self.global_path_perception_inflation_radius,
             self.global_path_perception_inscribed_radius,
@@ -464,6 +599,7 @@ class PctPlannerNode(Node):
             clear_center,
             self.global_path_perception_clear_robot_radius,
         )
+        changed_cells += mark_changed_cells
         if changed_cells < self.global_path_perception_min_changed_cells:
             self.last_perception_update_time = self.get_clock().now()
             return
@@ -471,7 +607,8 @@ class PctPlannerNode(Node):
         active_cells = self.planner.global_path_perception_cell_count()
         self.get_logger().info(
             f"Updated C++ PCT global path perception: active_cells={active_cells}, "
-            f"changed_cells={changed_cells}",
+            f"changed_cells={changed_cells}, clear_cells={clear_cells}, "
+            f"mark_cells={perception_indices.shape[0]}",
             throttle_duration_sec=1.0,
         )
         self.last_perception_update_time = self.get_clock().now()
@@ -489,15 +626,25 @@ class PctPlannerNode(Node):
         if points.size == 0:
             return points.reshape(0, 3).astype(np.float32, copy=False)
         target_frame = self.global_frame or self.frame_id
+        transform = self._lookup_transform_to_map(source_frame)
+        if transform is None:
+            return None
+        return self._transform_points_with_transform(points, transform)
+
+    def _lookup_transform_to_map(self, source_frame, context="Dynamic layer"):
+        target_frame = self.global_frame or self.frame_id
         try:
-            transform = self.tf_buffer.lookup_transform(target_frame, source_frame, Time())
+            return self.tf_buffer.lookup_transform(target_frame, source_frame, Time())
         except Exception as exc:
             self.get_logger().warn(
-                f"Dynamic layer waiting for TF {target_frame}<-{source_frame}: {exc}",
+                f"{context} waiting for TF {target_frame}<-{source_frame}: {exc}",
                 throttle_duration_sec=2.0,
             )
             return None
 
+    def _transform_points_with_transform(self, points, transform):
+        if points.size == 0:
+            return points.reshape(0, 3).astype(np.float32, copy=False)
         translation = np.array(
             [
                 transform.transform.translation.x,
@@ -509,6 +656,11 @@ class PctPlannerNode(Node):
         q = transform.transform.rotation
         rot = self._quat_to_rot_matrix(q.x, q.y, q.z, q.w)
         return (points.astype(np.float32, copy=False) @ rot.T) + translation
+
+    @staticmethod
+    def _transform_origin_with_transform(transform):
+        translation = transform.transform.translation
+        return np.array([translation.x, translation.y, translation.z], dtype=np.float32)
 
     @staticmethod
     def _quat_to_rot_matrix(x, y, z, w):
@@ -525,15 +677,18 @@ class PctPlannerNode(Node):
             dtype=np.float32,
         )
 
-    def _build_global_path_perception_indices(self, points_map):
+    def _build_global_path_perception_indices(self, points_map, use_current_layer=False):
         if points_map.size == 0:
             return np.zeros((0, 3), dtype=np.int32)
+        if use_current_layer and self.global_path_perception_path_corridor_radius <= 0.0:
+            return self._build_global_path_perception_indices_cpp(points_map)
 
         resolution = float(self.planner.resolution)
         if resolution <= 0.0:
             return np.zeros((0, 3), dtype=np.int32)
         layer_heights = self.planner.layer_elev_grids
         n_layers, size_x, size_y = layer_heights.shape
+        current_layer = self._global_path_perception_current_layer() if use_current_layer else None
 
         robot_xy = self.start_pos[:2].astype(np.float32, copy=False)
         indices = []
@@ -549,15 +704,18 @@ class PctPlannerNode(Node):
             if not self._global_path_perception_near_current_path(point[:2]):
                 continue
 
-            grid_idx = self.planner.pos2idx(point[:2]).astype(int)
-            center_row = int(grid_idx[1])
-            center_col = int(grid_idx[0])
+            center_row, center_col = self._global_path_perception_row_col(point[:2])
             if center_row < 0 or center_row >= size_x or center_col < 0 or center_col >= size_y:
                 continue
 
             point_height = float(point[2])
             candidate_layers = self._global_path_perception_candidate_layers(
-                layer_heights, center_row, center_col, point_height
+                layer_heights,
+                center_row,
+                center_col,
+                point_height,
+                use_current_layer=use_current_layer,
+                current_layer=current_layer,
             )
             if not candidate_layers:
                 continue
@@ -570,6 +728,139 @@ class PctPlannerNode(Node):
         if not indices:
             return np.zeros((0, 3), dtype=np.int32)
         return np.unique(np.asarray(indices, dtype=np.int32), axis=0)
+
+    def _build_global_path_perception_indices_cpp(self, points_map):
+        if points_map.size == 0:
+            return np.zeros((0, 3), dtype=np.int32)
+
+        robot_xy = self.start_pos[:2].astype(np.float32, copy=False)
+        points_xy = points_map[:, :2].astype(np.float32, copy=False)
+        delta_xy = points_xy - robot_xy
+        mask = (
+            (np.abs(delta_xy[:, 0]) <= self.global_path_perception_half_width)
+            & (np.abs(delta_xy[:, 1]) <= self.global_path_perception_half_height)
+            & (np.linalg.norm(delta_xy, axis=1) >= self.global_path_perception_clear_robot_radius)
+        )
+        if not np.any(mask):
+            return np.zeros((0, 3), dtype=np.int32)
+
+        mark_cells = self.planner.points2rowcol(points_xy[mask])
+        if mark_cells.size == 0:
+            return np.zeros((0, 3), dtype=np.int32)
+
+        return np.asarray(
+            self.planner.build_global_path_perception_mark_indices(
+                mark_cells,
+                self._global_path_perception_current_layer(),
+                float(self.start_pos[2]),
+                self.global_path_perception_skip_static_obstacles,
+                self.global_path_perception_static_skip_cost,
+            ),
+            dtype=np.int32,
+        ).reshape((-1, 3))
+
+    def _build_global_path_perception_clear_indices(
+        self,
+        origin_map,
+        endpoints_map,
+        hit_mask,
+        use_current_layer=False,
+    ):
+        if endpoints_map is None or endpoints_map.size == 0:
+            return np.zeros((0, 3), dtype=np.int32)
+        if use_current_layer:
+            return self._build_global_path_perception_clear_indices_cpp(
+                origin_map,
+                endpoints_map,
+                hit_mask,
+            )
+
+        layer_heights = self.planner.layer_elev_grids
+        n_layers, size_x, size_y = layer_heights.shape
+        current_layer = self._global_path_perception_current_layer() if use_current_layer else None
+        start_row, start_col = self._global_path_perception_row_col(origin_map[:2])
+        if start_row < 0 or start_row >= size_x or start_col < 0 or start_col >= size_y:
+            return np.zeros((0, 3), dtype=np.int32)
+
+        indices = []
+        for endpoint, ray_has_hit in zip(endpoints_map, hit_mask):
+            end_row, end_col = self._global_path_perception_row_col(endpoint[:2])
+            cells = self._bresenham_cells(start_row, start_col, end_row, end_col)
+            if not cells:
+                continue
+            if ray_has_hit and len(cells) > 1:
+                cells = cells[:-1]
+
+            denom = max(1, len(cells) - 1)
+            for offset, (row, col) in enumerate(cells):
+                if row < 0 or row >= size_x or col < 0 or col >= size_y:
+                    continue
+                ratio = float(offset) / float(denom)
+                point_height = float(origin_map[2] + ratio * (endpoint[2] - origin_map[2]))
+                candidate_layers = self._global_path_perception_candidate_layers(
+                    layer_heights,
+                    row,
+                    col,
+                    point_height,
+                    use_current_layer=use_current_layer,
+                    current_layer=current_layer,
+                )
+                for layer in candidate_layers:
+                    indices.append((int(layer), int(row), int(col)))
+
+        if not indices:
+            return np.zeros((0, 3), dtype=np.int32)
+        return np.unique(np.asarray(indices, dtype=np.int32), axis=0)
+
+    def _build_global_path_perception_clear_indices_cpp(
+        self,
+        origin_map,
+        endpoints_map,
+        hit_mask,
+    ):
+        origin_cell = self.planner.points2rowcol(np.asarray(origin_map[:2], dtype=np.float32).reshape(1, 2))[0]
+        endpoint_cells = self.planner.points2rowcol(endpoints_map[:, :2])
+        if endpoint_cells.size == 0:
+            return np.zeros((0, 3), dtype=np.int32)
+        hit_values = np.asarray(hit_mask, dtype=np.int32).reshape((-1, 1))
+        endpoint_cells = np.concatenate([endpoint_cells, hit_values], axis=1)
+        return np.asarray(
+            self.planner.build_global_path_perception_clear_indices(
+                origin_cell,
+                endpoint_cells,
+                self._global_path_perception_current_layer(),
+                float(self.start_pos[2]),
+            ),
+            dtype=np.int32,
+        ).reshape((-1, 3))
+
+    def _global_path_perception_row_col(self, point_xy):
+        grid_idx = self.planner.pos2idx(np.asarray(point_xy, dtype=np.float32)).astype(int)
+        return int(grid_idx[1]), int(grid_idx[0])
+
+    @staticmethod
+    def _bresenham_cells(row0, col0, row1, col1):
+        cells = []
+        dcol = abs(col1 - col0)
+        drow = -abs(row1 - row0)
+        step_col = 1 if col0 < col1 else -1
+        step_row = 1 if row0 < row1 else -1
+        error = dcol + drow
+        row = row0
+        col = col0
+
+        while True:
+            cells.append((row, col))
+            if row == row1 and col == col1:
+                break
+            double_error = 2 * error
+            if double_error >= drow:
+                error += drow
+                col += step_col
+            if double_error <= dcol:
+                error += dcol
+                row += step_row
+        return cells
 
     def _global_path_perception_near_current_path(self, point_xy):
         radius = self.global_path_perception_path_corridor_radius
@@ -606,11 +897,38 @@ class PctPlannerNode(Node):
             return False
         return static_cost >= self.global_path_perception_static_skip_cost
 
-    def _global_path_perception_candidate_layers(self, layer_heights, row, col, point_height):
+    def _global_path_perception_current_layer(self):
+        return int(
+            self.planner.match_best_layer(
+                float(self.start_pos[0]),
+                float(self.start_pos[1]),
+                float(self.start_pos[2]),
+            )
+        )
+
+    def _global_path_perception_candidate_layers(
+        self,
+        layer_heights,
+        row,
+        col,
+        point_height,
+        use_current_layer=False,
+        current_layer=None,
+    ):
         heights = layer_heights[:, row, col]
         valid = np.isfinite(heights) & (heights > -99.0)
         if not np.any(valid):
             return []
+        if use_current_layer:
+            if current_layer is None:
+                current_layer = self._global_path_perception_current_layer()
+            if 0 <= current_layer < layer_heights.shape[0] and bool(valid[current_layer]):
+                return [current_layer]
+
+            valid_indices = np.flatnonzero(valid)
+            robot_height = float(self.start_pos[2])
+            best = int(valid_indices[np.argmin(np.abs(heights[valid_indices] - robot_height))])
+            return [best]
         if self.global_path_perception_mark_all_layers:
             return np.flatnonzero(valid).astype(int).tolist()
 

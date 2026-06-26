@@ -45,11 +45,36 @@ int OfflineElePlanner::DecayGlobalPathPerception(const double stamp,
   return changed;
 }
 
+int OfflineElePlanner::ClearGlobalPathPerceptionIndices(
+    const Eigen::MatrixXi& clear_indices) {
+  int changed = path_finder_.ClearGlobalPathPerceptionIndices(clear_indices);
+  if (map_) {
+    map_->ClearGlobalPathPerceptionIndices(clear_indices);
+  }
+  return changed;
+}
+
 void OfflineElePlanner::ClearGlobalPathPerception() {
   path_finder_.ClearGlobalPathPerception();
   if (map_) {
     map_->ClearGlobalPathPerception();
   }
+}
+
+Eigen::MatrixXi OfflineElePlanner::BuildGlobalPathPerceptionMarkIndices(
+    const Eigen::MatrixXi& mark_cells, const int current_layer,
+    const double robot_height, const bool skip_static_obstacles,
+    const double static_skip_cost) const {
+  return path_finder_.BuildGlobalPathPerceptionMarkIndices(
+      mark_cells, current_layer, robot_height, skip_static_obstacles,
+      static_skip_cost);
+}
+
+Eigen::MatrixXi OfflineElePlanner::BuildGlobalPathPerceptionClearIndices(
+    const Eigen::Vector2i& origin_cell, const Eigen::MatrixXi& endpoint_cells,
+    const int current_layer, const double robot_height) const {
+  return path_finder_.BuildGlobalPathPerceptionClearIndices(
+      origin_cell, endpoint_cells, current_layer, robot_height);
 }
 
 bool OfflineElePlanner::Plan(const Eigen::Vector3i& start,

@@ -259,9 +259,12 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 | `pct_global_path_perception_scan_topic` | `/traversability_filtered_scan` | PCT 动态避障输入；楼梯/平台交界处由 traversability_layer 先过滤 |
 | `pct_global_path_perception_width` | `6.0` | PCT 全局路径感知窗口宽度，覆盖机器人前后左右近场障碍 |
 | `pct_global_path_perception_height` | `6.0` | PCT 全局路径感知窗口高度，覆盖机器人前后左右近场障碍 |
-| `pct_global_path_perception_inflation_radius` | `0.45` | PCT 动态障碍膨胀半径；小一点可减少楼梯转角大绕行 |
-| `pct_global_path_perception_cost_scaling_factor` | `8.0` | 动态代价衰减速度；大一点让代价更快衰减，减少窄空间抖动 |
-| `pct_global_path_perception_persistence` | `0.6` | 动态观测保留时间；短一点可减少楼梯/平台附近旧障碍残留 |
+| `pct_global_path_perception_inflation_radius` | `0.60` | PCT 动态障碍膨胀半径，对齐 2D local costmap 的近场避障宽度 |
+| `pct_global_path_perception_cost_scaling_factor` | `5.0` | 动态代价衰减速度，对齐 Nav2 costmap inflation 的默认调法 |
+| `pct_global_path_perception_persistence` | `5.0` | 动态观测兜底保留时间；主要清除机制是 raytrace clearing |
+| `pct_global_path_perception_raytrace_enabled` | `true` | 使用 LaserScan 射线清除动态层自由空间，行为更接近 Nav2 obstacle_layer |
+| `pct_global_path_perception_raytrace_max_range` | `0.0` | raytrace 最大距离；`0.0` 表示自动使用感知窗口和 scan `range_max` 的较小值 |
+| `pct_global_path_perception_raytrace_max_rays` | `360` | 每次最多处理的清除射线数，限制 Python 动态层计算量 |
 | `scan_topic` | `/scan` | costmap 与 RL 使用同一个 LaserScan |
 | `output_odom_topic` | `/odom_body` | DWB、RL 和 adapter 使用的 body-plane odom |
 | `start_pure_pursuit` | `true` | 默认启动 pure pursuit |
@@ -270,12 +273,12 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 | `body_scan_min_height` | `-0.1` | 从 body 点云生成 scan 的最低高度 |
 | `body_scan_max_height` | `0.55` | 从 body 点云生成 scan 的最高高度 |
 
-PCT 全局路径感知更新在 C++ core 中维护，不会修改或重新生成完整 tomogram；离线 3D tomogram 仍是长期地形地图。主导航默认不再直接使用原始 `/scan`，而是使用 `traversability_layer` 发布的 `/traversability_filtered_scan`。这个 scan 来自原始 `/scan`，但只有 endpoint 落在 traversability 明确判为高代价/不可通行的格子时才保留；可通行、未知、无地面区域都会置为 `inf`。当前 `local_costmap` 是 `5m x 5m`，filtered scan 的有效范围先受 local costmap 限制。PCT 仍按 Nav2 inflation 风格写入临时代价，并在无新观测或机器人经过清理半径后恢复为静态 tomogram cost。
+PCT 全局路径感知更新在 C++ core 中维护，不会修改或重新生成完整 tomogram；离线 3D tomogram 仍是长期地形地图。主导航默认不再直接使用原始 `/scan`，而是使用 `traversability_layer` 发布的 `/traversability_filtered_scan`。这个 scan 来自原始 `/scan`，但只有 endpoint 落在 traversability 明确判为高代价/不可通行的格子时才保留；可通行、未知、无地面区域都会置为 `inf`。当前 `local_costmap` 是 `5m x 5m`，filtered scan 的有效范围先受 local costmap 限制。PCT 动态层按 Nav2 costmap 思路维护 source grid：有限 hit beam 只 mark 障碍源点，`inf`/远距离 beam 或 hit 前方自由空间会 raytrace clear 障碍源点；source 变化后再统一重算 inflation cost。`persistence` 只是兜底超时清除。
 
-PCT 动态层保留两个过滤保护，避免楼梯平台墙壁把全局路径推歪：
+PCT 动态层保留静态障碍跳过保护，避免静态 tomogram 已经包含的墙体又作为动态障碍重复膨胀：
 
-- `global_path_perception_path_corridor_radius=0.4`：只有距离最新 `/pct_path` 中心线 0.4m 内的 filtered scan 点会写入动态代价层。
 - `global_path_perception_skip_static_obstacles=true`：静态 tomogram cost 已经高于阈值的点不会重复写入动态层。`global_path_perception_static_skip_cost=-1.0` 表示自动使用 `a_star_cost_threshold`，主导航里实际是 45.0。
+- `global_path_perception_path_corridor_radius=0.0`：默认不按已有路径裁剪动态障碍，行为更接近 Nav2 global costmap；需要临时限制路径附近障碍时再手动调大。
 
 如需对比原始 `/scan`：
 

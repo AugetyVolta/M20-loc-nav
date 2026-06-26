@@ -5,9 +5,9 @@ pct_planner_node:
     frame_id: "map"
     path_topic: "/pct_path"
 
-    # Use "tf" in the robot stack so the global path starts at map->base_link.
-    # "odom" and "fixed" are kept for debugging.
-    start_source: "fixed"
+    # Use "tf" so the global path starts from the current map->base_link pose.
+    # Override to "fixed" only for offline/debug visualization without TF.
+    start_source: "tf"
     odom_topic: "/odom_body"
     global_frame: "map"
     robot_frame: "base_link"
@@ -25,7 +25,7 @@ pct_planner_node:
     replan_interval: 1.0
     position_epsilon: 0.01
     auto_plan: true
-    always_replan: false
+    always_replan: true
 
     # Main PCT traversability threshold. The M20 launch overrides this to 45.0
     # for stair-friendly navigation.
