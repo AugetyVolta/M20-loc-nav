@@ -5,8 +5,7 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /LaserScan1
-        - /Odometry1/Shape1
+        - /TF1/Frames1
       Splitter Ratio: 0.5
     Tree Height: 483
   - Class: rviz_common/Selection
@@ -72,7 +71,7 @@ Visualization Manager:
         odom:
           Value: true
         odom_body:
-          Value: true
+          Value: false
       Marker Scale: 5
       Name: TF
       Show Arrows: true
@@ -98,8 +97,8 @@ Visualization Manager:
     - Alpha: 0.6000000238418579
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 18.903865814208984
-        Min Value: -2.3298282623291016
+        Max Value: 18.42516326904297
+        Min Value: -2.640742540359497
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -129,17 +128,17 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
-    - Alpha: 1
+    - Alpha: 0.75
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
+        Max Value: 14.960192680358887
+        Min Value: 7.624597549438477
         Value: true
       Axis: Z
       Channel Name: intensity
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
-      Color Transformer: FlatColor
+      Color Transformer: AxisColor
       Decay Time: 0
       Enabled: false
       Invert Rainbow: false
@@ -151,7 +150,7 @@ Visualization Manager:
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
-      Size (m): 0.05000000074505806
+      Size (m): 0.032999999821186066
       Style: Flat Squares
       Topic:
         Depth: 5
@@ -250,7 +249,7 @@ Visualization Manager:
         Value: true
       Enabled: false
       Keep: 100
-      Name: Odometry
+      Name: Global Pose
       Position Tolerance: 0.10000000149011612
       Shape:
         Alpha: 1
@@ -268,7 +267,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /Odometry_loc
+        Value: /baselink2map
       Value: false
     - Class: rviz_common/Group
       Displays:
@@ -356,6 +355,15 @@ Visualization Manager:
       Show Axes: false
       Show Descriptions: true
       Show Visual Aids: false
+      Value: true
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Enable Transparency: true
+      Enabled: true
+      Interactive Markers Namespace: /initialpose_3d_marker
+      Name: 3D Initial Pose
+      Show Axes: true
+      Show Descriptions: true
+      Show Visual Aids: true
       Value: true
     - Alpha: 1
       Class: rviz_default_plugins/RobotModel
@@ -478,25 +486,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 37.729896545410156
+      Distance: 33.50539016723633
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 2.8109166622161865
-        Y: -12.847862243652344
-        Z: 0.14583227038383484
+        X: -0.844954788684845
+        Y: -8.229094505310059
+        Z: 2.3904213905334473
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.5297980904579163
+      Pitch: 0.6697965264320374
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 1.432695746421814
+      Yaw: 1.9876974821090698
     Saved: ~
 Window Geometry:
   Displays:

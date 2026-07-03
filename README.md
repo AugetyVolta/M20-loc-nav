@@ -142,6 +142,9 @@ ros2 service call /save_pgo_map std_srvs/srv/Trigger {}
 ## 准备导航 PCD
 
 默认脚本优先读取 `maps/fastlio/global_map.pcd`，没有它时读取 `maps/fastlio/m20_map_raw.pcd`，输出 `maps/fastlio/m20_3d_map.pcd`。
+脚本会把实际用于旋平 PCD 的累计旋转同步写入
+`src/m20_fastlio_nav/config/open3d_localization_m20.yaml` 的 `initialpose` 后三项
+`roll, pitch, yaw`，让 Open3D 定位启动时先带上地图旋平角，而不是完全依赖 ICP 在线估计。
 
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws
@@ -149,6 +152,15 @@ source ./source_m20_nav.sh
 
 "${M20_NAV_CUPY_PYTHON}" \
   src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py
+```
+
+如果只是试输出临时 PCD，不想修改 Open3D 定位配置，加：
+
+```bash
+"${M20_NAV_CUPY_PYTHON}" \
+  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
+  --output /tmp/m20_3d_map_check.pcd \
+  --no-update-open3d-initialpose
 ```
 
 如果确认地面识别正确，再使用 `--ground-zero` 把地图高度归零：
@@ -245,10 +257,72 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   rviz:=true
 ```
 
+### Fast-LIO 前端选择
+
+主导航默认使用 `fast_lio_map` 作为 Fast-LIO 前端。当前测试结果是：
+
+```text
+fast_lio_map + filter_size_surf/map = 0.3 可以用
+fast_lio     + filter_size_surf/map = 0.3 也可以用
+```
+
+所以目前优先结论是：之前下楼梯定位飘，主要是定位参数太粗，尤其是
+`filter_size_surf` 和 `filter_size_map`，不是某一个前端完全不能用。默认先保留
+`fast_lio_map`，因为建图和定位链路一致；`fast_lio` 作为 A/B 测试和备用前端保留。
+
+默认前端：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  use_sim_time:=true \
+  map_pcd:="${M20_MAP_PCD}" \
+  rviz:=true
+```
+
+切到旧的 `fast_lio` 前端：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  use_sim_time:=true \
+  map_pcd:="${M20_MAP_PCD}" \
+  rviz:=true \
+  fastlio_frontend:=fast_lio
+```
+
+只跑定位时也可以切：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_localization.launch.py \
+  use_sim_time:=true \
+  map_pcd:="${M20_MAP_PCD}" \
+  rviz:=true \
+  fastlio_frontend:=fast_lio
+```
+
+定位参数文件：
+
+```text
+src/m20_fastlio_nav/config/fastlio_localization_mid360.yaml
+```
+
+当前楼梯定位推荐值：
+
+```yaml
+filter_size_surf: 0.3
+filter_size_map: 0.3
+```
+
+`0.5` 对楼梯、平台边缘这类细结构太粗，容易把几何约束降采样掉；`0.3` 会保留更多点面约束，代价是计算量略高。更详细的前端差异、测试方法和保留建议见：
+
+```text
+docs/fastlio_frontend_notes.md
+```
+
 默认参数：
 
 | 参数 | 默认值 | 说明 |
 |---|---:|---|
+| `fastlio_frontend` | `fast_lio_map` | Fast-LIO 前端包名；可切到 `fast_lio` 做 A/B 测试 |
 | `global_path_topic` | `/pct_path` | pure pursuit 和 RL local path 使用的全局路径 |
 | `start_pct_planner` | `true` | 默认随主导航启动 PCT planner |
 | `pct_start_source` | `tf` | PCT 起点默认来自 TF `map -> base_link`，会随机器人位置更新 |
@@ -338,6 +412,21 @@ ros2 topic echo /Odometry_loc --once
 ros2 topic echo /odom_body --once
 ros2 run tf2_ros tf2_echo map base_link
 ros2 run tf2_ros tf2_echo odom_body base_link
+```
+
+手动拉全局初始位姿：
+
+```bash
+# RViz 2D Pose Estimate 和 3D Initial Pose marker 都发布 /initialpose。
+# /initialpose 的语义是目标 map -> base_link 初始位姿。
+ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
+"{header: {frame_id: map}, pose: {pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}}"
+```
+
+RViz 里默认还有一个 `3D Initial Pose` interactive marker。用 `Interact` 工具拖动或旋转橙色球体，拖动过程中会在播放 bag 前持续发布 `/initialpose`，松开鼠标时也会发布一次。这样可以先拖初始位姿再播放 rosbag，避免第一帧定位回到原点。Open3D 收到 `/initialpose` 后会更新 `map -> odom`；如果定位已经初始化，还会请求 Fast-LIO 前端 `/reset_localization`。如果只想用命令行，不启动这个 marker：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py start_initialpose_3d_marker:=false
 ```
 
 点云转 scan：

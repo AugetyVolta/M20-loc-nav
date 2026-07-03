@@ -3,8 +3,8 @@
     feature_extract_enable: false
     point_filter_num: 3
     max_iteration: 3
-    filter_size_surf: 0.5
-    filter_size_map: 0.5
+    filter_size_surf: 0.3
+    filter_size_map: 0.3
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
     map_file_path: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd"
@@ -14,8 +14,6 @@
       imu_topic: "/livox/imu"
       time_sync_en: false
       time_offset_lidar_to_imu: 0.0
-      reset_on_sensor_wall_gap: false
-      bag_switch_wall_gap_sec: 1.5
 
     preprocess:
       lidar_type: 4
@@ -31,7 +29,7 @@
       b_acc_cov: 0.0001
       b_gyr_cov: 0.0001
       fov_degree: 360.0
-      det_range: 60.0
+      det_range: 80.0
       extrinsic_est_en: false
       extrinsic_T: [-0.011, -0.02329, 0.04412]
       extrinsic_R: [1.0, 0.0, 0.0,

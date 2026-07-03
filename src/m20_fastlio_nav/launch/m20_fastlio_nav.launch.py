@@ -12,6 +12,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     autostart = LaunchConfiguration("autostart")
     start_livox = LaunchConfiguration("start_livox")
+    fastlio_frontend = LaunchConfiguration("fastlio_frontend")
     map_pcd = LaunchConfiguration("map_pcd")
     params_file = LaunchConfiguration("params_file")
     rviz = LaunchConfiguration("rviz")
@@ -25,6 +26,7 @@ def generate_launch_description():
     scan_topic = LaunchConfiguration("scan_topic")
     body_scan_min_height = LaunchConfiguration("body_scan_min_height")
     body_scan_max_height = LaunchConfiguration("body_scan_max_height")
+    start_initialpose_3d_marker = LaunchConfiguration("start_initialpose_3d_marker")
     output_odom_topic = LaunchConfiguration("output_odom_topic")
     global_path_topic = LaunchConfiguration("global_path_topic")
     rl_python_executable = LaunchConfiguration("rl_python_executable")
@@ -93,6 +95,7 @@ def generate_launch_description():
         launch_arguments={
             "use_sim_time": use_sim_time,
             "start_livox": start_livox,
+            "fastlio_frontend": fastlio_frontend,
             "map_pcd": map_pcd,
             "scan_topic": scan_topic,
             "output_odom_topic": output_odom_topic,
@@ -101,6 +104,7 @@ def generate_launch_description():
             "scan_max_height": body_scan_max_height,
             "rviz": rviz,
             "rviz_config": rviz_config,
+            "start_initialpose_3d_marker": start_initialpose_3d_marker,
         }.items(),
     )
 
@@ -257,6 +261,11 @@ def generate_launch_description():
             DeclareLaunchArgument("autostart", default_value="true"),
             DeclareLaunchArgument("start_livox", default_value="false"),
             DeclareLaunchArgument(
+                "fastlio_frontend",
+                default_value="fast_lio_map",
+                description="Fast-LIO frontend package for A/B testing: fast_lio_map or fast_lio.",
+            ),
+            DeclareLaunchArgument(
                 "map_pcd",
                 default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd",
             ),
@@ -284,6 +293,7 @@ def generate_launch_description():
             DeclareLaunchArgument("output_odom_topic", default_value="/odom_body"),
             DeclareLaunchArgument("body_scan_min_height", default_value="-0.1"),
             DeclareLaunchArgument("body_scan_max_height", default_value="0.55"),
+            DeclareLaunchArgument("start_initialpose_3d_marker", default_value="true"),
             DeclareLaunchArgument("pct_root", default_value=default_pct_root),
             DeclareLaunchArgument(
                 "pct_venv_site",

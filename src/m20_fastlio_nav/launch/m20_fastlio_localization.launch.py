@@ -21,12 +21,14 @@ BASE_TO_SENSOR = [
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     start_livox = LaunchConfiguration("start_livox")
+    fastlio_frontend = LaunchConfiguration("fastlio_frontend")
     map_pcd = LaunchConfiguration("map_pcd")
     scan_topic = LaunchConfiguration("scan_topic")
     start_scan = LaunchConfiguration("start_scan")
     scan_min_height = LaunchConfiguration("scan_min_height")
     scan_max_height = LaunchConfiguration("scan_max_height")
     output_odom_topic = LaunchConfiguration("output_odom_topic")
+    start_initialpose_3d_marker = LaunchConfiguration("start_initialpose_3d_marker")
     rviz = LaunchConfiguration("rviz")
     rviz_config = LaunchConfiguration("rviz_config")
 
@@ -72,8 +74,8 @@ def generate_launch_description():
         arguments=["0", "0", "0", "0", "0", "0", "1", "base_link", "motion_link"],
     )
 
-    fast_lio_loc = Node(
-        package="fast_lio",
+    fast_lio_mapping_frontend = Node(
+        package=fastlio_frontend,
         executable="fastlio_mapping",
         name="fastlio_localization_odom",
         output="screen",
@@ -82,7 +84,22 @@ def generate_launch_description():
             {
                 "map_file_path": map_pcd,
                 "use_sim_time": use_sim_time,
+                "publish.path_en": False,
+                "publish.effect_map_en": False,
+                "publish.map_en": False,
+                "publish.scan_publish_en": True,
+                "publish.dense_publish_en": False,
+                "publish.scan_bodyframe_pub_en": True,
+                "pcd_save.pcd_save_en": False,
             },
+        ],
+        remappings=[
+            ("/Odometry", "/Odometry_loc"),
+            ("/cloud_registered", "/cloud_registered_1"),
+            ("/cloud_registered_body", "/cloud_registered_body_1"),
+            ("/cloud_effected", "/cloud_effected_1"),
+            ("/Laser_map", "/Laser_map_1"),
+            ("/path", "/path_1"),
         ],
     )
 
@@ -141,6 +158,25 @@ def generate_launch_description():
         ],
     )
 
+    initialpose_3d_marker = Node(
+        condition=IfCondition(start_initialpose_3d_marker),
+        package="m20_fastlio_nav",
+        executable="initialpose_3d_marker",
+        name="initialpose_3d_marker",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": False,
+                "frame_id": "map",
+                "base_frame": "base_link",
+                "marker_namespace": "initialpose_3d_marker",
+                "publish_topic": "/initialpose",
+                "marker_scale": 0.8,
+                "sync_from_tf_on_start": False,
+            }
+        ],
+    )
+
     pointcloud_to_scan = Node(
         condition=IfCondition(start_scan),
         package="pointcloud_to_laserscan",
@@ -191,6 +227,11 @@ def generate_launch_description():
                 description="Start the Livox MID360 driver from this launch file.",
             ),
             DeclareLaunchArgument(
+                "fastlio_frontend",
+                default_value="fast_lio_map",
+                description="Fast-LIO frontend package for A/B testing: fast_lio_map or fast_lio.",
+            ),
+            DeclareLaunchArgument(
                 "map_pcd",
                 default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd",
             ),
@@ -199,6 +240,7 @@ def generate_launch_description():
             DeclareLaunchArgument("scan_min_height", default_value="0.1"),
             DeclareLaunchArgument("scan_max_height", default_value="0.55"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom_body"),
+            DeclareLaunchArgument("start_initialpose_3d_marker", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument(
                 "rviz_config",
@@ -211,9 +253,10 @@ def generate_launch_description():
             base_to_livox,
             base_to_imu,
             base_to_motion,
-            fast_lio_loc,
+            fast_lio_mapping_frontend,
             odom_bridge,
             open3d_loc,
+            initialpose_3d_marker,
             pointcloud_to_scan,
             rviz_node,
         ]

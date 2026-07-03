@@ -18,6 +18,7 @@
 #include <cmath>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <thread>
 // #include <pcl/common/transforms.h>
 
@@ -149,6 +150,7 @@ private:
 
     /// @brief 订阅初始位姿
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_initialpose_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_initialpose_transient_;
 
     /// @brief baselink到odom的pose表达
     nav_msgs::msg::Odometry pose_baselink2odom_;
@@ -162,6 +164,10 @@ private:
     Eigen::Matrix4d mat_baselink2map_;
     /// @brief initialpose初始位姿
     Eigen::Matrix4d mat_initialpose_;
+    std::mutex lock_initialpose_dedupe_;
+    Eigen::Matrix4d mat_last_initialpose_target_ = Eigen::Matrix4d::Identity();
+    bool have_last_initialpose_target_ = false;
+    std::chrono::steady_clock::time_point last_initialpose_wall_time_;
 
     std::mutex lock_mat_odom2map_;
 
@@ -325,6 +331,10 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
         "/cloud_registered_1", 50, std::bind(&GloabalLocalization::CallbackScan, this, std::placeholders::_1));
     sub_initialpose_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
         "/initialpose", 50, std::bind(&GloabalLocalization::CallbackInitialPose, this, std::placeholders::_1));
+    auto initialpose_transient_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+    sub_initialpose_transient_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        "/initialpose", initialpose_transient_qos,
+        std::bind(&GloabalLocalization::CallbackInitialPose, this, std::placeholders::_1));
 
     pose_baselink2odom_ = nav_msgs::msg::Odometry();
     pose_baselink2odom_.header.frame_id = "odom";
@@ -991,16 +1001,16 @@ void GloabalLocalization::LocalizationInitialize()
             fitness_initial = eva_result_coarse.fitness_;
             *pcd_scan2map = *source;
 
-            {
-                std::lock_guard<std::mutex> guard(lock_mat_odom2map_);
-                mat_odom2map_ = reg_matrix;
-            }
             auto loc_e = std::chrono::high_resolution_clock::now(); /// 结束定位计时
             loc_cost = std::chrono::duration_cast<std::chrono::microseconds>(loc_e - loc_s).count() / 1000.0;
             RCLCPP_INFO(this->get_logger(), "localization cost: %f ms", loc_cost);
 
             if (fitness_initial > threshold_fitness_init_)
             {
+                {
+                    std::lock_guard<std::mutex> guard(lock_mat_odom2map_);
+                    mat_odom2map_ = reg_matrix;
+                }
                 count_success += 1;
                 /// 连续两次定位成功后定位初始化成功
                 if (count_success >= 2)
@@ -1011,6 +1021,9 @@ void GloabalLocalization::LocalizationInitialize()
             else
             {
                 count_success = 0;
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                                     "Initial ICP fitness %.3f below threshold %.3f; keep previous map->odom",
+                                     fitness_initial, threshold_fitness_init_);
             }
         }
     }
@@ -1327,6 +1340,7 @@ void GloabalLocalization::Localization()
             /// 给发布的置信度赋值
             loc_fitness_.store(eva_result2.fitness_);
             open3d::utility::LogInfo("reg_result.fitness: {}, eva fitness: {}", reg_result2.fitness_, eva_result2.fitness_);
+
             /// 超过阈值才更新,防止因配准结果有问题而导致定位出问题
             if (loc_fitness_.load() > threshold_fitness_)
             {
@@ -1447,8 +1461,32 @@ void GloabalLocalization::CallbackInitialPose(const geometry_msgs::msg::PoseWith
         initialpose->pose.pose.position.y,
         z,
         yaw);
+
+    {
+        std::lock_guard<std::mutex> guard(lock_initialpose_dedupe_);
+        const auto now_wall = std::chrono::steady_clock::now();
+        if (have_last_initialpose_target_)
+        {
+            const double dt = std::chrono::duration<double>(now_wall - last_initialpose_wall_time_).count();
+            const double pos_delta =
+                (mat_last_initialpose_target_.block<3, 1>(0, 3) - mat_baselink2map_target.block<3, 1>(0, 3)).norm();
+            const double rot_delta =
+                (mat_last_initialpose_target_.block<3, 3>(0, 0) - mat_baselink2map_target.block<3, 3>(0, 0)).norm();
+            if (dt < 1.0 && pos_delta < 1.0e-4 && rot_delta < 1.0e-4)
+            {
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                                     "Ignore duplicate /initialpose from compatible QoS subscriptions");
+                return;
+            }
+        }
+        mat_last_initialpose_target_ = mat_baselink2map_target;
+        have_last_initialpose_target_ = true;
+        last_initialpose_wall_time_ = now_wall;
+    }
+
+    const bool localization_was_initialized = loc_initialized_.load();
     ResetOdomToMapFromBasePose(mat_baselink2map_target, true);
-    if (RequestFastLioReset("/initialpose"))
+    if (localization_was_initialized && RequestFastLioReset("/initialpose"))
     {
         {
             std::lock_guard<std::mutex> reset_lock(lock_reinit_);
@@ -1457,6 +1495,11 @@ void GloabalLocalization::CallbackInitialPose(const geometry_msgs::msg::PoseWith
         loc_initialized_.store(false);
         RCLCPP_WARN(this->get_logger(),
                     "Manual /initialpose will also reset Fast-LIO and reinitialize Open3D localization");
+    }
+    else if (!localization_was_initialized)
+    {
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "Stored /initialpose for startup initialization; Fast-LIO reset skipped before localization is initialized");
     }
     std::cout << "\n\n*** update mat_odom2map_" << std::endl;
     localization_3d_confidence_.data = 0.0f;

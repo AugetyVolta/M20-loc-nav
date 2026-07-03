@@ -5,6 +5,7 @@
 #include <fstream>
 #include <csignal>
 #include <chrono>
+#include <atomic>
 #include <unistd.h>
 #include <Python.h>
 #include <so3_math.h>
@@ -49,6 +50,9 @@ double time_diff_lidar_to_imu = 0.0;
 
 mutex mtx_buffer;
 condition_variable sig_buffer;
+std::atomic_bool reset_requested(false);
+std::mutex mtx_reset_reason;
+std::string reset_reason;
 
 string root_dir = ROOT_DIR;
 string map_file_path, lid_topic, imu_topic;
@@ -434,6 +438,79 @@ void map_incremental()
 
 PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI());
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
+
+void request_localization_reset(const char *reason)
+{
+    {
+        std::lock_guard<std::mutex> lock(mtx_reset_reason);
+        reset_reason = reason != nullptr ? reason : "unknown";
+    }
+    reset_requested.store(true);
+    sig_buffer.notify_all();
+}
+
+void reset_localization_state(const char *reason)
+{
+    std::cerr << "[fast_lio_map] Reset localization state: " << reason << std::endl;
+
+    lidar_buffer.clear();
+    time_buffer.clear();
+    imu_buffer.clear();
+    lidar_pushed = false;
+    flg_first_scan = true;
+    flg_EKF_inited = false;
+    is_first_lidar = true;
+    Localmap_Initialized = false;
+    timediff_set_flg = false;
+    timediff_lidar_wrt_imu = 0.0;
+    last_timestamp_lidar = 0.0;
+    last_timestamp_imu = -1.0;
+    lidar_end_time = 0.0;
+    first_lidar_time = 0.0;
+    scan_num = 0;
+    lidar_mean_scantime = 0.0;
+    total_distance = 0.0;
+    effct_feat_num = 0;
+    feats_down_size = 0;
+    laserCloudValidNum = 0;
+    kdtree_size_st = 0;
+    kdtree_size_end = 0;
+    add_point_size = 0;
+    kdtree_delete_counter = 0;
+
+    PointVector empty_points;
+    ikdtree.Build(empty_points);
+    feats_undistort->clear();
+    feats_down_body->clear();
+    feats_down_world->clear();
+    featsFromMap->clear();
+    normvec->clear();
+    laserCloudOri->clear();
+    corr_normvect->clear();
+    pcl_wait_pub->clear();
+    pcl_wait_save->clear();
+    Nearest_Points.clear();
+    pointSearchInd_surf.clear();
+    cub_needrm.clear();
+    path.poses.clear();
+
+    p_imu->Reset();
+
+    state_ikfom init_state;
+    init_state.offset_T_L_I = Lidar_T_wrt_IMU;
+    init_state.offset_R_L_I = Lidar_R_wrt_IMU;
+    kf.change_x(init_state);
+    auto init_cov = kf.get_P();
+    init_cov.setIdentity();
+    kf.change_P(init_cov);
+    state_point = kf.get_x();
+    euler_cur = Zero3d;
+    pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
+    geoQuat.x = 0.0;
+    geoQuat.y = 0.0;
+    geoQuat.z = 0.0;
+    geoQuat.w = 1.0;
+}
 
 void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull)
 {
@@ -829,6 +906,9 @@ public:
         map_pub_timer_ = rclcpp::create_timer(this, this->get_clock(), map_period_ms, std::bind(&LaserMappingNode::map_publish_callback, this));
 
         map_save_srv_ = this->create_service<std_srvs::srv::Trigger>("map_save", [this](const std::shared_ptr<std_srvs::srv::Trigger::Request> request, std::shared_ptr<std_srvs::srv::Trigger::Response> response){this->map_save_callback(request, response);});
+        reset_localization_srv_ = this->create_service<std_srvs::srv::Trigger>(
+            "reset_localization",
+            std::bind(&LaserMappingNode::reset_localization_callback, this, std::placeholders::_1, std::placeholders::_2));
         RCLCPP_INFO(this->get_logger(), "Node init finished.");
     }
 
@@ -842,6 +922,18 @@ public:
 private:
     void timer_callback()
     {
+        if (reset_requested.exchange(false))
+        {
+            std::string reason_copy;
+            {
+                std::lock_guard<std::mutex> lock(mtx_reset_reason);
+                reason_copy = reset_reason;
+            }
+            std::lock_guard<std::mutex> buffer_lock(mtx_buffer);
+            reset_localization_state(reason_copy.c_str());
+            return;
+        }
+
         if(sync_packages(Measures))
         {
             if (flg_first_scan)
@@ -963,6 +1055,15 @@ private:
         }
     }
 
+    void reset_localization_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr req, std_srvs::srv::Trigger::Response::SharedPtr res)
+    {
+        (void)req;
+        request_localization_reset("reset_localization service");
+        res->success = true;
+        res->message = "Fast-LIO map frontend reset requested.";
+        RCLCPP_WARN(this->get_logger(), "Fast-LIO map frontend reset requested by service");
+    }
+
 private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body_;
@@ -979,6 +1080,7 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::TimerBase::SharedPtr map_pub_timer_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr map_save_srv_;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_localization_srv_;
 
     bool effect_pub_en = false, map_pub_en = false;
     int effect_feat_num = 0, frame_num = 0;
