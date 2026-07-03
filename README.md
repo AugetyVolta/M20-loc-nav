@@ -259,16 +259,16 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 
 ### Fast-LIO 前端选择
 
-主导航默认使用 `fast_lio_map` 作为 Fast-LIO 前端。当前测试结果是：
+主导航默认使用 `fast_lio` 作为 Fast-LIO 前端。当前测试结果是：
 
 ```text
-fast_lio_map + filter_size_surf/map = 0.3 可以用
-fast_lio     + filter_size_surf/map = 0.3 也可以用
+fast_lio     + filter_size_surf=0.2, filter_size_map=0.3 可以用，实机实时性更好
+fast_lio_map + filter_size_surf=0.2, filter_size_map=0.3 可以用，但实机反馈会卡
 ```
 
 所以目前优先结论是：之前下楼梯定位飘，主要是定位参数太粗，尤其是
-`filter_size_surf` 和 `filter_size_map`，不是某一个前端完全不能用。默认先保留
-`fast_lio_map`，因为建图和定位链路一致；`fast_lio` 作为 A/B 测试和备用前端保留。
+`filter_size_surf` 和 `filter_size_map`，不是某一个前端完全不能用。现在默认切回
+`fast_lio`，优先保证前端实时性；`fast_lio_map` 作为 A/B 测试和备用前端保留。
 
 默认前端：
 
@@ -279,14 +279,14 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   rviz:=true
 ```
 
-切到旧的 `fast_lio` 前端：
+切到 `fast_lio_map` 前端做 A/B 测试：
 
 ```bash
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   use_sim_time:=true \
   map_pcd:="${M20_MAP_PCD}" \
   rviz:=true \
-  fastlio_frontend:=fast_lio
+  fastlio_frontend:=fast_lio_map
 ```
 
 只跑定位时也可以切：
@@ -296,7 +296,7 @@ ros2 launch m20_fastlio_nav m20_fastlio_localization.launch.py \
   use_sim_time:=true \
   map_pcd:="${M20_MAP_PCD}" \
   rviz:=true \
-  fastlio_frontend:=fast_lio
+  fastlio_frontend:=fast_lio_map
 ```
 
 定位参数文件：
@@ -308,11 +308,13 @@ src/m20_fastlio_nav/config/fastlio_localization_mid360.yaml
 当前楼梯定位推荐值：
 
 ```yaml
-filter_size_surf: 0.3
+filter_size_surf: 0.2
 filter_size_map: 0.3
+acc_cov: 0.2
+gyr_cov: 0.2
 ```
 
-`0.5` 对楼梯、平台边缘这类细结构太粗，容易把几何约束降采样掉；`0.3` 会保留更多点面约束，代价是计算量略高。更详细的前端差异、测试方法和保留建议见：
+`filter_size_surf=0.2` 会让当前帧点云保留更多点面约束，`filter_size_map=0.3` 保留局部地图细节但不至于太重；`acc_cov/gyr_cov=0.2` 当前实测比上一版更适合楼梯振动场景。更详细的前端差异、测试方法和保留建议见：
 
 ```text
 docs/fastlio_frontend_notes.md
@@ -322,7 +324,7 @@ docs/fastlio_frontend_notes.md
 
 | 参数 | 默认值 | 说明 |
 |---|---:|---|
-| `fastlio_frontend` | `fast_lio_map` | Fast-LIO 前端包名；可切到 `fast_lio` 做 A/B 测试 |
+| `fastlio_frontend` | `fast_lio` | Fast-LIO 前端包名；可切到 `fast_lio_map` 做 A/B 测试 |
 | `global_path_topic` | `/pct_path` | pure pursuit 和 RL local path 使用的全局路径 |
 | `start_pct_planner` | `true` | 默认随主导航启动 PCT planner |
 | `pct_start_source` | `tf` | PCT 起点默认来自 TF `map -> base_link`，会随机器人位置更新 |

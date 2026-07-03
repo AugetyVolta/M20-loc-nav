@@ -262,7 +262,7 @@ def generate_launch_description():
             DeclareLaunchArgument("start_livox", default_value="false"),
             DeclareLaunchArgument(
                 "fastlio_frontend",
-                default_value="fast_lio_map",
+                default_value="fast_lio",
                 description="Fast-LIO frontend package for A/B testing: fast_lio_map or fast_lio.",
             ),
             DeclareLaunchArgument(
