@@ -174,13 +174,11 @@ global_path_perception_persistence = 5.0             # M20 主导航推荐值；
 global_path_perception_raytrace_enabled = true       # 用 LaserScan 自由射线清除动态层
 global_path_perception_raytrace_max_range = 0.0      # 0.0 表示自动使用感知窗口和 scan range_max 的较小值
 global_path_perception_raytrace_max_rays = 360       # 每次最多处理的清除射线数
-global_path_perception_path_corridor_radius = 0.0    # 默认不按已有路径裁剪动态障碍
-global_path_perception_skip_static_obstacles = true  # 静态 tomogram 高代价点不重复写入动态层
 ```
 
 完整 M20 导航 launch 会覆盖为 `global_path_perception_width=6.0`、`global_path_perception_height=6.0`、`global_path_perception_scan_topic=/traversability_filtered_scan`、`global_path_perception_inflation_radius=0.60`、`global_path_perception_cost_scaling_factor=5.0`、`global_path_perception_persistence=5.0`，并默认开启全局路径感知和 raytrace clearing。其余滤波、层匹配、机器人清除半径和感知峰值 cost 使用节点默认值；峰值 cost 默认自动取 `a_star_cost_threshold + 5`。
 
-动态层变化只更新 C++ 临时代价层，不会单独立即触发重规划。主导航默认 `always_replan=true`，所以 `/pct_path` 按 `replan_interval=1.0s` 定周期刷新。LaserScan 输入默认写当前机器人匹配到的 PCT layer，避免上下楼时用 2D scan endpoint 的 z 抖动误选楼层；LaserScan 的 mark cell、raytrace clear cell、静态障碍跳过和去重在 C++ core 中批量生成，Python 只做 TF 和向量化坐标转换。PointCloud2 输入仍按点高匹配 layer。`global_path_perception_skip_static_obstacles=true` 会忽略静态 tomogram 中已经高于 `a_star_cost_threshold` 的墙体/结构点。
+动态层变化只更新 C++ 临时代价层，不会单独立即触发重规划。主导航默认 `always_replan=true`，所以 `/pct_path` 按 `replan_interval=1.0s` 定周期刷新。LaserScan 输入默认写当前机器人匹配到的 PCT layer，避免上下楼时用 2D scan endpoint 的 z 抖动误选楼层；LaserScan 的 mark cell、raytrace clear cell 和去重在 C++ core 中批量生成，Python 只做 TF 和向量化坐标转换。PointCloud2 输入仍按点高匹配 layer。filtered scan 的有限 hit 会直接写入 PCT 动态层，不再因为静态 tomogram 中已经存在墙体/高代价结构就跳过；楼梯段通过楼梯状态关闭 PCT 动态避障。
 
 因为全局路径感知更新改在 PCT C++/pybind core 内，修改后需要重新构建 core：
 
