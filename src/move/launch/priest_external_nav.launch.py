@@ -72,6 +72,8 @@ def generate_launch_description():
     adapter_goal_send_hz = LaunchConfiguration("adapter_goal_send_hz")
     adapter_min_goal_resend_interval = LaunchConfiguration("adapter_min_goal_resend_interval")
     adapter_path_timeout = LaunchConfiguration("adapter_path_timeout")
+    adapter_pause_nav_cmd_topic = LaunchConfiguration("adapter_pause_nav_cmd_topic")
+    adapter_pause_nav_cmd_timeout = LaunchConfiguration("adapter_pause_nav_cmd_timeout")
 
     common_env = {
         "PYTHONUNBUFFERED": "1",
@@ -229,6 +231,10 @@ def generate_launch_description():
             ["nav_cmd_topic:=", nav_cmd_topic],
             "-p",
             ["require_localization_confidence:=", require_localization_confidence],
+            "-p",
+            ["pause_nav_cmd_topic:=", adapter_pause_nav_cmd_topic],
+            "-p",
+            ["pause_nav_cmd_timeout:=", adapter_pause_nav_cmd_timeout],
         ],
         output="screen",
         additional_env=common_env,
@@ -293,6 +299,8 @@ def generate_launch_description():
             DeclareLaunchArgument("adapter_goal_send_hz", default_value="3.0"),
             DeclareLaunchArgument("adapter_min_goal_resend_interval", default_value="0.35"),
             DeclareLaunchArgument("adapter_path_timeout", default_value="1.0"),
+            DeclareLaunchArgument("adapter_pause_nav_cmd_topic", default_value="/stair_gait_pause_nav_cmd"),
+            DeclareLaunchArgument("adapter_pause_nav_cmd_timeout", default_value="0.5"),
             rviz_waypoints,
             pure_pursuit,
             rl_local_path,

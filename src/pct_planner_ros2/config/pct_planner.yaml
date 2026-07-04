@@ -42,3 +42,23 @@ pct_planner_node:
     global_path_perception_inflation_radius: 0.60
     global_path_perception_cost_scaling_factor: 5.0
     global_path_perception_persistence: 1.0
+
+    # Stair mode uses the 3D PCT path slope ahead of the robot to suppress
+    # dynamic global-path perception on stairs. Local DWB/costmap avoidance is
+    # not disabled.
+    stair_mode_enabled: true
+    stair_state_topic: "/pct_stair_state"
+    stair_disable_global_path_perception: true
+    stair_lookahead: 2.5
+    stair_min_path_length: 0.8
+    stair_enter_slope: 0.18
+    stair_enter_dz: 0.35
+    stair_up_enter_slope: 0.14
+    stair_up_enter_dz: 0.28
+    stair_down_enter_slope: 0.18
+    stair_down_enter_dz: 0.35
+    stair_exit_slope: 0.05
+    stair_exit_dz: 0.10
+    stair_enter_hold_time: 0.5
+    stair_exit_hold_time: 2.0
+    stair_min_state_duration: 5.0

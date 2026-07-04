@@ -25,6 +25,7 @@ setup(
             "fastlio_odom_bridge = m20_fastlio_nav.fastlio_odom_bridge:main",
             "initialpose_3d_marker = m20_fastlio_nav.initialpose_3d_marker:main",
             "prepare_3d_nav_map = m20_fastlio_nav.prepare_3d_nav_map:main",
+            "stair_gait_manager = m20_fastlio_nav.stair_gait_manager:main",
         ],
     },
 )

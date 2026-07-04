@@ -62,6 +62,18 @@ def generate_launch_description():
             DeclareLaunchArgument("global_path_perception_inflation_radius", default_value="0.60"),
             DeclareLaunchArgument("global_path_perception_cost_scaling_factor", default_value="5.0"),
             DeclareLaunchArgument("global_path_perception_persistence", default_value="1.0"),
+            DeclareLaunchArgument("stair_mode_enabled", default_value="true"),
+            DeclareLaunchArgument("stair_disable_global_path_perception", default_value="true"),
+            DeclareLaunchArgument("stair_lookahead", default_value="2.5"),
+            DeclareLaunchArgument("stair_enter_slope", default_value="0.18"),
+            DeclareLaunchArgument("stair_enter_dz", default_value="0.35"),
+            DeclareLaunchArgument("stair_up_enter_slope", default_value="0.14"),
+            DeclareLaunchArgument("stair_up_enter_dz", default_value="0.28"),
+            DeclareLaunchArgument("stair_down_enter_slope", default_value="0.18"),
+            DeclareLaunchArgument("stair_down_enter_dz", default_value="0.35"),
+            DeclareLaunchArgument("stair_enter_hold_time", default_value="0.5"),
+            DeclareLaunchArgument("stair_exit_hold_time", default_value="2.0"),
+            DeclareLaunchArgument("stair_min_state_duration", default_value="5.0"),
             DeclareLaunchArgument("tomogram_visual_cost_max", default_value="45.0"),
             DeclareLaunchArgument("launch_rviz", default_value="true"),
             SetEnvironmentVariable("PCT_PLANNER_ROOT", pct_root),
@@ -121,6 +133,54 @@ def generate_launch_description():
                         ),
                         "global_path_perception_persistence": ParameterValue(
                             LaunchConfiguration("global_path_perception_persistence"),
+                            value_type=float,
+                        ),
+                        "stair_mode_enabled": ParameterValue(
+                            LaunchConfiguration("stair_mode_enabled"),
+                            value_type=bool,
+                        ),
+                        "stair_disable_global_path_perception": ParameterValue(
+                            LaunchConfiguration("stair_disable_global_path_perception"),
+                            value_type=bool,
+                        ),
+                        "stair_lookahead": ParameterValue(
+                            LaunchConfiguration("stair_lookahead"),
+                            value_type=float,
+                        ),
+                        "stair_enter_slope": ParameterValue(
+                            LaunchConfiguration("stair_enter_slope"),
+                            value_type=float,
+                        ),
+                        "stair_enter_dz": ParameterValue(
+                            LaunchConfiguration("stair_enter_dz"),
+                            value_type=float,
+                        ),
+                        "stair_up_enter_slope": ParameterValue(
+                            LaunchConfiguration("stair_up_enter_slope"),
+                            value_type=float,
+                        ),
+                        "stair_up_enter_dz": ParameterValue(
+                            LaunchConfiguration("stair_up_enter_dz"),
+                            value_type=float,
+                        ),
+                        "stair_down_enter_slope": ParameterValue(
+                            LaunchConfiguration("stair_down_enter_slope"),
+                            value_type=float,
+                        ),
+                        "stair_down_enter_dz": ParameterValue(
+                            LaunchConfiguration("stair_down_enter_dz"),
+                            value_type=float,
+                        ),
+                        "stair_enter_hold_time": ParameterValue(
+                            LaunchConfiguration("stair_enter_hold_time"),
+                            value_type=float,
+                        ),
+                        "stair_exit_hold_time": ParameterValue(
+                            LaunchConfiguration("stair_exit_hold_time"),
+                            value_type=float,
+                        ),
+                        "stair_min_state_duration": ParameterValue(
+                            LaunchConfiguration("stair_min_state_duration"),
                             value_type=float,
                         ),
                         "use_interactive_markers": True,

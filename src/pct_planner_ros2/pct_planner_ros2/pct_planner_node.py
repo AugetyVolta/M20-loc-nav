@@ -14,6 +14,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profi
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
+from std_msgs.msg import String
 from visualization_msgs.msg import InteractiveMarker, InteractiveMarkerControl, Marker
 
 from .pct_paths import (
@@ -78,6 +79,22 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_path_perception_path_corridor_radius", 0.0)
         self.declare_parameter("global_path_perception_skip_static_obstacles", True)
         self.declare_parameter("global_path_perception_static_skip_cost", -1.0)
+        self.declare_parameter("stair_mode_enabled", True)
+        self.declare_parameter("stair_state_topic", "/pct_stair_state")
+        self.declare_parameter("stair_disable_global_path_perception", True)
+        self.declare_parameter("stair_lookahead", 2.5)
+        self.declare_parameter("stair_min_path_length", 0.8)
+        self.declare_parameter("stair_enter_slope", 0.18)
+        self.declare_parameter("stair_enter_dz", 0.35)
+        self.declare_parameter("stair_up_enter_slope", 0.14)
+        self.declare_parameter("stair_up_enter_dz", 0.28)
+        self.declare_parameter("stair_down_enter_slope", 0.18)
+        self.declare_parameter("stair_down_enter_dz", 0.35)
+        self.declare_parameter("stair_exit_slope", 0.05)
+        self.declare_parameter("stair_exit_dz", 0.10)
+        self.declare_parameter("stair_enter_hold_time", 0.5)
+        self.declare_parameter("stair_exit_hold_time", 2.0)
+        self.declare_parameter("stair_min_state_duration", 5.0)
 
         self.pct_root = self.get_parameter("pct_root").value
         self.tomogram_file = tomogram_stem(self.get_parameter("tomogram_file").value)
@@ -157,6 +174,23 @@ class PctPlannerNode(Node):
             self.global_path_perception_static_skip_cost = float(
                 self.get_parameter("a_star_cost_threshold").value
             )
+        self.stair_mode_enabled = bool(self.get_parameter("stair_mode_enabled").value)
+        self.stair_disable_global_path_perception = bool(
+            self.get_parameter("stair_disable_global_path_perception").value
+        )
+        self.stair_lookahead = max(0.1, float(self.get_parameter("stair_lookahead").value))
+        self.stair_min_path_length = max(0.05, float(self.get_parameter("stair_min_path_length").value))
+        self.stair_enter_slope = max(0.0, float(self.get_parameter("stair_enter_slope").value))
+        self.stair_enter_dz = max(0.0, float(self.get_parameter("stair_enter_dz").value))
+        self.stair_up_enter_slope = max(0.0, float(self.get_parameter("stair_up_enter_slope").value))
+        self.stair_up_enter_dz = max(0.0, float(self.get_parameter("stair_up_enter_dz").value))
+        self.stair_down_enter_slope = max(0.0, float(self.get_parameter("stair_down_enter_slope").value))
+        self.stair_down_enter_dz = max(0.0, float(self.get_parameter("stair_down_enter_dz").value))
+        self.stair_exit_slope = max(0.0, float(self.get_parameter("stair_exit_slope").value))
+        self.stair_exit_dz = max(0.0, float(self.get_parameter("stair_exit_dz").value))
+        self.stair_enter_hold_time = max(0.0, float(self.get_parameter("stair_enter_hold_time").value))
+        self.stair_exit_hold_time = max(0.0, float(self.get_parameter("stair_exit_hold_time").value))
+        self.stair_min_state_duration = max(0.0, float(self.get_parameter("stair_min_state_duration").value))
 
         self.start_pos = np.array(
             vector3(self.get_parameter("initial_start").value, [-5.5, 6.0, 0.5]),
@@ -172,6 +206,11 @@ class PctPlannerNode(Node):
         self.planning = False
         self.last_perception_update_time = None
         self.last_perception_update_wall_time = 0.0
+        self.stair_state = "flat"
+        self._stair_state_since = time.monotonic()
+        self._stair_enter_candidate = None
+        self._stair_enter_since = None
+        self._stair_exit_since = None
 
         path_qos = QoSProfile(
             depth=1,
@@ -179,6 +218,11 @@ class PctPlannerNode(Node):
             reliability=ReliabilityPolicy.RELIABLE,
         )
         self.path_pub = self.create_publisher(Path, self.get_parameter("path_topic").value, path_qos)
+        self.stair_state_pub = self.create_publisher(
+            String,
+            str(self.get_parameter("stair_state_topic").value),
+            path_qos,
+        )
         self.tf_buffer = tf2_ros.Buffer(node=self)
         self.tf_listener_node = rclpy.create_node(f"{self.get_name()}_tf_listener")
         self.tf_listener = tf2_ros.TransformListener(
@@ -239,6 +283,18 @@ class PctPlannerNode(Node):
             f"global_frame={self.global_frame}, robot_frame={self.robot_frame}, "
             f"odom_topic={self.get_parameter('odom_topic').value}"
         )
+        if self.stair_mode_enabled:
+            self.get_logger().info(
+                "PCT stair mode enabled: "
+                f"lookahead={self.stair_lookahead:.2f}m, "
+                f"up_enter={self.stair_up_enter_slope:.3f}/{self.stair_up_enter_dz:.2f}m, "
+                f"down_enter={self.stair_down_enter_slope:.3f}/{self.stair_down_enter_dz:.2f}m, "
+                f"disable_dynamic={int(self.stair_disable_global_path_perception)}, "
+                f"enter_hold={self.stair_enter_hold_time:.2f}s, "
+                f"exit_hold={self.stair_exit_hold_time:.2f}s, "
+                f"min_state={self.stair_min_state_duration:.2f}s"
+            )
+        self._publish_stair_state()
         self.timer = self.create_timer(replan_interval, self._timer_cb)
 
     def destroy_node(self):
@@ -398,6 +454,7 @@ class PctPlannerNode(Node):
                 self.last_path_xy = traj_np[:, :2].copy()
             else:
                 self.last_path_xy = None
+            self._update_stair_state_from_path(traj_np)
             dt_ms = (time.perf_counter() - start_time) * 1000.0
             traj_first = traj_np[0, :3].tolist() if traj_np.ndim == 2 and traj_np.shape[0] > 0 else []
             self.get_logger().info(
@@ -431,6 +488,8 @@ class PctPlannerNode(Node):
         self.start_pos = np.array([position.x, position.y, position.z], dtype=np.float32)
 
     def _on_global_path_perception_scan(self, msg):
+        if not self._global_path_perception_active():
+            return
         if not self._global_path_perception_update_due():
             return
 
@@ -471,6 +530,8 @@ class PctPlannerNode(Node):
         )
 
     def _on_global_path_perception_cloud(self, msg):
+        if not self._global_path_perception_active():
+            return
         if not self._global_path_perception_update_due():
             return
 
@@ -497,6 +558,17 @@ class PctPlannerNode(Node):
         if now - self.last_perception_update_wall_time < self.global_path_perception_update_interval:
             return False
         self.last_perception_update_wall_time = now
+        return True
+
+    def _global_path_perception_active(self):
+        if not self.global_path_perception_enabled:
+            return False
+        if (
+            self.stair_mode_enabled
+            and self.stair_disable_global_path_perception
+            and self.stair_state != "flat"
+        ):
+            return False
         return True
 
     def _global_path_perception_scan_max_range(self, msg):
@@ -942,7 +1014,7 @@ class PctPlannerNode(Node):
         return [best]
 
     def _expire_global_path_perception_if_stale(self):
-        if not self.global_path_perception_enabled:
+        if not self._global_path_perception_active():
             return
         if self.last_perception_update_time is None:
             return
@@ -963,6 +1035,242 @@ class PctPlannerNode(Node):
                 f"changed_cells={changed_cells}",
                 throttle_duration_sec=1.0,
             )
+
+    def _update_stair_state_from_path(self, traj_np):
+        if not self.stair_mode_enabled:
+            return
+        stats = self._stair_slope_stats(traj_np)
+        if stats is None:
+            self._maybe_exit_stair_without_stats()
+            return
+
+        slope = stats["overall_slope"]
+        dz = stats["overall_dz"]
+        path_len = stats["lookahead_length"]
+        up = stats["up"]
+        down = stats["down"]
+        desired_state = "flat"
+        if path_len >= self.stair_min_path_length:
+            up_ok = up["slope"] >= self.stair_up_enter_slope and up["dz"] >= self.stair_up_enter_dz
+            down_ok = (
+                down["slope"] <= -self.stair_down_enter_slope
+                and down["dz"] <= -self.stair_down_enter_dz
+            )
+            if up_ok and down_ok:
+                desired_state = "stair_up" if up["score"] >= down["score"] else "stair_down"
+                selected = up if desired_state == "stair_up" else down
+                slope = selected["slope"]
+                dz = selected["dz"]
+            elif up_ok:
+                desired_state = "stair_up"
+                slope = up["slope"]
+                dz = up["dz"]
+            elif down_ok:
+                desired_state = "stair_down"
+                slope = down["slope"]
+                dz = down["dz"]
+
+        previous_state = self.stair_state
+        next_state = previous_state
+        now = time.monotonic()
+        state_age = now - self._stair_state_since
+
+        if previous_state == "flat":
+            if desired_state != "flat":
+                if self._stair_enter_candidate != desired_state:
+                    self._stair_enter_candidate = desired_state
+                    self._stair_enter_since = now
+                elif now - self._stair_enter_since >= self.stair_enter_hold_time:
+                    next_state = desired_state
+                    self._stair_enter_candidate = None
+                    self._stair_enter_since = None
+                self._stair_exit_since = None
+            else:
+                self._stair_enter_candidate = None
+                self._stair_enter_since = None
+        elif desired_state == previous_state:
+            self._stair_exit_since = None
+            self._stair_enter_candidate = None
+            self._stair_enter_since = None
+        elif desired_state in ("stair_up", "stair_down"):
+            if state_age >= self.stair_min_state_duration:
+                if self._stair_enter_candidate != desired_state:
+                    self._stair_enter_candidate = desired_state
+                    self._stair_enter_since = now
+                elif now - self._stair_enter_since >= self.stair_enter_hold_time:
+                    next_state = desired_state
+                    self._stair_enter_candidate = None
+                    self._stair_enter_since = None
+            self._stair_exit_since = None
+        else:
+            flat_enough = abs(slope) <= self.stair_exit_slope and abs(dz) <= self.stair_exit_dz
+            self._stair_enter_candidate = None
+            self._stair_enter_since = None
+            if flat_enough and state_age >= self.stair_min_state_duration:
+                if self._stair_exit_since is None:
+                    self._stair_exit_since = now
+                if now - self._stair_exit_since >= self.stair_exit_hold_time:
+                    next_state = "flat"
+                    self._stair_exit_since = None
+            else:
+                self._stair_exit_since = None
+
+        if next_state == previous_state:
+            return
+
+        self.stair_state = next_state
+        self._stair_state_since = now
+        if self.stair_disable_global_path_perception and next_state != "flat":
+            self._clear_global_path_perception("stair mode")
+        self._publish_stair_state()
+        self.get_logger().info(
+            f"PCT stair state: {previous_state} -> {next_state}, "
+            f"slope={slope:.3f}, dz={dz:.3f}m, path_len={path_len:.2f}m, "
+            f"up_start={up['start']:.2f}m, down_start={down['start']:.2f}m"
+        )
+
+    def _stair_slope_stats(self, traj_np):
+        path = np.asarray(traj_np, dtype=np.float32)
+        if path.ndim != 2 or path.shape[0] < 2 or path.shape[1] < 3:
+            return None
+        path = path[:, :3]
+        finite = np.all(np.isfinite(path), axis=1)
+        path = path[finite]
+        if path.shape[0] < 2:
+            return None
+
+        deltas_xy = np.diff(path[:, :2], axis=0)
+        seg_len = np.linalg.norm(deltas_xy, axis=1)
+        valid_seg = seg_len > 1.0e-4
+        if not np.any(valid_seg):
+            return None
+
+        closest_idx = int(np.argmin(np.linalg.norm(path[:, :2] - self.start_pos[:2], axis=1)))
+        if closest_idx >= path.shape[0] - 1:
+            closest_idx = max(0, path.shape[0] - 2)
+
+        ahead = [path[closest_idx]]
+        length = 0.0
+        idx = closest_idx
+        while idx < path.shape[0] - 1 and length < self.stair_lookahead:
+            step = float(np.linalg.norm(path[idx + 1, :2] - path[idx, :2]))
+            if step > 1.0e-4:
+                length += step
+                ahead.append(path[idx + 1])
+            idx += 1
+
+        if len(ahead) < 2 or length < self.stair_min_path_length:
+            return None
+
+        ahead_np = np.asarray(ahead, dtype=np.float32)
+        s = np.zeros((ahead_np.shape[0],), dtype=np.float32)
+        s[1:] = np.cumsum(np.linalg.norm(np.diff(ahead_np[:, :2], axis=0), axis=1))
+        z = ahead_np[:, 2]
+        if float(s[-1]) <= 1.0e-4:
+            return None
+
+        overall_slope = float((z[-1] - z[0]) / s[-1])
+        overall_dz = float(z[-1] - z[0])
+        if ahead_np.shape[0] >= 3:
+            overall_slope = float(np.polyfit(s.astype(np.float64), z.astype(np.float64), 1)[0])
+
+        up = {
+            "slope": -float("inf"),
+            "dz": 0.0,
+            "length": 0.0,
+            "start": float("inf"),
+            "score": 0.0,
+        }
+        down = {
+            "slope": float("inf"),
+            "dz": 0.0,
+            "length": 0.0,
+            "start": float("inf"),
+            "score": 0.0,
+        }
+        for i in range(ahead_np.shape[0] - 1):
+            for j in range(i + 1, ahead_np.shape[0]):
+                span = float(s[j] - s[i])
+                if span < self.stair_min_path_length:
+                    continue
+                interval_dz = float(z[j] - z[i])
+                interval_slope = interval_dz / span
+                if interval_dz > 0.0:
+                    score = interval_slope * interval_dz
+                else:
+                    score = 0.0
+                if score > up["score"]:
+                    up = {
+                        "slope": interval_slope,
+                        "dz": interval_dz,
+                        "length": span,
+                        "start": float(s[i]),
+                        "score": score,
+                    }
+                if interval_dz < 0.0:
+                    score = -interval_slope * -interval_dz
+                else:
+                    score = 0.0
+                if score > down["score"]:
+                    down = {
+                        "slope": interval_slope,
+                        "dz": interval_dz,
+                        "length": span,
+                        "start": float(s[i]),
+                        "score": score,
+                    }
+        if not math.isfinite(up["slope"]):
+            up["slope"] = 0.0
+            up["start"] = float("inf")
+        if not math.isfinite(down["slope"]):
+            down["slope"] = 0.0
+            down["start"] = float("inf")
+        return {
+            "overall_slope": overall_slope,
+            "overall_dz": overall_dz,
+            "lookahead_length": float(s[-1]),
+            "up": up,
+            "down": down,
+        }
+
+    def _maybe_exit_stair_without_stats(self):
+        if self.stair_state == "flat":
+            return
+        now = time.monotonic()
+        if now - self._stair_state_since < self.stair_min_state_duration:
+            return
+        if self._stair_exit_since is None:
+            self._stair_exit_since = now
+            return
+        if now - self._stair_exit_since < self.stair_exit_hold_time:
+            return
+        previous_state = self.stair_state
+        self.stair_state = "flat"
+        self._stair_state_since = now
+        self._stair_enter_candidate = None
+        self._stair_enter_since = None
+        self._stair_exit_since = None
+        self._publish_stair_state()
+        self.get_logger().info(f"PCT stair state: {previous_state} -> flat, reason=short_path")
+
+    def _clear_global_path_perception(self, reason):
+        if not self.global_path_perception_enabled:
+            return
+        try:
+            active_cells = self.planner.global_path_perception_cell_count()
+            self.planner.clear_global_path_perception()
+            self.last_perception_update_time = None
+            if active_cells > 0:
+                self.get_logger().info(
+                    f"Cleared PCT global path perception ({active_cells} cells) for {reason}"
+                )
+        except Exception as exc:
+            self.get_logger().warn(f"Failed to clear PCT global path perception for {reason}: {exc}")
+
+    def _publish_stair_state(self):
+        msg = String()
+        msg.data = self.stair_state
+        self.stair_state_pub.publish(msg)
 
     def _on_goal_pose(self, msg):
         position = msg.pose.position

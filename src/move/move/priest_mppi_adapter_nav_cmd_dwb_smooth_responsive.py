@@ -11,7 +11,7 @@ from drdds.msg import NavCmd
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import FollowPath
 from nav_msgs.msg import Path
-from std_msgs.msg import Float32
+from std_msgs.msg import Bool, Float32
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
@@ -64,6 +64,8 @@ class PriestMppiAdapterNavCmd(Node):
         self.declare_parameter("cmd_frame_id", 0)
         self.declare_parameter("nav_cmd_publish_hz", 15.0)
         self.declare_parameter("cmd_timeout", 2.0)
+        self.declare_parameter("pause_nav_cmd_topic", "/stair_gait_pause_nav_cmd")
+        self.declare_parameter("pause_nav_cmd_timeout", 0.5)
         self.declare_parameter("scale_x", 1.0)
         self.declare_parameter("scale_y", 1.0)
         self.declare_parameter("scale_yaw", 1.0)
@@ -97,6 +99,8 @@ class PriestMppiAdapterNavCmd(Node):
         self.cmd_frame_id = int(self.get_parameter("cmd_frame_id").value)
         self.nav_cmd_publish_hz = float(self.get_parameter("nav_cmd_publish_hz").value)
         self.cmd_timeout = float(self.get_parameter("cmd_timeout").value)
+        self.pause_nav_cmd_topic = str(self.get_parameter("pause_nav_cmd_topic").value)
+        self.pause_nav_cmd_timeout = max(0.0, float(self.get_parameter("pause_nav_cmd_timeout").value))
         self.scale_x = float(self.get_parameter("scale_x").value)
         self.scale_y = float(self.get_parameter("scale_y").value)
         self.scale_yaw = float(self.get_parameter("scale_yaw").value)
@@ -112,6 +116,12 @@ class PriestMppiAdapterNavCmd(Node):
 
         self.path_sub = self.create_subscription(Path, self.priest_path_topic, self._on_path, qos_path)
         self.cmd_vel_sub = self.create_subscription(Twist, self.cmd_vel_topic, self._on_cmd_vel, 10)
+        self.pause_nav_cmd_sub = self.create_subscription(
+            Bool,
+            self.pause_nav_cmd_topic,
+            self._on_pause_nav_cmd,
+            10,
+        )
         self.localization_conf_sub = self.create_subscription(
             Float32, self.localization_confidence_topic, self._on_localization_confidence, 10
         )
@@ -132,6 +142,8 @@ class PriestMppiAdapterNavCmd(Node):
         self.latest_cmd_vel = Twist()
         self.latest_cmd_time = None
         self._cmd_timeout_active = False
+        self.pause_nav_cmd_active = False
+        self.pause_nav_cmd_until_wall = 0.0
 
         self._last_feedback_log = 0.0
         self._active_goal_handle = None
@@ -164,7 +176,8 @@ class PriestMppiAdapterNavCmd(Node):
             f"  localization_confidence_threshold={self.localization_confidence_threshold}\n"
             f"  localization_confidence_timeout={self.localization_confidence_timeout}\n"
             f"  cmd_vel_topic={self.cmd_vel_topic} -> nav_cmd_topic={self.nav_cmd_topic}\n"
-            f"  nav_cmd_publish_hz={self.nav_cmd_publish_hz}, cmd_timeout={self.cmd_timeout}"
+            f"  nav_cmd_publish_hz={self.nav_cmd_publish_hz}, cmd_timeout={self.cmd_timeout}\n"
+            f"  pause_nav_cmd_topic={self.pause_nav_cmd_topic}, timeout={self.pause_nav_cmd_timeout}"
         )
 
     @staticmethod
@@ -218,6 +231,32 @@ class PriestMppiAdapterNavCmd(Node):
         self.latest_cmd_vel = msg
         self.latest_cmd_time = self.get_clock().now()
         self._cmd_timeout_active = False
+
+    def _on_pause_nav_cmd(self, msg: Bool):
+        if msg.data:
+            self.pause_nav_cmd_active = True
+            self.pause_nav_cmd_until_wall = time.monotonic() + self.pause_nav_cmd_timeout
+            self.get_logger().info(
+                "Pause NAV_CMD output requested",
+                throttle_duration_sec=1.0,
+            )
+        else:
+            if self.pause_nav_cmd_active:
+                self.get_logger().info("Pause NAV_CMD output released")
+            self.pause_nav_cmd_active = False
+            self.pause_nav_cmd_until_wall = 0.0
+
+    def _nav_cmd_pause_active(self):
+        if not self.pause_nav_cmd_active:
+            return False
+        if self.pause_nav_cmd_timeout <= 0.0:
+            return True
+        if time.monotonic() <= self.pause_nav_cmd_until_wall:
+            return True
+        self.pause_nav_cmd_active = False
+        self.pause_nav_cmd_until_wall = 0.0
+        self.get_logger().warn("Pause NAV_CMD output timed out, releasing")
+        return False
 
     def _set_localization_ready(self, ready: bool, reason: str = ""):
         if self.localization_ready == ready:
@@ -373,6 +412,10 @@ class PriestMppiAdapterNavCmd(Node):
         x_vel = 0.0
         y_vel = 0.0
         yaw_vel = 0.0
+
+        if self._nav_cmd_pause_active():
+            self._publish_nav_cmd(0.0, 0.0, 0.0)
+            return
 
         if self.localization_ready and self.latest_cmd_time is not None:
             age = (self.get_clock().now() - self.latest_cmd_time).nanoseconds * 1e-9

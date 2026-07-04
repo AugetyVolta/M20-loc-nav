@@ -58,6 +58,33 @@ def generate_launch_description():
     pct_global_path_perception_raytrace_max_rays = LaunchConfiguration(
         "pct_global_path_perception_raytrace_max_rays"
     )
+    pct_stair_mode_enabled = LaunchConfiguration("pct_stair_mode_enabled")
+    pct_stair_disable_global_path_perception = LaunchConfiguration("pct_stair_disable_global_path_perception")
+    pct_stair_lookahead = LaunchConfiguration("pct_stair_lookahead")
+    pct_stair_enter_slope = LaunchConfiguration("pct_stair_enter_slope")
+    pct_stair_enter_dz = LaunchConfiguration("pct_stair_enter_dz")
+    pct_stair_up_enter_slope = LaunchConfiguration("pct_stair_up_enter_slope")
+    pct_stair_up_enter_dz = LaunchConfiguration("pct_stair_up_enter_dz")
+    pct_stair_down_enter_slope = LaunchConfiguration("pct_stair_down_enter_slope")
+    pct_stair_down_enter_dz = LaunchConfiguration("pct_stair_down_enter_dz")
+    pct_stair_enter_hold_time = LaunchConfiguration("pct_stair_enter_hold_time")
+    pct_stair_exit_hold_time = LaunchConfiguration("pct_stair_exit_hold_time")
+    pct_stair_min_state_duration = LaunchConfiguration("pct_stair_min_state_duration")
+    pct_stair_gait_udp_enabled = LaunchConfiguration("pct_stair_gait_udp_enabled")
+    pct_stair_gait_udp_ip = LaunchConfiguration("pct_stair_gait_udp_ip")
+    pct_stair_gait_udp_port = LaunchConfiguration("pct_stair_gait_udp_port")
+    pct_stair_gait_require_stationary = LaunchConfiguration("pct_stair_gait_require_stationary")
+    pct_stair_gait_stationary_linear_threshold = LaunchConfiguration("pct_stair_gait_stationary_linear_threshold")
+    pct_stair_gait_stationary_angular_threshold = LaunchConfiguration("pct_stair_gait_stationary_angular_threshold")
+    pct_stair_gait_stationary_hold_time = LaunchConfiguration("pct_stair_gait_stationary_hold_time")
+    pct_stair_gait_switch_cooldown = LaunchConfiguration("pct_stair_gait_switch_cooldown")
+    pct_stair_gait_pause_nav_cmd_enabled = LaunchConfiguration("pct_stair_gait_pause_nav_cmd_enabled")
+    pct_stair_gait_pause_nav_cmd_topic = LaunchConfiguration("pct_stair_gait_pause_nav_cmd_topic")
+    pct_stair_gait_pause_before_switch_time = LaunchConfiguration("pct_stair_gait_pause_before_switch_time")
+    pct_stair_gait_pause_after_switch_time = LaunchConfiguration("pct_stair_gait_pause_after_switch_time")
+    pct_flat_gait_param = LaunchConfiguration("pct_flat_gait_param")
+    pct_stair_up_gait_param = LaunchConfiguration("pct_stair_up_gait_param")
+    pct_stair_down_gait_param = LaunchConfiguration("pct_stair_down_gait_param")
 
     pct_pkg_share = FindPackageShare("pct_planner_ros2")
     default_pct_root = PathJoinSubstitution([pct_pkg_share, "PCT_planner"])
@@ -149,6 +176,8 @@ def generate_launch_description():
             "scan_topic": scan_topic,
             "global_plan_use_3d": "true",
             "adapter_path_transform_use_3d": "true",
+            "adapter_pause_nav_cmd_topic": pct_stair_gait_pause_nav_cmd_topic,
+            "adapter_pause_nav_cmd_timeout": "0.5",
             "pure_pursuit_use_3d_path_distance": "true",
         }.items(),
     )
@@ -243,6 +272,54 @@ def generate_launch_description():
                                     pct_global_path_perception_raytrace_max_rays,
                                     value_type=int,
                                 ),
+                                "stair_mode_enabled": ParameterValue(
+                                    pct_stair_mode_enabled,
+                                    value_type=bool,
+                                ),
+                                "stair_disable_global_path_perception": ParameterValue(
+                                    pct_stair_disable_global_path_perception,
+                                    value_type=bool,
+                                ),
+                                "stair_lookahead": ParameterValue(
+                                    pct_stair_lookahead,
+                                    value_type=float,
+                                ),
+                                "stair_enter_slope": ParameterValue(
+                                    pct_stair_enter_slope,
+                                    value_type=float,
+                                ),
+                                "stair_enter_dz": ParameterValue(
+                                    pct_stair_enter_dz,
+                                    value_type=float,
+                                ),
+                                "stair_up_enter_slope": ParameterValue(
+                                    pct_stair_up_enter_slope,
+                                    value_type=float,
+                                ),
+                                "stair_up_enter_dz": ParameterValue(
+                                    pct_stair_up_enter_dz,
+                                    value_type=float,
+                                ),
+                                "stair_down_enter_slope": ParameterValue(
+                                    pct_stair_down_enter_slope,
+                                    value_type=float,
+                                ),
+                                "stair_down_enter_dz": ParameterValue(
+                                    pct_stair_down_enter_dz,
+                                    value_type=float,
+                                ),
+                                "stair_enter_hold_time": ParameterValue(
+                                    pct_stair_enter_hold_time,
+                                    value_type=float,
+                                ),
+                                "stair_exit_hold_time": ParameterValue(
+                                    pct_stair_exit_hold_time,
+                                    value_type=float,
+                                ),
+                                "stair_min_state_duration": ParameterValue(
+                                    pct_stair_min_state_duration,
+                                    value_type=float,
+                                ),
                             },
                         ],
                     )
@@ -253,6 +330,81 @@ def generate_launch_description():
     external_nav_group = GroupAction(
         condition=IfCondition(start_external_nav),
         actions=[TimerAction(period=11.0, actions=[external_nav])],
+    )
+    stair_gait_group = GroupAction(
+        condition=IfCondition(pct_stair_gait_udp_enabled),
+        actions=[
+            TimerAction(
+                period=11.0,
+                actions=[
+                    Node(
+                        package="m20_fastlio_nav",
+                        executable="stair_gait_manager",
+                        name="stair_gait_manager",
+                        output="screen",
+                        parameters=[
+                            {
+                                "use_sim_time": ParameterValue(use_sim_time, value_type=bool),
+                                "enabled": True,
+                                "stair_state_topic": "/pct_stair_state",
+                                "odom_topic": output_odom_topic,
+                                "udp_ip": pct_stair_gait_udp_ip,
+                                "udp_port": ParameterValue(pct_stair_gait_udp_port, value_type=int),
+                                "require_stationary": ParameterValue(
+                                    pct_stair_gait_require_stationary,
+                                    value_type=bool,
+                                ),
+                                "stationary_linear_threshold": ParameterValue(
+                                    pct_stair_gait_stationary_linear_threshold,
+                                    value_type=float,
+                                ),
+                                "stationary_angular_threshold": ParameterValue(
+                                    pct_stair_gait_stationary_angular_threshold,
+                                    value_type=float,
+                                ),
+                                "stationary_hold_time": ParameterValue(
+                                    pct_stair_gait_stationary_hold_time,
+                                    value_type=float,
+                                ),
+                                "switch_cooldown": ParameterValue(
+                                    pct_stair_gait_switch_cooldown,
+                                    value_type=float,
+                                ),
+                                "pause_nav_cmd_enabled": ParameterValue(
+                                    pct_stair_gait_pause_nav_cmd_enabled,
+                                    value_type=bool,
+                                ),
+                                "pause_nav_cmd_topic": pct_stair_gait_pause_nav_cmd_topic,
+                                "pause_before_switch_time": ParameterValue(
+                                    pct_stair_gait_pause_before_switch_time,
+                                    value_type=float,
+                                ),
+                                "pause_after_switch_time": ParameterValue(
+                                    pct_stair_gait_pause_after_switch_time,
+                                    value_type=float,
+                                ),
+                                "initial_gait_param": ParameterValue(
+                                    pct_flat_gait_param,
+                                    value_type=int,
+                                ),
+                                "flat_gait_param": ParameterValue(
+                                    pct_flat_gait_param,
+                                    value_type=int,
+                                ),
+                                "stair_up_gait_param": ParameterValue(
+                                    pct_stair_up_gait_param,
+                                    value_type=int,
+                                ),
+                                "stair_down_gait_param": ParameterValue(
+                                    pct_stair_down_gait_param,
+                                    value_type=int,
+                                ),
+                            }
+                        ],
+                    )
+                ],
+            )
+        ],
     )
 
     return LaunchDescription(
@@ -319,6 +471,33 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_global_path_perception_raytrace_enabled", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_raytrace_max_range", default_value="0.0"),
             DeclareLaunchArgument("pct_global_path_perception_raytrace_max_rays", default_value="360"),
+            DeclareLaunchArgument("pct_stair_mode_enabled", default_value="true"),
+            DeclareLaunchArgument("pct_stair_disable_global_path_perception", default_value="true"),
+            DeclareLaunchArgument("pct_stair_lookahead", default_value="2.5"),
+            DeclareLaunchArgument("pct_stair_enter_slope", default_value="0.18"),
+            DeclareLaunchArgument("pct_stair_enter_dz", default_value="0.35"),
+            DeclareLaunchArgument("pct_stair_up_enter_slope", default_value="0.14"),
+            DeclareLaunchArgument("pct_stair_up_enter_dz", default_value="0.28"),
+            DeclareLaunchArgument("pct_stair_down_enter_slope", default_value="0.18"),
+            DeclareLaunchArgument("pct_stair_down_enter_dz", default_value="0.35"),
+            DeclareLaunchArgument("pct_stair_enter_hold_time", default_value="0.5"),
+            DeclareLaunchArgument("pct_stair_exit_hold_time", default_value="2.0"),
+            DeclareLaunchArgument("pct_stair_min_state_duration", default_value="5.0"),
+            DeclareLaunchArgument("pct_stair_gait_udp_enabled", default_value="false"),
+            DeclareLaunchArgument("pct_stair_gait_udp_ip", default_value="10.21.31.103"),
+            DeclareLaunchArgument("pct_stair_gait_udp_port", default_value="30000"),
+            DeclareLaunchArgument("pct_stair_gait_require_stationary", default_value="true"),
+            DeclareLaunchArgument("pct_stair_gait_stationary_linear_threshold", default_value="0.03"),
+            DeclareLaunchArgument("pct_stair_gait_stationary_angular_threshold", default_value="0.05"),
+            DeclareLaunchArgument("pct_stair_gait_stationary_hold_time", default_value="0.5"),
+            DeclareLaunchArgument("pct_stair_gait_switch_cooldown", default_value="3.0"),
+            DeclareLaunchArgument("pct_stair_gait_pause_nav_cmd_enabled", default_value="true"),
+            DeclareLaunchArgument("pct_stair_gait_pause_nav_cmd_topic", default_value="/stair_gait_pause_nav_cmd"),
+            DeclareLaunchArgument("pct_stair_gait_pause_before_switch_time", default_value="0.6"),
+            DeclareLaunchArgument("pct_stair_gait_pause_after_switch_time", default_value="1.0"),
+            DeclareLaunchArgument("pct_flat_gait_param", default_value="4097"),
+            DeclareLaunchArgument("pct_stair_up_gait_param", default_value="4097"),
+            DeclareLaunchArgument("pct_stair_down_gait_param", default_value="4099"),
             DeclareLaunchArgument(
                 "rl_python_executable",
                 default_value=PathJoinSubstitution(
@@ -329,5 +508,6 @@ def generate_launch_description():
             nav2_group,
             pct_planner_group,
             external_nav_group,
+            stair_gait_group,
         ]
     )
