@@ -39,9 +39,8 @@ find_package(PCL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED COMPONENTS filesystem system)
 
-# Use the Open3D build installed for this robot. This is a copied package in
-# m20_ws; the original luckrobot source is left untouched.
-set(Open3D_DIR "/home/orin/drivers/Open3D/install/lib/cmake/Open3D")
+# Use the local Open3D C++ install for this workstation.
+set(Open3D_DIR "/home/ubuntu/xlab/third_party/Open3D/install/lib/cmake/Open3D" CACHE PATH "Open3D CMake package directory")
 
 # set(Open3D_DIR "/home/unitree/open3d141_arm/open3d141/lib/cmake/Open3D")
 find_package(Open3D REQUIRED)
@@ -159,13 +158,14 @@ install(TARGETS
         DESTINATION lib/${PROJECT_NAME}
 )
 
-# Install directories
-install(DIRECTORY
-        launch
-        config
-        rviz_cfg
-        DESTINATION share/${PROJECT_NAME}/
-)
+# Install optional resource directories if they are present in this checkout.
+foreach(resource_dir launch config rviz_cfg)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${resource_dir}")
+                install(DIRECTORY ${resource_dir}
+                        DESTINATION share/${PROJECT_NAME}/
+                )
+        endif()
+endforeach()
 
 # Install include directory
 install(DIRECTORY include/

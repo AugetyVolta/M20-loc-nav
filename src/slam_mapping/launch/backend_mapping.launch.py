@@ -64,7 +64,7 @@ def generate_launch_description():
         executable='alaserPGO',
         name='alaserPGO',
         output='screen',
-        additional_env={'LD_PRELOAD': '/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0'},
+        additional_env={},
         parameters=parameters + [{'use_sim_time': LaunchConfiguration('use_sim_time')}],
         remappings=[
             ('/velodyne_points', '/velodyne_points'),

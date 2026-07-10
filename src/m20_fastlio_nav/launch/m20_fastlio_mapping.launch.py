@@ -26,7 +26,9 @@ BODY_TO_BASE_LINK = [
     "0.01403",
 ]
 
-LIBUSB_PRELOAD = {"LD_PRELOAD": "/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0"}
+# The Orin deployment used LD_PRELOAD to work around an MVS/libusb conflict.
+# Keep it disabled by default on the local x86_64 workstation.
+LIBUSB_PRELOAD = {}
 
 
 def generate_launch_description():
@@ -125,11 +127,15 @@ def generate_launch_description():
             DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument(
                 "map_pcd",
+<<<<<<< Updated upstream
                 default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_raw.pcd",
+=======
+                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map.pcd",
+>>>>>>> Stashed changes
             ),
             DeclareLaunchArgument(
                 "map_save_dir",
-                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/",
+                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/",
                 description="Directory where slam_mapping writes global_map.pcd and sc_database.txt.",
             ),
             livox_driver,

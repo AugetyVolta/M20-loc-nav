@@ -6,7 +6,6 @@
   <maintainer email="orin@example.com">orin</maintainer>
   <license>BSD-3-Clause</license>
 
-  <buildtool_depend>ament_python</buildtool_depend>
 
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>fast_lio_map</exec_depend>

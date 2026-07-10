@@ -16,8 +16,8 @@
 #include <opencv2/core/eigen.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
-// ROS2 Humble: 使用新的 cv_bridge 头文件
-#include <cv_bridge/cv_bridge.h>
+// ROS2 Jazzy: cv_bridge installs the C++ header as .hpp.
+#include <cv_bridge/cv_bridge.hpp>
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
