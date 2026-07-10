@@ -1,0 +1,2 @@
+# Keep NumPy 1.26/SciPy 1.11 compatibility in the ROS Jazzy Python 3.12 venv.
+cupy-cuda12x==13.6.0

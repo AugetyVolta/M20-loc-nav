@@ -2,7 +2,7 @@ pct_tomography_node:
   ros__parameters:
     pct_root: ""
     scene_name: "Building"
-    pcd_file: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd"
+    pcd_file: "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/global_map.pcd"
     output_tomogram_name: "m20_3d_map"
     map_frame: "map"
     publish_visualization: true

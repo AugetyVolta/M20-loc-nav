@@ -7,6 +7,11 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
+from pct_planner_ros2.pct_launch_env import (
+    DEFAULT_VENV_SITE,
+    cuda_library_path_substitutions,
+)
+
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
@@ -74,7 +79,7 @@ def generate_launch_description():
         "/planner/scripts:",
         EnvironmentVariable("PYTHONPATH", default_value=""),
     ]
-    pct_library_paths = [
+    pct_library_paths = cuda_library_path_substitutions(pct_venv_site) + [
         pct_root,
         "/planner/lib/3rdparty/gtsam-4.1.1/install/lib:",
         pct_root,
@@ -261,22 +266,13 @@ def generate_launch_description():
             DeclareLaunchArgument("autostart", default_value="true"),
             DeclareLaunchArgument("start_livox", default_value="false"),
             DeclareLaunchArgument(
-<<<<<<< Updated upstream
                 "fastlio_frontend",
                 default_value="fast_lio",
                 description="Fast-LIO frontend package for A/B testing: fast_lio_map or fast_lio.",
             ),
             DeclareLaunchArgument(
                 "map_pcd",
-                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd",
-=======
-                "map_pcd",
                 default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map_leveled.pcd",
-            ),
-            DeclareLaunchArgument(
-                "map",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_2d_map.yaml",
->>>>>>> Stashed changes
             ),
             DeclareLaunchArgument(
                 "params_file",
@@ -306,7 +302,7 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_root", default_value=default_pct_root),
             DeclareLaunchArgument(
                 "pct_venv_site",
-                default_value="/home/orin/venv/m20_nav_cupy/lib/python3.10/site-packages",
+                default_value=DEFAULT_VENV_SITE,
             ),
             DeclareLaunchArgument("pct_tomogram_file", default_value="m20_3d_map"),
             DeclareLaunchArgument("pct_start_source", default_value="tf"),

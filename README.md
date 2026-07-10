@@ -197,6 +197,31 @@ source ./source_m20_nav.sh
 ros2 launch pct_planner_ros2 m20_tomography_rviz.launch.py
 ```
 
+Tomography 参数来自：
+
+```text
+src/pct_planner_ros2/config/tomography.yaml
+```
+
+当前默认输入地图为：
+
+```text
+/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/global_map.pcd
+```
+
+由 `pcd_file` 参数控制。`output_tomogram_name` 默认是 `m20_3d_map`，生成文件
+保存在运行时 `pct_root/rsc/tomogram/` 下。使用默认 launch 时，完整路径为：
+
+```text
+/home/ubuntu/xlab/M20-loc-nav/install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle
+```
+
+输出文件名规则为：
+
+```text
+<pct_root>/rsc/tomogram/<output_tomogram_name>.pickle
+```
+
 启动 PCT 全局规划，带 PCT 自己的 RViz：
 
 ```bash
@@ -457,6 +482,111 @@ ros2 topic echo /NAV_CMD --once
 
 如果 `/subgoal` 有输出但 `/local_path` 没有，优先检查 `/scan`、RL checkpoint 和 Python 环境。
 如果 `/local_path` 有输出但机器人不动，检查 DWB lifecycle、`/cmd_vel` 和 `/NAV_CMD`。
+
+## 常见启动报错与解决
+
+### `Package 'pct_planner_ros2' not found`
+
+典型报错：
+
+```text
+Package 'pct_planner_ros2' not found
+```
+
+源码包位于 `src/pct_planner_ros2`，但只有源码存在还不够；它必须被
+`colcon` 构建到 `install/pct_planner_ros2`，并且当前终端必须在构建后重新
+加载工作区环境。
+
+先确认源码包能够被 `colcon` 识别：
+
+```bash
+cd /home/ubuntu/xlab/M20-loc-nav
+colcon list | grep '^pct_planner_ros2'
+```
+
+单独构建 PCT 包：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/xlab/liv_ws/install/setup.bash
+
+colcon build --symlink-install --packages-select pct_planner_ros2
+```
+
+构建完成后，必须在执行 launch 的同一个终端重新 source。已经打开的终端不会
+自动刷新 `AMENT_PREFIX_PATH`：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/xlab/liv_ws/install/setup.bash
+source ~/xlab/M20-loc-nav/install/setup.bash
+```
+
+验证包和可执行入口：
+
+```bash
+ros2 pkg prefix pct_planner_ros2
+ros2 pkg executables pct_planner_ros2
+```
+
+正常情况下，第一条命令应输出：
+
+```text
+/home/ubuntu/xlab/M20-loc-nav/install/pct_planner_ros2
+```
+
+随后再启动：
+
+```bash
+ros2 launch pct_planner_ros2 m20_tomography_rviz.launch.py
+ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py
+```
+
+如果报错中的 `searching:` 路径列表不包含
+`/home/ubuntu/xlab/M20-loc-nav/install/pct_planner_ros2`，说明当前终端仍在
+使用构建前的环境，需要再次执行上面的三个 `source` 命令。
+
+### `ModuleNotFoundError: No module named 'cupy'`
+
+PCT tomography 使用 CuPy 在 NVIDIA GPU 上计算。ROS Jazzy 节点运行在项目的
+Python 3.12 环境中，安装兼容当前 NumPy/SciPy 的固定版本：
+
+```bash
+cd /home/ubuntu/xlab/M20-loc-nav
+
+.venv/m20_nav_jazzy/bin/python -m pip install \
+  -r src/pct_planner_ros2/requirements-cupy.txt
+```
+
+当前固定版本为 `cupy-cuda12x==13.6.0`。不要直接安装最新 CuPy 14.x，因为它
+会把 NumPy 1.26 升级到 2.x，可能破坏当前 SciPy、Open3D 和 ROS Python 环境。
+
+安装后重新构建并加载环境：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/xlab/liv_ws/install/setup.bash
+
+colcon build --symlink-install --packages-select pct_planner_ros2 m20_fastlio_nav
+source ~/xlab/M20-loc-nav/install/setup.bash
+```
+
+PCT launch 会自动把 `.venv/m20_nav_jazzy` 的 site-packages 和
+`site-packages/nvidia/*/lib` 加入 `PYTHONPATH`、`LD_LIBRARY_PATH`，无需手动
+导出 `libnvrtc.so.12` 路径。
+
+验证 CuPy：
+
+```bash
+CUDA_LIBS="$(find .venv/m20_nav_jazzy/lib/python3.12/site-packages/nvidia \
+  -type d -name lib -printf '%p:')"
+
+LD_LIBRARY_PATH="${CUDA_LIBS}${LD_LIBRARY_PATH:-}" \
+  .venv/m20_nav_jazzy/bin/python -c \
+  "import cupy as cp; x=cp.arange(5); print(cp.__version__, int(cp.asnumpy(x.sum())))"
+```
+
+正常输出应包含 CuPy 版本和求和结果 `10`。
 
 ## Jie/OctoMap 归档
 

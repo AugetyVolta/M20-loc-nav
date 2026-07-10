@@ -68,7 +68,7 @@ except Exception:
     TrackedPersons = None
 
 import tf2_ros
-from tf_transformations import quaternion_matrix
+from move.transformations import quaternion_matrix
 
 import torch
 from gymnasium import spaces

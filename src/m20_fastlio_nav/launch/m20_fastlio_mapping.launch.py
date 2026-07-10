@@ -127,11 +127,7 @@ def generate_launch_description():
             DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument(
                 "map_pcd",
-<<<<<<< Updated upstream
-                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_raw.pcd",
-=======
                 default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map.pcd",
->>>>>>> Stashed changes
             ),
             DeclareLaunchArgument(
                 "map_save_dir",

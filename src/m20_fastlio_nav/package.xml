@@ -28,6 +28,7 @@
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>nav2_velocity_smoother</exec_depend>
   <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>pct_planner_ros2</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
 
   <export>

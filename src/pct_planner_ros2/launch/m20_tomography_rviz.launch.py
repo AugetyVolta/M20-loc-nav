@@ -6,6 +6,11 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+from pct_planner_ros2.pct_launch_env import (
+    DEFAULT_VENV_SITE,
+    cuda_library_path_substitutions,
+)
+
 
 def generate_launch_description():
     pkg_share = FindPackageShare("pct_planner_ros2")
@@ -24,13 +29,17 @@ def generate_launch_description():
         "/tomography/scripts:",
         os.environ.get("PYTHONPATH", ""),
     ]
+    library_paths = cuda_library_path_substitutions(venv_site) + [
+        os.environ.get("LD_LIBRARY_PATH", "")
+    ]
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("pct_root", default_value=default_pct_root),
-            DeclareLaunchArgument("venv_site", default_value="/home/orin/venv/m20_nav_cupy/lib/python3.10/site-packages"),
+            DeclareLaunchArgument("venv_site", default_value=DEFAULT_VENV_SITE),
             SetEnvironmentVariable("PCT_PLANNER_ROOT", pct_root),
             SetEnvironmentVariable("PYTHONPATH", python_paths),
+            SetEnvironmentVariable("LD_LIBRARY_PATH", library_paths),
             Node(
                 package="pct_planner_ros2",
                 executable="pct_tomography_node",

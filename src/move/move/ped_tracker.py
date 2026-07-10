@@ -31,7 +31,7 @@ from cv_bridge import CvBridge
 import cv2
 
 import tf2_ros
-from tf_transformations import quaternion_matrix, quaternion_from_euler
+from move.transformations import quaternion_from_euler, quaternion_matrix
 from message_filters import TimeSynchronizer, Subscriber, ApproximateTimeSynchronizer  # <<< 严格同步
 
 from ultralytics import YOLO

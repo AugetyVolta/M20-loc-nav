@@ -91,6 +91,127 @@ def grid_points_xyzi(resolution, dim_x, dim_y):
     return index_proto, point_proto
 
 
+def _pcd_scalar_dtype(type_code, size):
+    dtype_codes = {
+        ("F", 4): "<f4",
+        ("F", 8): "<f8",
+        ("I", 1): "<i1",
+        ("I", 2): "<i2",
+        ("I", 4): "<i4",
+        ("I", 8): "<i8",
+        ("U", 1): "<u1",
+        ("U", 2): "<u2",
+        ("U", 4): "<u4",
+        ("U", 8): "<u8",
+    }
+    try:
+        return np.dtype(dtype_codes[(type_code.upper(), int(size))])
+    except KeyError as exc:
+        raise RuntimeError(
+            f"Unsupported PCD field type: TYPE={type_code}, SIZE={size}"
+        ) from exc
+
+
+def read_pcd_xyz(pcd_file):
+    path = Path(pcd_file)
+    if not path.is_file():
+        raise FileNotFoundError(f"PCD file not found: {path}")
+
+    with path.open("rb") as stream:
+        header = {}
+        while True:
+            raw_line = stream.readline()
+            if not raw_line:
+                raise RuntimeError(f"PCD header is incomplete: {path}")
+            try:
+                line = raw_line.decode("ascii").strip()
+            except UnicodeDecodeError as exc:
+                raise RuntimeError(f"PCD header is not valid ASCII: {path}") from exc
+            if not line or line.startswith("#"):
+                continue
+
+            key, *values = line.split()
+            key = key.upper()
+            header[key] = values
+            if key == "DATA":
+                break
+
+        fields = header.get("FIELDS") or header.get("FIELD")
+        if not fields:
+            raise RuntimeError(f"PCD header has no FIELDS entry: {path}")
+        field_names = [name.lower() for name in fields]
+        for required_name in ("x", "y", "z"):
+            if required_name not in field_names:
+                raise RuntimeError(
+                    f"PCD file is missing required field '{required_name}': {path}"
+                )
+
+        sizes = [int(value) for value in header.get("SIZE", [])]
+        types = header.get("TYPE", [])
+        counts = [int(value) for value in header.get("COUNT", ["1"] * len(fields))]
+        if not (len(fields) == len(sizes) == len(types) == len(counts)):
+            raise RuntimeError(f"PCD field metadata lengths do not match: {path}")
+
+        point_count = int(
+            (header.get("POINTS") or [
+                int(header.get("WIDTH", ["0"])[0])
+                * int(header.get("HEIGHT", ["1"])[0])
+            ])[0]
+        )
+        data_format = header["DATA"][0].lower()
+
+        if data_format == "binary":
+            dtype_fields = []
+            for name, size, type_code, count in zip(fields, sizes, types, counts):
+                scalar_dtype = _pcd_scalar_dtype(type_code, size)
+                if count == 1:
+                    dtype_fields.append((name, scalar_dtype))
+                else:
+                    dtype_fields.append((name, scalar_dtype, (count,)))
+            records = np.fromfile(stream, dtype=np.dtype(dtype_fields), count=point_count)
+            if records.shape[0] != point_count:
+                raise RuntimeError(
+                    f"PCD binary payload is truncated: expected {point_count} points, "
+                    f"read {records.shape[0]} from {path}"
+                )
+            field_lookup = {name.lower(): name for name in fields}
+            points = np.column_stack(
+                [
+                    records[field_lookup["x"]],
+                    records[field_lookup["y"]],
+                    records[field_lookup["z"]],
+                ]
+            )
+        elif data_format == "ascii":
+            values = np.loadtxt(stream, dtype=np.float64, ndmin=2)
+            field_offsets = {}
+            offset = 0
+            for name, count in zip(field_names, counts):
+                field_offsets[name] = offset
+                offset += count
+            points = values[
+                :,
+                [
+                    field_offsets["x"],
+                    field_offsets["y"],
+                    field_offsets["z"],
+                ],
+            ]
+        elif data_format == "binary_compressed":
+            raise RuntimeError(
+                "PCD DATA binary_compressed is not supported by the built-in loader. "
+                "Convert the map to DATA binary or DATA ascii first."
+            )
+        else:
+            raise RuntimeError(f"Unsupported PCD DATA format '{data_format}': {path}")
+
+    points = np.asarray(points, dtype=np.float32)
+    points = points[np.isfinite(points).all(axis=1)]
+    if points.size == 0:
+        raise RuntimeError(f"PCD file has no finite XYZ points: {path}")
+    return points
+
+
 class PctTomographyNode(Node):
     def __init__(self):
         super().__init__("pct_tomography_node")
@@ -192,13 +313,7 @@ class PctTomographyNode(Node):
             self._publish_tomogram(layers_g, layers_t)
 
     def _load_pcd(self, pcd_file):
-        import open3d as o3d
-
-        points = np.asarray(o3d.io.read_point_cloud(pcd_file).points).astype(np.float32)
-        if points.size == 0:
-            raise RuntimeError(f"PCD file has no points: {pcd_file}")
-        if points.shape[1] > 3:
-            points = points[:, :3]
+        points = read_pcd_xyz(pcd_file)
 
         self.points_max = np.max(points, axis=0)
         self.points_min = np.min(points, axis=0)

@@ -47,9 +47,8 @@ from std_msgs.msg import Header
 
 from tf2_ros import Buffer, TransformListener
 
-# tf transformations (Euler/Quaternion ops)
-# Package name is 'tf_transformations' in ROS 2 (python lib).
-from tf_transformations import (
+# Quaternion helpers use the ROS [x, y, z, w] convention.
+from move.transformations import (
     euler_from_quaternion,
     quaternion_matrix,
     quaternion_multiply,

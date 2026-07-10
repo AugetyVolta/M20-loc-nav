@@ -39,12 +39,8 @@ def generate_launch_description():
         [FindPackageShare("m20_fastlio_nav"), "config", "open3d_localization_m20.yaml"]
     )
 
-<<<<<<< Updated upstream
-    open3d_lib_path = "/home/orin/drivers/Open3D/install/lib"
-=======
     open3d_lib_path = "/home/ubuntu/xlab/third_party/Open3D/install/lib"
 
->>>>>>> Stashed changes
     livox_driver = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
@@ -238,11 +234,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "map_pcd",
-<<<<<<< Updated upstream
-                default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd",
-=======
                 default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map_leveled.pcd",
->>>>>>> Stashed changes
             ),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("start_scan", default_value="true"),

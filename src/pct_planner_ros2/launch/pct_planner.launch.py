@@ -7,6 +7,11 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
+from pct_planner_ros2.pct_launch_env import (
+    DEFAULT_VENV_SITE,
+    cuda_library_path_substitutions,
+)
+
 
 def generate_launch_description():
     pkg_share = FindPackageShare("pct_planner_ros2")
@@ -27,7 +32,7 @@ def generate_launch_description():
         "/planner/scripts:",
         os.environ.get("PYTHONPATH", ""),
     ]
-    library_paths = [
+    library_paths = cuda_library_path_substitutions(venv_site) + [
         pct_root,
         "/planner/lib/3rdparty/gtsam-4.1.1/install/lib:",
         pct_root,
@@ -42,7 +47,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("pct_root", default_value=default_pct_root),
-            DeclareLaunchArgument("venv_site", default_value="/home/orin/venv/m20_nav_cupy/lib/python3.10/site-packages"),
+            DeclareLaunchArgument("venv_site", default_value=DEFAULT_VENV_SITE),
             DeclareLaunchArgument("tomogram_file", default_value="m20_3d_map"),
             DeclareLaunchArgument("frame_id", default_value="map"),
             DeclareLaunchArgument("use_sim_time", default_value="false"),

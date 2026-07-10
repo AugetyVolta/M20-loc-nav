@@ -7,7 +7,12 @@ try:
 except Exception:  # pragma: no cover - usable from source before ROS env is sourced.
     get_package_share_directory = None
 
-DEFAULT_VENV = Path(os.environ.get("PCT_VENV", "/home/orin/venv/m20_nav_cupy"))
+DEFAULT_VENV = Path(
+    os.environ.get(
+        "PCT_VENV",
+        "/home/ubuntu/xlab/M20-loc-nav/.venv/m20_nav_jazzy",
+    )
+)
 
 
 def expand_path(path_value):
@@ -46,7 +51,8 @@ def default_pct_root():
 
 
 def default_venv_site_packages():
-    return str(DEFAULT_VENV / "lib/python3.10/site-packages")
+    python_dir = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return str(DEFAULT_VENV / "lib" / python_dir / "site-packages")
 
 
 def tomogram_stem(name):
