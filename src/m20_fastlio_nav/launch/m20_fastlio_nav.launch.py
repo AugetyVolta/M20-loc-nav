@@ -72,11 +72,11 @@ def generate_launch_description():
         pct_venv_site,
         ":",
         pct_root,
-        "/planner/lib:",
+        "/planner/scripts:",
         pct_root,
         "/planner:",
         pct_root,
-        "/planner/scripts:",
+        "/planner/lib:",
         EnvironmentVariable("PYTHONPATH", default_value=""),
     ]
     pct_library_paths = cuda_library_path_substitutions(pct_venv_site) + [
@@ -272,7 +272,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "map_pcd",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map_leveled.pcd",
+                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd",
             ),
             DeclareLaunchArgument(
                 "params_file",

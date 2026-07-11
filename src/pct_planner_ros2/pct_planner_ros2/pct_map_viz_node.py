@@ -13,12 +13,80 @@ from .pct_paths import default_pct_root, expand_path, tomogram_stem
 from .pct_tomography_node import POINT_FIELDS_XYZI, grid_points_xyzi
 
 
+def _read_pcd_xyz32(pcd_path: Path) -> np.ndarray:
+    with pcd_path.open("rb") as handle:
+        header_lines = []
+        while True:
+            line = handle.readline()
+            if not line:
+                raise RuntimeError(f"PCD header is incomplete: {pcd_path}")
+            text = line.decode("utf-8", errors="replace").strip()
+            header_lines.append(text)
+            if text.startswith("DATA"):
+                data_offset = handle.tell()
+                break
+
+    header = {}
+    for line in header_lines:
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        header[parts[0].upper()] = parts[1:]
+
+    fields = header.get("FIELDS", [])
+    if not {"x", "y", "z"}.issubset(fields):
+        raise RuntimeError(f"PCD must contain x/y/z fields: {pcd_path}")
+    data_kind = header.get("DATA", [""])[0].lower()
+    if data_kind not in {"ascii", "binary"}:
+        raise RuntimeError(f"Unsupported PCD DATA type '{data_kind}' in {pcd_path}")
+
+    if data_kind == "ascii":
+        raw = np.loadtxt(str(pcd_path), comments="#", skiprows=len(header_lines), dtype=np.float32)
+        if raw.ndim == 1:
+            raw = raw.reshape(1, -1)
+        return raw[:, [fields.index("x"), fields.index("y"), fields.index("z")]].astype(np.float32)
+
+    sizes = [int(v) for v in header.get("SIZE", [])]
+    types = header.get("TYPE", [])
+    counts = [int(v) for v in header.get("COUNT", ["1"] * len(fields))]
+    point_count = int(header.get("POINTS", header.get("WIDTH", ["0"]))[0])
+    if len(sizes) != len(fields) or len(types) != len(fields) or len(counts) != len(fields):
+        raise RuntimeError(f"PCD binary field metadata is incomplete: {pcd_path}")
+
+    dtype_fields = []
+    type_map = {
+        ("F", 4): "<f4",
+        ("F", 8): "<f8",
+        ("I", 1): "<i1",
+        ("I", 2): "<i2",
+        ("I", 4): "<i4",
+        ("I", 8): "<i8",
+        ("U", 1): "<u1",
+        ("U", 2): "<u2",
+        ("U", 4): "<u4",
+        ("U", 8): "<u8",
+    }
+    for field, field_type, size, count in zip(fields, types, sizes, counts):
+        dtype = type_map.get((field_type.upper(), size))
+        if dtype is None:
+            raise RuntimeError(f"Unsupported PCD field type {field_type}{size} for {field}: {pcd_path}")
+        dtype_fields.append((field, dtype, (count,) if count > 1 else ()))
+
+    structured_dtype = np.dtype(dtype_fields)
+    with pcd_path.open("rb") as handle:
+        handle.seek(data_offset)
+        cloud = np.fromfile(handle, dtype=structured_dtype, count=point_count)
+    if cloud.size == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    return np.column_stack((cloud["x"], cloud["y"], cloud["z"])).astype(np.float32)
+
+
 class PctMapVizNode(Node):
     def __init__(self):
         super().__init__("pct_map_viz_node")
 
         self.declare_parameter("pct_root", default_pct_root())
-        self.declare_parameter("pcd_file", "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd")
+        self.declare_parameter("pcd_file", "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd")
         self.declare_parameter("tomogram_file", "m20_3d_map")
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("pointcloud_topic", "/global_points")
@@ -71,10 +139,16 @@ class PctMapVizNode(Node):
         return msg
 
     def _make_pcd_msg(self):
-        import open3d as o3d
-
         pcd_path = expand_path(self.get_parameter("pcd_file").value)
-        points = np.asarray(o3d.io.read_point_cloud(str(pcd_path)).points).astype(np.float32)
+        try:
+            import open3d as o3d
+
+            points = np.asarray(o3d.io.read_point_cloud(str(pcd_path)).points).astype(np.float32)
+        except ModuleNotFoundError:
+            points = _read_pcd_xyz32(pcd_path)
+            self.get_logger().warn(
+                "open3d is not installed; loaded PCD with the built-in x/y/z reader"
+            )
         if points.size == 0:
             raise RuntimeError(f"PCD file has no points: {pcd_path}")
         points = points[:, :3]

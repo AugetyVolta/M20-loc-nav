@@ -18,6 +18,8 @@
 #include <cmath>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <functional>
 #include <mutex>
 #include <thread>
 // #include <pcl/common/transforms.h>
@@ -134,6 +136,8 @@ public:
 
     void ReinitializeLocalization();
 
+    void PublishStatusHeartbeat();
+
     bool WallGapResetNeeded(std::chrono::steady_clock::time_point &last_wall_time,
                             bool &have_wall_time,
                             const std::string &reason,
@@ -218,6 +222,7 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pub_localization_3d_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_localization_3d_confidence_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_localization_3d_delay_ms_;
+    rclcpp::TimerBase::SharedPtr status_timer_;
 
     geometry_msgs::msg::PoseStamped localization_3d_;
     std_msgs::msg::Float32 localization_3d_confidence_;
@@ -249,6 +254,9 @@ private:
     /// @brief 初始化成功标志
     std::atomic_bool loc_initialized_{false};
     bool reinit_requested_ = false;
+    std::atomic<uint64_t> odom_msg_count_{0};
+    std::atomic<uint64_t> scan_msg_count_{0};
+    std::atomic<size_t> last_scan_points_{0};
 
     /// @brief 当前定位overlap，confidence
     std::atomic<double> loc_fitness_;
@@ -321,6 +329,9 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
     pub_localization_3d_delay_ms_ = this->create_publisher<std_msgs::msg::Float32>("/localization_3d_delay_ms", 1);
     localization_3d_confidence_.data = 0.0f;
     localization_3d_delay_ms_.data = 0.0f;
+    status_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(500),
+        std::bind(&GloabalLocalization::PublishStatusHeartbeat, this));
 
     loc_frequence_ = 2.0; //
     loc_fitness_.store(0.0);
@@ -481,6 +492,24 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
     static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
     StartLoc();
+}
+
+void GloabalLocalization::PublishStatusHeartbeat()
+{
+    const double confidence = loc_fitness_.load();
+    localization_3d_confidence_.data = static_cast<float>(confidence);
+    pub_localization_3d_confidence_->publish(localization_3d_confidence_);
+
+    RCLCPP_INFO_THROTTLE(
+        this->get_logger(),
+        *this->get_clock(),
+        2000,
+        "Open3D status: initialized=%s, confidence=%.3f, odom_msgs=%lu, scan_msgs=%lu, last_scan_points=%zu",
+        loc_initialized_.load() ? "true" : "false",
+        confidence,
+        static_cast<unsigned long>(odom_msg_count_.load()),
+        static_cast<unsigned long>(scan_msg_count_.load()),
+        last_scan_points_.load());
 }
 
 GloabalLocalization::~GloabalLocalization()
@@ -658,6 +687,7 @@ bool GloabalLocalization::WallGapResetNeeded(std::chrono::steady_clock::time_poi
 void GloabalLocalization::CallbackBaselink2Odom(const nav_msgs::msg::Odometry::SharedPtr baselink2odom)
 {
     auto odom_cbk_s = std::chrono::high_resolution_clock::now();
+    odom_msg_count_.fetch_add(1);
     if (WallGapResetNeeded(last_odom_wall_time_, have_odom_wall_time_,
                            "/Odometry_loc stream wall-time gap / possible rosbag switch",
                            true))
@@ -866,6 +896,13 @@ void GloabalLocalization::CallbackScan(
     // 单帧转换为open3d，几百us
     sensor_msgs::msg::PointCloud2::ConstSharedPtr const_scan_ptr = scan_in_baselink;
     open3d_conversions::rosToOpen3d(const_scan_ptr, pcd_recieved);
+    scan_msg_count_.fetch_add(1);
+    last_scan_points_.store(pcd_recieved.points_.size());
+    if (pcd_recieved.IsEmpty())
+    {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "Received empty /cloud_registered_1 frame");
+    }
     // 入队列
     // pcd_recieved
     std::lock_guard<std::mutex> scan_guard(lock_scan_);
@@ -999,6 +1036,7 @@ void GloabalLocalization::LocalizationInitialize()
             auto eva_result_coarse = open3d::pipelines::registration::EvaluateRegistration(*source, *target, voxelsize_fine_ * 3);
             open3d::utility::LogInfo("eva fitness: {}", eva_result_coarse.fitness_);
             fitness_initial = eva_result_coarse.fitness_;
+            loc_fitness_.store(fitness_initial);
             *pcd_scan2map = *source;
 
             auto loc_e = std::chrono::high_resolution_clock::now(); /// 结束定位计时
@@ -1015,6 +1053,9 @@ void GloabalLocalization::LocalizationInitialize()
                 /// 连续两次定位成功后定位初始化成功
                 if (count_success >= 2)
                 {
+                    RCLCPP_WARN(this->get_logger(),
+                                "Open3D localization initialize success: fitness %.3f above threshold %.3f",
+                                fitness_initial, threshold_fitness_init_);
                     break;
                 }
             }

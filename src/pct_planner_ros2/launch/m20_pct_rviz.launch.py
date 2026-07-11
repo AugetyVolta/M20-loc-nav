@@ -26,11 +26,11 @@ def generate_launch_description():
         venv_site,
         ":",
         pct_root,
-        "/planner/lib:",
+        "/planner/scripts:",
         pct_root,
         "/planner:",
         pct_root,
-        "/planner/scripts:",
+        "/planner/lib:",
         os.environ.get("PYTHONPATH", ""),
     ]
     library_paths = cuda_library_path_substitutions(venv_site) + [
@@ -52,7 +52,7 @@ def generate_launch_description():
             DeclareLaunchArgument("tomogram_file", default_value="m20_3d_map"),
             DeclareLaunchArgument(
                 "pcd_file",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/global_map.pcd",
+                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("start_source", default_value="tf"),
@@ -71,6 +71,8 @@ def generate_launch_description():
             DeclareLaunchArgument("global_path_perception_cost_scaling_factor", default_value="5.0"),
             DeclareLaunchArgument("global_path_perception_persistence", default_value="1.0"),
             DeclareLaunchArgument("tomogram_visual_cost_max", default_value="45.0"),
+            DeclareLaunchArgument("publish_pcd", default_value="true"),
+            DeclareLaunchArgument("publish_tomogram", default_value="true"),
             DeclareLaunchArgument("launch_rviz", default_value="true"),
             SetEnvironmentVariable("PCT_PLANNER_ROOT", pct_root),
             SetEnvironmentVariable("PYTHONPATH", python_paths),
@@ -146,6 +148,11 @@ def generate_launch_description():
                         "pcd_file": LaunchConfiguration("pcd_file"),
                         "tomogram_file": LaunchConfiguration("tomogram_file"),
                         "map_frame": "map",
+                        "publish_pcd": ParameterValue(LaunchConfiguration("publish_pcd"), value_type=bool),
+                        "publish_tomogram": ParameterValue(
+                            LaunchConfiguration("publish_tomogram"),
+                            value_type=bool,
+                        ),
                         "tomogram_visual_cost_max": ParameterValue(
                             LaunchConfiguration("tomogram_visual_cost_max"),
                             value_type=float,

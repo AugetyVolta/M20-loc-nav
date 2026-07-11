@@ -74,6 +74,12 @@ def generate_launch_description():
         name="m20_base_to_motion_link",
         arguments=["0", "0", "0", "0", "0", "0", "1", "base_link", "motion_link"],
     )
+    map_anchor = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="m20_map_anchor",
+        arguments=["0", "0", "0", "0", "0", "0", "1", "map", "map_anchor"],
+    )
 
     fast_lio_mapping_frontend = Node(
         package=fastlio_frontend,
@@ -234,7 +240,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "map_pcd",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map_leveled.pcd",
+                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd",
             ),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("start_scan", default_value="true"),
@@ -251,6 +257,7 @@ def generate_launch_description():
             ),
             livox_driver,
             odom_to_camera_init,
+            map_anchor,
             base_to_livox,
             base_to_imu,
             base_to_motion,

@@ -51,13 +51,13 @@ src/fast_lio_map/doc/
 
 # Generated map/debug outputs. Keep checked-in map YAML/PGM/PCD only when
 # intentionally added with `git add -f`.
-*.ply
-PCD/
-maps/fastlio/Scans/
-maps/fastlio/odom_poses.txt
-maps/fastlio/optimized_poses.txt
-maps/fastlio/times.txt
-maps/*
+#*.ply
+#PCD/
+#maps/fastlio/Scans/
+#maps/fastlio/odom_poses.txt
+#maps/fastlio/optimized_poses.txt
+#maps/fastlio/times.txt
+#maps/*
 
 # Old vendored PCT planner build/runtime outputs. Kept for branches that still
 # contain src/global_path_planning.

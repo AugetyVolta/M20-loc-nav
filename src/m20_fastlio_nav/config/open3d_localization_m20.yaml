@@ -1,10 +1,11 @@
 global_localization_node:
   ros__parameters:
-    path_map: "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map_leveled.pcd"
+    path_map: "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd"
 
-    # x, y, z, roll, pitch, yaw in degrees. You can still refine this from RViz
-    # with 2D Pose Estimate after the node starts.
-    initialpose: [0.000000, 0.000000, 0.000000, -1.252570, 24.985557, 1.283876]
+    # x, y, z, roll, pitch, yaw in degrees.
+    # m20_3d_map.pcd is already leveled, so the default startup pose should stay planar.
+    # Refine map -> base_link from RViz using 3D Initial Pose before playing the bag.
+    initialpose: [0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000]
 
     pcd_queue_maxsize: 10
     voxelsize_coarse: 0.15

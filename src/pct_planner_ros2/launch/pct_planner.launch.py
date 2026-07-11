@@ -25,11 +25,11 @@ def generate_launch_description():
         venv_site,
         ":",
         pct_root,
-        "/planner/lib:",
+        "/planner/scripts:",
         pct_root,
         "/planner:",
         pct_root,
-        "/planner/scripts:",
+        "/planner/lib:",
         os.environ.get("PYTHONPATH", ""),
     ]
     library_paths = cuda_library_path_substitutions(venv_site) + [

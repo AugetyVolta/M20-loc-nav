@@ -141,85 +141,234 @@ ros2 service call /save_pgo_map std_srvs/srv/Trigger {}
 
 ## 准备导航 PCD
 
-默认脚本优先读取 `maps/fastlio/global_map.pcd`，没有它时读取 `maps/fastlio/m20_map_raw.pcd`，输出 `maps/fastlio/m20_3d_map.pcd`。
-脚本会把实际用于旋平 PCD 的累计旋转同步写入
-`src/m20_fastlio_nav/config/open3d_localization_m20.yaml` 的 `initialpose` 后三项
-`roll, pitch, yaw`，让 Open3D 定位启动时先带上地图旋平角，而不是完全依赖 ICP 在线估计。
+这一节是**建图后的离线后处理**，不是启动导航。
 
-```bash
-cd /mnt/nvme/workspace/fast_lio_ws
-source ./source_m20_nav.sh
+Fast-LIO/PGO 保存出来的 `global_map.pcd` 是原始 3D 点云地图，可能存在轻微倾斜、离群点或高度基准不方便导航的问题。`prepare_3d_nav_map.py` 会把它整理成导航/定位更适合使用的 3D PCD：
 
-"${M20_NAV_CUPY_PYTHON}" \
-  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py
-```
+- 输入：默认优先读取 `maps/fastlio/global_map.pcd`，没有它时读取 `maps/fastlio/m20_map_raw.pcd`
+- 输出：默认写到 `maps/fastlio/m20_3d_map.pcd`
+- 处理：应用 MID360 外参粗旋平、RANSAC 地面平面微调、离群点过滤
+- 注意：输出仍然是 **3D PCD**，不是 2D 栅格地图
 
-如果只是试输出临时 PCD，不想修改 Open3D 定位配置，加：
-
-```bash
-"${M20_NAV_CUPY_PYTHON}" \
-  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
-  --output /tmp/m20_3d_map_check.pcd \
-  --no-update-open3d-initialpose
-```
-
-如果确认地面识别正确，再使用 `--ground-zero` 把地图高度归零：
-
-```bash
-source ./source_m20_nav.sh
-"${M20_NAV_CUPY_PYTHON}" \
-  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py --ground-zero
-```
-
-先试运行到临时文件：
-
-```bash
-"${M20_NAV_CUPY_PYTHON}" \
-  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
-  --ground-zero \
-  --output /tmp/m20_ground_zero_check.pcd
-```
-
-如果脚本提示 ground plane near vertical，说明当前点云姿态或地面选择不可靠，不要强行覆盖正式地图。
-
-## 启动 PCT Planner
-
-PCT planner 已放进本仓库，先 source 本仓库环境：
-
-```bash
-cd /mnt/nvme/workspace/fast_lio_ws
-source ./source_m20_nav.sh
-```
-
-生成或查看 tomogram：
-
-```bash
-ros2 launch pct_planner_ros2 m20_tomography_rviz.launch.py
-```
-
-Tomography 参数来自：
-
-```text
-src/pct_planner_ros2/config/tomography.yaml
-```
-
-当前默认输入地图为：
+你本机当前已有：
 
 ```text
 /home/ubuntu/xlab/M20-loc-nav/maps/fastlio/global_map.pcd
 ```
 
-由 `pcd_file` 参数控制。`output_tomogram_name` 默认是 `m20_3d_map`，生成文件
-保存在运行时 `pct_root/rsc/tomogram/` 下。使用默认 launch 时，完整路径为：
+本机运行脚本用这个 Python 环境，因为里面有 `open3d`：
+
+```bash
+cd /home/ubuntu/xlab/M20-loc-nav
+
+/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py
+```
+
+这会读取：
+
+```text
+maps/fastlio/global_map.pcd
+```
+
+并生成：
+
+```text
+maps/fastlio/m20_3d_map.pcd
+```
+
+如果只是先试跑，不想覆盖正式输出：
+
+```bash
+cd /home/ubuntu/xlab/M20-loc-nav
+
+/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
+  --output /tmp/m20_3d_map_check.pcd
+```
+
+如果你明确要指定输入地图：
+
+```bash
+/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
+  --input maps/fastlio/global_map.pcd \
+  --output maps/fastlio/m20_3d_map.pcd
+```
+
+如果只想改写/过滤 PCD，不做旋平：
+
+```bash
+/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
+  --skip-align \
+  --output /tmp/m20_3d_map_no_align_check.pcd
+```
+
+如果确认地面识别正确，再使用 `--ground-zero` 把拟合地面平移到 `z=0`。建议先输出到临时文件检查：
+
+```bash
+/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
+  --ground-zero \
+  --output /tmp/m20_ground_zero_check.pcd
+```
+
+确认没问题后再覆盖正式地图：
+
+```bash
+/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+  src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
+  --ground-zero \
+  --output maps/fastlio/m20_3d_map.pcd
+```
+
+如果脚本提示 ground plane near vertical，说明当前点云姿态或地面选择不可靠，不要强行覆盖正式地图。
+
+生成后快速确认：
+
+```bash
+ls -lh maps/fastlio/m20_3d_map.pcd
+head -10 maps/fastlio/m20_3d_map.pcd
+```
+
+如果后续导航要使用这个处理后的地图，启动时把 `map_pcd` 指向它：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  use_sim_time:=true \
+  map_pcd:=maps/fastlio/m20_3d_map.pcd \
+  rviz:=true
+```
+
+## 启动 PCT Planner
+
+PCT planner 已放进本仓库。本机路径和环境如下：
+
+```text
+workspace: /home/ubuntu/xlab/M20-loc-nav
+ROS:       /opt/ros/jazzy
+Livox:     /home/ubuntu/xlab/liv_ws/install
+PCT venv:  /home/ubuntu/xlab/M20-loc-nav/.venv/m20_nav_jazzy
+```
+
+每个新终端先加载环境：
+
+```bash
+cd /home/ubuntu/xlab/M20-loc-nav
+
+source /opt/ros/jazzy/setup.bash
+source /home/ubuntu/xlab/liv_ws/install/setup.bash
+source /home/ubuntu/xlab/M20-loc-nav/install/setup.bash
+```
+
+先确认 PCT 包已安装、CuPy 可用：
+
+```bash
+ros2 pkg prefix pct_planner_ros2
+ros2 pkg executables pct_planner_ros2
+
+CUDA_LIBS="$(find .venv/m20_nav_jazzy/lib/python3.12/site-packages/nvidia \
+  -type d -name lib -printf '%p:')"
+
+LD_LIBRARY_PATH="${CUDA_LIBS}${LD_LIBRARY_PATH:-}" \
+  .venv/m20_nav_jazzy/bin/python -c \
+  "import cupy as cp; x=cp.arange(5); print(cp.__version__, int(cp.asnumpy(x.sum())))"
+```
+
+### 生成或查看 tomogram
+
+Tomography 会把处理后的 3D 导航 PCD 转成 PCT planner 使用的 traversability tomogram。
+
+当前默认输入地图来自“准备导航 PCD”这一步的输出，而不是原始 `global_map.pcd`：
+
+```text
+/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd
+```
+
+链路是：
+
+```text
+global_map.pcd -> prepare_3d_nav_map.py -> m20_3d_map.pcd -> tomography -> m20_3d_map.pickle
+```
+
+参数文件是：
+
+```text
+src/pct_planner_ros2/config/tomography.yaml
+```
+
+关键参数：
+
+```yaml
+pcd_file: "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd"
+output_tomogram_name: "m20_3d_map"
+```
+
+启动 tomography 并打开 RViz：
+
+```bash
+ros2 launch pct_planner_ros2 m20_tomography_rviz.launch.py
+```
+
+只生成 tomogram，不启动 RViz：
+
+```bash
+ros2 launch pct_planner_ros2 tomography.launch.py
+```
+
+默认输出文件为：
 
 ```text
 /home/ubuntu/xlab/M20-loc-nav/install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle
 ```
 
-输出文件名规则为：
+输出文件名规则：
 
 ```text
 <pct_root>/rsc/tomogram/<output_tomogram_name>.pickle
+```
+
+生成后确认：
+
+```bash
+ls -lh install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle
+
+.venv/m20_nav_jazzy/bin/python - <<'PY'
+import pickle
+p = "install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle"
+d = pickle.load(open(p, "rb"))
+print("shape:", d["data"].shape)
+print("resolution:", d["resolution"])
+print("center:", d["center"])
+print("slice_h0:", d["slice_h0"])
+print("slice_dh:", d["slice_dh"])
+PY
+```
+
+如果修改了 `src/pct_planner_ros2/config/tomography.yaml`，需要重新构建，否则
+`ros2 launch` 仍会读取 install 里的旧 YAML：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /home/ubuntu/xlab/liv_ws/install/setup.bash
+
+colcon build --symlink-install --packages-select pct_planner_ros2
+source /home/ubuntu/xlab/M20-loc-nav/install/setup.bash
+```
+
+### 启动 PCT 全局规划
+
+PCT planner 默认读取：
+
+```text
+tomogram_file: m20_3d_map
+```
+
+也就是上面生成的：
+
+```text
+install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle
 ```
 
 启动 PCT 全局规划，带 PCT 自己的 RViz：
@@ -234,7 +383,8 @@ ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py
 ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py launch_rviz:=false
 ```
 
-如果要让 PCT 起点来自当前定位：
+默认 `start_source:=tf`，起点来自 `map -> base_link`。如果要让 PCT 起点来自
+当前定位里程计：
 
 ```bash
 ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py \
@@ -250,10 +400,33 @@ ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py \
   global_path_perception_scan_topic:=/scan
 ```
 
+如果要显式指定 tomogram：
+
+```bash
+ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py \
+  tomogram_file:=m20_3d_map \
+  launch_rviz:=true
+```
+
 PCT 规划成功后应发布：
 
 ```bash
 ros2 topic echo /pct_path --once
+```
+
+也可以手动发一个目标点测试：
+
+```bash
+ros2 topic pub --once /pct_goal_point geometry_msgs/msg/PointStamped \
+"{header: {frame_id: map}, point: {x: 5.0, y: 0.0, z: 0.5}}"
+```
+
+如果没有 `/pct_path` 输出，优先检查：
+
+```bash
+ros2 topic echo /tf --once
+ros2 run tf2_ros tf2_echo map base_link
+ls -lh install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle
 ```
 
 ## 启动 M20 3D 导航
@@ -435,8 +608,14 @@ ros2 topic echo /pct_path --once
 定位：
 
 ```bash
+ros2 node list | grep -E "global_localization|fastlio|initialpose"
+ros2 topic echo /localization_3d_confidence --once
+ros2 topic echo /baselink2map --once
+ros2 topic echo /odom2map --once
 ros2 topic echo /Odometry_loc --once
 ros2 topic echo /odom_body --once
+ros2 topic echo /map_3d --once
+ros2 run tf2_ros tf2_echo map odom
 ros2 run tf2_ros tf2_echo map base_link
 ros2 run tf2_ros tf2_echo odom_body base_link
 ```
@@ -455,6 +634,21 @@ RViz 里默认还有一个 `3D Initial Pose` interactive marker。用 `Interact`
 ```bash
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py start_initialpose_3d_marker:=false
 ```
+
+如果 `base_link` 会动，但沿着旧 bag 的倾斜坐标跑出旋平后的地图，优先按下面查：
+
+```bash
+ros2 node list | grep global_localization
+ros2 topic echo /localization_3d_confidence --once
+ros2 topic echo /baselink2map --once
+ros2 topic echo /odom2map --once
+ros2 run tf2_ros tf2_echo map odom
+```
+
+- 没有 `/global_localization_node`：Open3D 全局定位没有启动，检查主 launch 是否正常启动。
+- 没有 `/baselink2map` 或 `/odom2map`：Open3D 没有收到 `/Odometry_loc` 或 `/cloud_registered_1`。
+- `map -> odom` 不变或明显不对：先暂停 bag，在 RViz 里用 `3D Initial Pose` 把橙色球拖到 bag 起点，再继续播放。
+- 旋平地图下不要继续使用带大 pitch 的旧初始姿态；默认地图应为 `maps/fastlio/m20_3d_map.pcd`。
 
 点云转 scan：
 

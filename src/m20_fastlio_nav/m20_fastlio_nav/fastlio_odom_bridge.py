@@ -7,6 +7,7 @@ from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from rosgraph_msgs.msg import Clock
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from tf2_ros import Buffer, TransformBroadcaster, TransformListener
 
@@ -193,7 +194,13 @@ class FastLioOdomBridge(Node):
         self.invalid_tf_count = 0
 
         self.sub = self.create_subscription(Odometry, source_topic, self.odom_callback, 50)
-        self.clock_sub = self.create_subscription(Clock, "/clock", self.clock_callback, 10)
+        clock_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        self.clock_sub = self.create_subscription(Clock, "/clock", self.clock_callback, clock_qos)
         self.get_logger().info(
             f"bridging {source_topic} to {output_topic} as "
             f"{self.map_frame}->{self.nav_odom_frame} body-plane and "
