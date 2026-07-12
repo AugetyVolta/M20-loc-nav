@@ -38,6 +38,7 @@ setup(
     entry_points={
         'console_scripts': [
             'pure_pursuit = move.pure_pursuit:main',
+            'ego_bspline_to_path = move.ego_bspline_to_path:main',
             'priest_rl_publisher_nav_cmd = move.priest_rl_publisher_nav_cmd:main',
             'priest_rl_publisher_nav_cmd_fast = move.priest_rl_publisher_nav_cmd_fast:main',
             (

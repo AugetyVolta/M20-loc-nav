@@ -73,6 +73,11 @@ class PurePursuitNode(Node):
         self.declare_parameter('world_frame', 'map')
         self.declare_parameter('robot_frame', 'base_link')
         self.declare_parameter('use_3d_path_distance', False)
+        self.declare_parameter('publish_ego_goal', False)
+        self.declare_parameter('ego_goal_topic', '/ego_goal_pose')
+        self.declare_parameter('ego_goal_frame', 'map')
+        self.declare_parameter('ego_goal_z_mode', 'path')
+        self.declare_parameter('ego_goal_z', 0.5)
         self.declare_parameter('use_arc_length_lookahead', True)
         self.declare_parameter('heading_change_guard_enabled', True)
         self.declare_parameter('max_heading_change_deg', 35.0)
@@ -91,6 +96,11 @@ class PurePursuitNode(Node):
         self.world_frame = str(self.get_parameter('world_frame').value)
         self.robot_frame = str(self.get_parameter('robot_frame').value)
         self.use_3d_path_distance = bool(self.get_parameter('use_3d_path_distance').value)
+        self.publish_ego_goal = bool(self.get_parameter('publish_ego_goal').value)
+        self.ego_goal_topic = str(self.get_parameter('ego_goal_topic').value)
+        self.ego_goal_frame = str(self.get_parameter('ego_goal_frame').value)
+        self.ego_goal_z_mode = str(self.get_parameter('ego_goal_z_mode').value).lower()
+        self.ego_goal_z = float(self.get_parameter('ego_goal_z').value)
         self.use_arc_length_lookahead = bool(self.get_parameter('use_arc_length_lookahead').value)
         self.heading_change_guard_enabled = bool(self.get_parameter('heading_change_guard_enabled').value)
         self.max_heading_change_deg = float(self.get_parameter('max_heading_change_deg').value)
@@ -136,6 +146,11 @@ class PurePursuitNode(Node):
         )
         self.cnn_goal_pub = self.create_publisher(PoseStamped, 'subgoal', pub_qos)
         self.final_goal_pub = self.create_publisher(PoseStamped, 'final_goal', pub_qos)
+        self.ego_goal_pub = (
+            self.create_publisher(PoseStamped, self.ego_goal_topic, pub_qos)
+            if self.publish_ego_goal
+            else None
+        )
 
         self.get_logger().debug('PurePursuitNode initialized (ROS2).')
 
@@ -519,6 +534,29 @@ class PurePursuitNode(Node):
         if not np.isnan(final_goal.pose.position.x) and not np.isnan(final_goal.pose.position.y):
             self.final_goal_pub.publish(final_goal)
             self.get_logger().debug(f'Final goal (local): {relative_goal[0]:.3f}, {relative_goal[1]:.3f}')
+
+        # ---- Publish EGO goal in global planning frame ----
+        # EGO-Planner's manual target callback treats pose.position as a global
+        # waypoint, so do not reuse the local/base_link /subgoal directly.
+        if self.ego_goal_pub is not None:
+            ego_goal = PoseStamped()
+            ego_goal.header.stamp = hdr.stamp
+            ego_goal.header.frame_id = self.ego_goal_frame or self.world_frame
+            ego_goal.pose.position.x = float(goal[0])
+            ego_goal.pose.position.y = float(goal[1])
+            if self.ego_goal_z_mode == 'fixed' or len(goal) < 3:
+                ego_goal.pose.position.z = self.ego_goal_z
+            else:
+                ego_goal.pose.position.z = float(goal[2])
+            ego_goal.pose.orientation.w = 1.0
+            if not np.isnan(ego_goal.pose.position.x) and not np.isnan(ego_goal.pose.position.y):
+                self.ego_goal_pub.publish(ego_goal)
+                self.get_logger().debug(
+                    f'EGO goal ({ego_goal.header.frame_id}): '
+                    f'{ego_goal.pose.position.x:.3f}, '
+                    f'{ego_goal.pose.position.y:.3f}, '
+                    f'{ego_goal.pose.position.z:.3f}'
+                )
 
 
 def main():

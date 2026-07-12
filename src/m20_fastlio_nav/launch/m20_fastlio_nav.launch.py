@@ -1,8 +1,8 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, SetEnvironmentVariable, TimerAction
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, TimerAction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -22,6 +22,7 @@ def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     rviz = LaunchConfiguration("rviz")
     rviz_config = LaunchConfiguration("rviz_config")
+    local_planner_type = LaunchConfiguration("local_planner_type")
     start_nav2 = LaunchConfiguration("start_nav2")
     start_pct_planner = LaunchConfiguration("start_pct_planner")
     start_external_nav = LaunchConfiguration("start_external_nav")
@@ -34,6 +35,11 @@ def generate_launch_description():
     start_initialpose_3d_marker = LaunchConfiguration("start_initialpose_3d_marker")
     output_odom_topic = LaunchConfiguration("output_odom_topic")
     global_path_topic = LaunchConfiguration("global_path_topic")
+    ego_local_path_topic = LaunchConfiguration("ego_local_path_topic")
+    ego_goal_topic = LaunchConfiguration("ego_goal_topic")
+    ego_goal_frame = LaunchConfiguration("ego_goal_frame")
+    ego_goal_z_mode = LaunchConfiguration("ego_goal_z_mode")
+    ego_goal_z = LaunchConfiguration("ego_goal_z")
     rl_python_executable = LaunchConfiguration("rl_python_executable")
     pct_root = LaunchConfiguration("pct_root")
     pct_venv_site = LaunchConfiguration("pct_venv_site")
@@ -90,6 +96,7 @@ def generate_launch_description():
         "/planner/lib/build/src/common/smoothing:",
         EnvironmentVariable("LD_LIBRARY_PATH", default_value=""),
     ]
+    use_ego_local_planner = PythonExpression(["'", local_planner_type, "' == 'ego'"])
 
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -137,13 +144,25 @@ def generate_launch_description():
             "rl_python_executable": rl_python_executable,
             "start_rviz_waypoints": "false",
             "start_pure_pursuit": start_pure_pursuit,
-            "start_rl_local_path": start_rl_local_path,
+            "start_rl_local_path": PythonExpression([
+                "'false' if '",
+                local_planner_type,
+                "' == 'ego' else '",
+                start_rl_local_path,
+                "'",
+            ]),
             "start_adapter": start_adapter,
             "global_path_topic": global_path_topic,
             "pure_pursuit_plan_topic": global_path_topic,
             "subgoal_topic": "subgoal",
             "final_goal_topic": "final_goal",
-            "local_path_topic": "local_path",
+            "local_path_topic": PythonExpression([
+                "'",
+                ego_local_path_topic,
+                "' if '",
+                local_planner_type,
+                "' == 'ego' else 'local_path'",
+            ]),
             "cmd_vel_topic": "/cmd_vel",
             "nav_cmd_topic": "/NAV_CMD",
             "global_frame": "map",
@@ -155,6 +174,28 @@ def generate_launch_description():
             "global_plan_use_3d": "true",
             "adapter_path_transform_use_3d": "true",
             "pure_pursuit_use_3d_path_distance": "true",
+            "pure_pursuit_publish_ego_goal": use_ego_local_planner,
+            "ego_goal_topic": ego_goal_topic,
+            "ego_goal_frame": ego_goal_frame,
+            "ego_goal_z_mode": ego_goal_z_mode,
+            "ego_goal_z": ego_goal_z,
+        }.items(),
+    )
+
+    ego_local_planner = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution(
+                [FindPackageShare("m20_fastlio_nav"), "launch", "m20_ego_local_planner.launch.py"]
+            )
+        ),
+        launch_arguments={
+            "use_sim_time": use_sim_time,
+            "source_odom_topic": output_odom_topic,
+            "ego_odom_topic": "/ego_odom",
+            "input_cloud_topic": "/cloud_registered_body_1",
+            "ego_goal_topic": ego_goal_topic,
+            "output_path_topic": ego_local_path_topic,
+            "output_path_frame": "odom_body",
         }.items(),
     )
 
@@ -165,9 +206,6 @@ def generate_launch_description():
     pct_planner_group = GroupAction(
         condition=IfCondition(start_pct_planner),
         actions=[
-            SetEnvironmentVariable("PCT_PLANNER_ROOT", pct_root),
-            SetEnvironmentVariable("PYTHONPATH", pct_python_paths),
-            SetEnvironmentVariable("LD_LIBRARY_PATH", pct_library_paths),
             TimerAction(
                 period=10.0,
                 actions=[
@@ -176,6 +214,11 @@ def generate_launch_description():
                         executable="pct_planner_node",
                         name="pct_planner_node",
                         output="screen",
+                        additional_env={
+                            "PCT_PLANNER_ROOT": pct_root,
+                            "PYTHONPATH": pct_python_paths,
+                            "LD_LIBRARY_PATH": pct_library_paths,
+                        },
                         parameters=[
                             pct_config_file,
                             {
@@ -259,6 +302,10 @@ def generate_launch_description():
         condition=IfCondition(start_external_nav),
         actions=[TimerAction(period=11.0, actions=[external_nav])],
     )
+    ego_local_planner_group = GroupAction(
+        condition=IfCondition(use_ego_local_planner),
+        actions=[TimerAction(period=12.0, actions=[ego_local_planner])],
+    )
 
     return LaunchDescription(
         [
@@ -287,6 +334,11 @@ def generate_launch_description():
                     [FindPackageShare("m20_fastlio_nav"), "config", "m20_nav3d.rviz"]
                 ),
             ),
+            DeclareLaunchArgument(
+                "local_planner_type",
+                default_value="priest_rl",
+                description="Local planner chain: priest_rl keeps the original chain; ego uses EGO-Planner + DWB.",
+            ),
             DeclareLaunchArgument("start_nav2", default_value="true"),
             DeclareLaunchArgument("start_pct_planner", default_value="true"),
             DeclareLaunchArgument("start_external_nav", default_value="true"),
@@ -294,6 +346,11 @@ def generate_launch_description():
             DeclareLaunchArgument("start_rl_local_path", default_value="true"),
             DeclareLaunchArgument("start_adapter", default_value="true"),
             DeclareLaunchArgument("global_path_topic", default_value="/pct_path"),
+            DeclareLaunchArgument("ego_local_path_topic", default_value="/ego_local_path"),
+            DeclareLaunchArgument("ego_goal_topic", default_value="/ego_goal_pose"),
+            DeclareLaunchArgument("ego_goal_frame", default_value="map"),
+            DeclareLaunchArgument("ego_goal_z_mode", default_value="path"),
+            DeclareLaunchArgument("ego_goal_z", default_value="0.5"),
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom_body"),
             DeclareLaunchArgument("body_scan_min_height", default_value="-0.1"),
@@ -331,6 +388,7 @@ def generate_launch_description():
             localization,
             nav2_group,
             pct_planner_group,
+            ego_local_planner_group,
             external_nav_group,
         ]
     )

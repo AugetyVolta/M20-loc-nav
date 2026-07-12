@@ -23,6 +23,8 @@ setup(
     entry_points={
         "console_scripts": [
             "fastlio_odom_bridge = m20_fastlio_nav.fastlio_odom_bridge:main",
+            "ego_odom_bridge = m20_fastlio_nav.ego_frame_bridges:ego_odom_bridge_main",
+            "ego_cloud_frame_bridge = m20_fastlio_nav.ego_frame_bridges:ego_cloud_frame_bridge_main",
             "initialpose_3d_marker = m20_fastlio_nav.initialpose_3d_marker:main",
             "prepare_3d_nav_map = m20_fastlio_nav.prepare_3d_nav_map:main",
         ],

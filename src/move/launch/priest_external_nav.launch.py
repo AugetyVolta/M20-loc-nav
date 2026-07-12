@@ -52,6 +52,11 @@ def generate_launch_description():
     scan_topic = LaunchConfiguration("scan_topic")
     global_plan_use_3d = LaunchConfiguration("global_plan_use_3d")
     pure_pursuit_use_3d_path_distance = LaunchConfiguration("pure_pursuit_use_3d_path_distance")
+    pure_pursuit_publish_ego_goal = LaunchConfiguration("pure_pursuit_publish_ego_goal")
+    ego_goal_topic = LaunchConfiguration("ego_goal_topic")
+    ego_goal_frame = LaunchConfiguration("ego_goal_frame")
+    ego_goal_z_mode = LaunchConfiguration("ego_goal_z_mode")
+    ego_goal_z = LaunchConfiguration("ego_goal_z")
     adapter_path_transform_use_3d = LaunchConfiguration("adapter_path_transform_use_3d")
 
     lookahead = LaunchConfiguration("lookahead")
@@ -135,6 +140,16 @@ def generate_launch_description():
             ["robot_frame:=", robot_frame],
             "-p",
             ["use_3d_path_distance:=", pure_pursuit_use_3d_path_distance],
+            "-p",
+            ["publish_ego_goal:=", pure_pursuit_publish_ego_goal],
+            "-p",
+            ["ego_goal_topic:=", ego_goal_topic],
+            "-p",
+            ["ego_goal_frame:=", ego_goal_frame],
+            "-p",
+            ["ego_goal_z_mode:=", ego_goal_z_mode],
+            "-p",
+            ["ego_goal_z:=", ego_goal_z],
             "-p",
             ["use_arc_length_lookahead:=", use_arc_length_lookahead],
             "-p",
@@ -272,6 +287,11 @@ def generate_launch_description():
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("global_plan_use_3d", default_value="true"),
             DeclareLaunchArgument("pure_pursuit_use_3d_path_distance", default_value="true"),
+            DeclareLaunchArgument("pure_pursuit_publish_ego_goal", default_value="false"),
+            DeclareLaunchArgument("ego_goal_topic", default_value="/ego_goal_pose"),
+            DeclareLaunchArgument("ego_goal_frame", default_value="map"),
+            DeclareLaunchArgument("ego_goal_z_mode", default_value="path"),
+            DeclareLaunchArgument("ego_goal_z", default_value="0.5"),
             DeclareLaunchArgument("adapter_path_transform_use_3d", default_value="true"),
             DeclareLaunchArgument("lookahead", default_value="1.8"),
             DeclareLaunchArgument("pure_pursuit_rate", default_value="10.0"),
