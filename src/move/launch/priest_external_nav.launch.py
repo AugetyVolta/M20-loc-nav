@@ -54,6 +54,7 @@ def generate_launch_description():
     rl_hz = LaunchConfiguration("rl_hz")
     device = LaunchConfiguration("device")
     require_localization_confidence = LaunchConfiguration("require_localization_confidence")
+    adapter_path_timeout = LaunchConfiguration("adapter_path_timeout")
 
     common_env = {
         "PYTHONUNBUFFERED": "1",
@@ -175,6 +176,8 @@ def generate_launch_description():
             ["nav_cmd_topic:=", nav_cmd_topic],
             "-p",
             ["require_localization_confidence:=", require_localization_confidence],
+            "-p",
+            ["path_timeout:=", adapter_path_timeout],
         ],
         output="screen",
         additional_env=common_env,
@@ -207,7 +210,7 @@ def generate_launch_description():
             DeclareLaunchArgument("waypoint_status_topic", default_value="/waypoint_sequence/status"),
             DeclareLaunchArgument("waypoints_topic", default_value="waypoints"),
             DeclareLaunchArgument("waypoints_pose_topic", default_value="waypoints_pose_array"),
-            DeclareLaunchArgument("waypoint_replan_period", default_value="2.0"),
+            DeclareLaunchArgument("waypoint_replan_period", default_value="1.0"),
             DeclareLaunchArgument("waypoint_goal_tolerance", default_value="1.5"),
             DeclareLaunchArgument("waypoint_edit_radius", default_value="1.5"),
             DeclareLaunchArgument("waypoint_enable_interactive_markers", default_value="true"),
@@ -221,6 +224,7 @@ def generate_launch_description():
             DeclareLaunchArgument("rl_hz", default_value="10.0"),
             DeclareLaunchArgument("device", default_value="cuda"),
             DeclareLaunchArgument("require_localization_confidence", default_value="false"),
+            DeclareLaunchArgument("adapter_path_timeout", default_value="1.2"),
             rviz_waypoints,
             pure_pursuit,
             rl_local_path,

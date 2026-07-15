@@ -33,6 +33,7 @@
 #   receive the last path (ROS1 latched-topic behavior).
 # - Adds multiple numerical/logic guards to avoid runtime errors.
 
+import math
 import threading
 import numpy as np
 
@@ -46,15 +47,6 @@ from nav_msgs.msg import Path
 from std_msgs.msg import Header
 
 from tf2_ros import Buffer, TransformListener
-
-# tf transformations (Euler/Quaternion ops)
-# Package name is 'tf_transformations' in ROS 2 (python lib).
-from tf_transformations import (
-    euler_from_quaternion,
-    quaternion_multiply,
-    quaternion_inverse,
-)
-
 
 class PurePursuitNode(Node):
     def __init__(self):
@@ -91,6 +83,7 @@ class PurePursuitNode(Node):
 
         # ---------------- Data & Lock ----------------
         self.path = None
+        self.path_points = np.empty((0, 2), dtype=np.float64)
         self.lock = threading.Lock()
         self.timer = None
         self._waiting_for_path_logged = False
@@ -123,6 +116,16 @@ class PurePursuitNode(Node):
         self.get_logger().debug('PurePursuit: Got path')
         with self.lock:
             self.path = msg
+            if len(msg.poses) >= 2:
+                self.path_points = np.asarray(
+                    [
+                        (pose.pose.position.x, pose.pose.position.y)
+                        for pose in msg.poses
+                    ],
+                    dtype=np.float64,
+                )
+            else:
+                self.path_points = np.empty((0, 2), dtype=np.float64)
 
         if self.path is None or len(self.path.poses) < 2:
             if not self._waiting_for_path_logged:
@@ -152,13 +155,14 @@ class PurePursuitNode(Node):
             return np.array([np.nan, np.nan]), np.nan
 
         x = np.array([trans.transform.translation.x, trans.transform.translation.y], dtype=float)
-        q = [
-            trans.transform.rotation.x,
-            trans.transform.rotation.y,
-            trans.transform.rotation.z,
-            trans.transform.rotation.w,
-        ]
-        (_, _, theta) = euler_from_quaternion(q)
+        qx = trans.transform.rotation.x
+        qy = trans.transform.rotation.y
+        qz = trans.transform.rotation.z
+        qw = trans.transform.rotation.w
+        theta = math.atan2(
+            2.0 * (qw * qz + qx * qy),
+            1.0 - 2.0 * (qy * qy + qz * qz),
+        )
         self.get_logger().debug(f'x = {x[0]:.3f}, y = {x[1]:.3f}, theta = {theta:.3f}')
         return x, theta
 
@@ -176,114 +180,79 @@ class PurePursuitNode(Node):
         dist_min = np.inf
         seg_min = -1
 
-        if self.path is None or len(self.path.poses) < 2:
+        points = self.path_points
+        if points.shape[0] < 2:
             return pt_min, dist_min, seg_min
 
-        if seg == -1:
-            # search entire path
-            for i in range(len(self.path.poses) - 1):
-                pt, dist, s = self.find_closest_point(x, i)
-                if dist < dist_min:
-                    pt_min, dist_min, seg_min = pt, dist, s
-        else:
-            # single segment
-            p_start = np.array([
-                self.path.poses[seg].pose.position.x,
-                self.path.poses[seg].pose.position.y,
-            ], dtype=float)
-            p_end = np.array([
-                self.path.poses[seg + 1].pose.position.x,
-                self.path.poses[seg + 1].pose.position.y,
-            ], dtype=float)
-
-            v = p_end - p_start
-            length_seg = np.linalg.norm(v)
-            if length_seg < 1e-9:
-                # degenerate segment; choose start point distance
-                pt_min = p_start
-                dist_min = np.linalg.norm(pt_min - x)
-                seg_min = seg
+        if seg >= 0:
+            if seg >= points.shape[0] - 1:
                 return pt_min, dist_min, seg_min
+            starts = points[seg : seg + 1]
+            vectors = points[seg + 1 : seg + 2] - starts
+            indices = np.array([seg], dtype=np.int64)
+        else:
+            starts = points[:-1]
+            vectors = points[1:] - starts
+            indices = np.arange(starts.shape[0], dtype=np.int64)
 
-            v = v / length_seg
-            dist_projected = np.dot(x - p_start, v)
-
-            if dist_projected < 0.0:
-                pt_min = p_start
-            elif dist_projected > length_seg:
-                pt_min = p_end
-            else:
-                pt_min = p_start + dist_projected * v
-
-            dist_min = np.linalg.norm(pt_min - x)
-            seg_min = seg
+        lengths_sq = np.einsum('ij,ij->i', vectors, vectors)
+        offsets = x - starts
+        projection = np.divide(
+            np.einsum('ij,ij->i', offsets, vectors),
+            lengths_sq,
+            out=np.zeros_like(lengths_sq),
+            where=lengths_sq > 1e-18,
+        )
+        projection = np.clip(projection, 0.0, 1.0)
+        closest_points = starts + projection[:, None] * vectors
+        deltas = closest_points - x
+        distances_sq = np.einsum('ij,ij->i', deltas, deltas)
+        best = int(np.argmin(distances_sq))
+        pt_min = closest_points[best]
+        dist_min = math.sqrt(float(distances_sq[best]))
+        seg_min = int(indices[best])
 
         return pt_min, dist_min, seg_min
 
     def find_goal(self, x: np.ndarray, pt: np.ndarray, dist: float, seg: int):
         """
         Determine the goal point along the path.
-        Returns:
-            goal: np.array([x, y])
-            end_goal_pos: [x, y]
-            end_goal_rot: [x, y, z, w]
+        Returns the target point and the final path point, both in the world frame.
         """
         goal = None
 
-        if self.path is None or len(self.path.poses) < 2:
-            return None, None, None
+        points = self.path_points
+        if points.shape[0] < 2:
+            return None, None
 
-        # default: end pose info (used for final goal frame transform/orientation)
-        end_pose = self.path.poses[-1].pose
-        end_goal_pos = [end_pose.position.x, end_pose.position.y]
-        end_goal_rot = [
-            end_pose.orientation.x,
-            end_pose.orientation.y,
-            end_pose.orientation.z,
-            end_pose.orientation.w,
-        ]
+        end_goal_pos = points[-1]
 
         if dist > self.lookahead:
             # far from path: drive toward closest point
             goal = pt
         else:
-            seg_max = len(self.path.poses) - 2
+            seg_max = points.shape[0] - 2
 
             # end of current segment
-            p_end = np.array([
-                self.path.poses[seg + 1].pose.position.x,
-                self.path.poses[seg + 1].pose.position.y,
-            ], dtype=float)
+            p_end = points[seg + 1]
             dist_end = np.linalg.norm(x - p_end)
 
             # advance until leaving the lookahead circle or reaching last segment
             while dist_end < self.lookahead and seg < seg_max:
                 seg += 1
-                p_end = np.array([
-                    self.path.poses[seg + 1].pose.position.x,
-                    self.path.poses[seg + 1].pose.position.y,
-                ], dtype=float)
+                p_end = points[seg + 1]
                 dist_end = np.linalg.norm(x - p_end)
 
             if dist_end < self.lookahead:
                 # searched whole path: goal is the path end
-                pt2 = np.array([
-                    self.path.poses[seg_max + 1].pose.position.x,
-                    self.path.poses[seg_max + 1].pose.position.y,
-                ], dtype=float)
+                pt2 = points[seg_max + 1]
                 goal = pt2
             else:
                 # find intersection with the lookahead circle on this segment
                 pt2, _, seg2 = self.find_closest_point(x, seg)
 
-                p_start = np.array([
-                    self.path.poses[seg2].pose.position.x,
-                    self.path.poses[seg2].pose.position.y,
-                ], dtype=float)
-                p_end = np.array([
-                    self.path.poses[seg2 + 1].pose.position.x,
-                    self.path.poses[seg2 + 1].pose.position.y,
-                ], dtype=float)
+                p_start = points[seg2]
+                p_end = points[seg2 + 1]
 
                 v = p_end - p_start
                 length_seg = np.linalg.norm(v)
@@ -292,14 +261,15 @@ class PurePursuitNode(Node):
                 else:
                     v = v / length_seg
                     dist_proj_x = np.dot(x - pt2, v)
-                    dist_proj_y = np.linalg.norm(np.cross(x - pt2, v))
+                    delta = x - pt2
+                    dist_proj_y = abs(delta[0] * v[1] - delta[1] * v[0])
                     under_radical = self.lookahead ** 2 - dist_proj_y ** 2
                     if under_radical < 0.0:
                         # numerical guard
                         under_radical = 0.0
                     goal = pt2 + (np.sqrt(under_radical) + dist_proj_x) * v
 
-        return goal, end_goal_pos, end_goal_rot
+        return goal, end_goal_pos
 
     # --------------- Main Control Loop ---------------
     def timer_callback(self):
@@ -315,43 +285,20 @@ class PurePursuitNode(Node):
                 return
 
             # goal
-            goal, end_goal_pos, end_goal_rot = self.find_goal(x, pt, dist, seg)
+            goal, end_goal_pos = self.find_goal(x, pt, dist, seg)
             if goal is None or end_goal_pos is None:
                 return
 
         # ---- Transform goal to robot(local) coordinates ----
-        # Homogeneous transform (map -> robot)
-        c, s = np.cos(theta), np.sin(theta)
-        map_T_robot = np.array([[c, -s, x[0]],
-                                [s,  c, x[1]],
-                                [0., 0., 1. ]], dtype=float)
-        inv_map_T_robot = np.linalg.inv(map_T_robot)
+        c, s = math.cos(theta), math.sin(theta)
 
-        goal_h = np.array([[goal[0]], [goal[1]], [1.0]], dtype=float)
-        goal_local = inv_map_T_robot @ goal_h   # 3x1
-        goal_local = goal_local[0:2, :].flatten()  # (2,)
+        def to_robot_frame(point):
+            dx = point[0] - x[0]
+            dy = point[1] - x[1]
+            return np.array([c * dx + s * dy, -s * dx + c * dy], dtype=np.float64)
 
-        # ---- Final goal (relative to robot) ----
-        end_goal_h = np.array([[end_goal_pos[0]], [end_goal_pos[1]], [1.0]], dtype=float)
-        relative_goal = (inv_map_T_robot @ end_goal_h).flatten()
-
-        # ---- Relative orientation to final goal ----
-        # orientation_to_target = end_goal_rot * inverse(current_rot)
-        try:
-            # get current orientation again to avoid sharing state; cheap op
-            t = Time()
-            trans = self.tf_buffer.lookup_transform(self.world_frame, self.robot_frame, t)
-            cur_q = [
-                trans.transform.rotation.x,
-                trans.transform.rotation.y,
-                trans.transform.rotation.z,
-                trans.transform.rotation.w,
-            ]
-            orientation_to_target = quaternion_multiply(end_goal_rot, quaternion_inverse(cur_q))
-            yaw = euler_from_quaternion(orientation_to_target)[2]
-            _ = yaw  # kept for possible downstream usage
-        except Exception:
-            pass
+        goal_local = to_robot_frame(goal)
+        relative_goal = to_robot_frame(end_goal_pos)
 
         # ---- Publish subgoal ----
         hdr = Header()

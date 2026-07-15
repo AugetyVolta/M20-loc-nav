@@ -149,8 +149,8 @@ def generate_launch_description():
                 "angle_max": 3.14159,
                 "angle_increment": 0.01745,
                 "scan_time": 0.1,
-                "range_min": 0.35,
-                "range_max": 10.0,
+                "range_min": 0.15,
+                "range_max": 12.0,
                 "use_inf": True,
                 "use_sim_time": use_sim_time,
             }

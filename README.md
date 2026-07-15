@@ -37,8 +37,20 @@ git switch point-lio-lidar-localization
 - 3D 建图：`fast_lio_map` 前端保存 `m20_map.pcd`，`slam_mapping/alaserPGO` 后端保存 `global_map.pcd` 和 `sc_database.txt`。
 - 3D 定位：Open3D 使用 `/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_leveled.pcd`。
 - 2D 地图：`pcd2pgm` 默认输入 `global_map.pcd`，内部完成摆平、地面基准对齐，再生成 `m20_2d_map.pgm/.yaml`。
-- Nav2：`m20_fastlio_nav.launch.py` 启动 Fast-LIO 定位、Open3D、`/scan`、map server 和 Nav2 navigation，不启动 AMCL。
+- Nav2：`m20_fastlio_nav.launch.py` 启动 Fast-LIO 定位、Open3D、`/scan`、map server 和仅包含规划、DWB、速度平滑的 `m20_nav_core`，不启动 AMCL。
 - 局部路径：`global_path` -> `pure_pursuit` 发布 `subgoal` -> RL/PRIEST 发布 `local_path` -> DWB adapter 转成 `/NAV_CMD`。
+
+## 当前导航链路调整
+
+本分支仍由外部链路管理目标和局部路径；Nav2 只提供全局规划、DWB 跟踪和速度平滑，实际命令链为
+`/local_path -> FollowPath -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel -> /NAV_CMD`。
+
+- `m20_nav_core.launch.py` 只启动 `planner_server`、`controller_server`、`velocity_smoother` 及其 lifecycle manager，不再启动 BT navigator、behavior、Nav2 smoother、waypoint follower 等未被外部链路使用的节点。
+- DWB 采用机器狗中心矩形 footprint：长 `0.82 m`、宽 `0.506 m`，局部 costmap 为 `6 x 6 m`。局部膨胀为 `0.6 m`，全局膨胀为 `1.0 m`，全局 costmap 以 `2 Hz` 更新；DWB 同时启用 `ObstacleFootprint` 和 `BaseObstacle` critic。
+- `pointcloud_to_laserscan` 的量程为 `0.15 m` 至 `12.0 m`。定位 Fast-LIO 采用 `blind: 0.2`、`filter_size_surf/map: 0.2/0.3`、`det_range: 80 m`；建图同步采用 `filter_size_surf/map: 0.2/0.3` 和 `det_range: 80 m`。
+- waypoint 全局路径默认每 `1.0 s` 重算一次。`pure_pursuit` 缓存路径点并向量化最近点计算，避免每个控制周期重复构造数组和重复查询 TF。
+- DWB adapter 的 local path 超时为 `1.2 s`。异步接受上一条 `FollowPath` goal 时若已有新路径，不会先取消仍有效的旧 goal，下一轮再无缝提交新路径，避免插入零速度间隙。
+- `m20_nav3d.rviz` 去除了未使用的 Nav2 面板；RViz 中的 Publish Point 仍由外部 waypoint 链路处理。
 
 ## 系统目标
 
@@ -220,10 +232,11 @@ Fast-LIO 内部的 `reflectivity`，并读取 `tag` / `line` / `timestamp`。注
 | `preprocess.lidar_type` | `4` | `4` | MID360 `PointCloud2` 路径 |
 | `preprocess.scan_line` | `4` | `4` | MID360 实际 line 数，参考 luckbot 配置；不要再用 `96` |
 | `preprocess.timestamp_unit` | `3` | `3` | MID360 每点 timestamp/offset 以 ns 计，代码会转成 scan 内相对 ms |
-| `preprocess.blind` | `0.5` | `0.5` | 近距离盲区过滤 |
+| `preprocess.blind` | `0.5` | `0.2` | 定位保留更近的有效点，建图保持原有近距盲区 |
 | `point_filter_num` | `3` | `3` | 前端降采样，降低 Jetson 压力 |
-| `filter_size_surf` / `filter_size_map` | `0.3 / 0.3` | `0.5 / 0.5` | 建图保留更密局部结构，定位按 Jetson 负载裁剪 |
-| `mapping.det_range` | `80` | `60` | 室内雷达有效距离约 30m，不再使用 `200` |
+| `filter_size_surf` / `filter_size_map` | `0.2 / 0.3` | `0.2 / 0.3` | 建图和定位使用相同体素尺度，保留近处结构 |
+| `mapping.acc_cov` / `mapping.gyr_cov` | `0.2 / 0.2` | `0.2 / 0.2` | IMU 加速度、角速度观测噪声 |
+| `mapping.det_range` | `80` | `80` | 局部地图检测范围，不再使用 `200` |
 | `publish.path_en` | `true` | `false` | 建图保留轨迹，定位关闭无用轨迹输出 |
 | `publish.dense_publish_en` | `true` | `false` | 建图保留 dense 点云用于复核，定位关闭以减轻负载 |
 | `publish.scan_publish_en` | `true` | `true` | Open3D 和调试仍需要实时点云 |
@@ -614,10 +627,10 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 4. `open3d_loc/global_localization_node`
 5. `pointcloud_to_laserscan_node`
 6. Nav2 `map_server`
-7. Nav2 `navigation_launch.py`
+7. Nav2 `m20_nav_core.launch.py`：`planner_server`、`controller_server`、`velocity_smoother`
 8. `move` 外部导航链路：RViz Publish Point -> waypoint manager -> Nav2 planner -> pure pursuit -> RL/PRIEST local path -> DWB adapter -> `/NAV_CMD`
 
-注意：这里使用的是 `nav2_bringup/launch/navigation_launch.py`，不是 `bringup_launch.py`，因此不会启动 AMCL。
+注意：`m20_nav_core.launch.py` 不启动 Nav2 的 BT navigator 和恢复行为；目标管理、全局路径重算和局部路径生成都由 `move` 外部链路负责，因此不会启动 AMCL。
 
 如果临时还没有新 2D 地图，也可以使用旧的 lab 2D 地图（坐标系不匹配，仅调试用）：
 
@@ -641,7 +654,7 @@ RViz Publish Point(/clicked_point)
   -> priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py 发送 FollowPath 并转 /cmd_vel 到 /NAV_CMD
 ```
 
-关键点：`Publish Point` 只借用 Nav2 的 `planner_server/compute_path_to_pose` 来算全局路径，不走 Nav2 自己的局部跟踪。后续局部路径和底盘输出仍然全部走 `move` 包里的外部链路。默认全局规划和 `/global_path` 重发布都是 2 秒级，不做高频全局路径刷新，避免无意义消耗 CPU。
+关键点：`Publish Point` 只借用 Nav2 的 `planner_server/compute_path_to_pose` 来算全局路径，不走 Nav2 自己的局部跟踪。后续局部路径和底盘输出仍然全部走 `move` 包里的外部链路。默认全局规划和 `/global_path` 重发布周期为 `1.0 s`，在动态障碍变化时保持响应，同时避免过高频率占用 CPU。
 
 控制链路只使用 `/global_path`，不要把 pure pursuit 接到 Nav2 自己的 `/plan` 上；`/plan` 可能由 `planner_server` 发布调试路径，清空 waypoint 后也可能出现迟到消息。旧的 `global_path_publisher.py` 只保留为手动调试工具，不要和默认 waypoint manager 同时运行，否则两个节点会同时发布 `/global_path`。
 
@@ -807,6 +820,8 @@ python src/move/move/priest_mppi_adapter_nav_cmd_dwb_smooth_responsive.py
 `require_localization_confidence` 设为 `true`。注意这里有两个阈值：Open3D 的 `confidence_loc_th=0.70`
 用于判断 3D 配准是否接受；adapter 的 `localization_confidence_threshold=0.65` 是底盘命令门控阈值。
 
+adapter 默认 `path_timeout=1.2`。它允许一轮 RL 推理或 ROS 调度延迟，但不会掩盖真正的 `/local_path` 中断；当新的局部路径在异步 `FollowPath` 请求接受期间到达时，旧路径会继续执行到下一轮新 goal 提交，避免取消旧 goal 造成短暂停车。
+
 启用置信度门控后，当 Open3D 还没定位成功、正在重初始化，或者置信度低于默认阈值 `0.65` 时，adapter 会：
 
 - 暂停给 Nav2 发送新的 `FollowPath` goal
@@ -948,13 +963,14 @@ src/m20_fastlio_nav/config/nav2_dwb_fastlio.yaml
 - DWB 控制器，不使用 MPPI。
 - 保留底盘死区：
   - `min_speed_xy: 0.20`
-  - `min_speed_theta: 0.40`
+  - `min_speed_theta: 0.50`
 - `max_vel_x: 0.80` / `max_speed_xy: 0.80` / `max_vel_theta: 0.65`。
 - `velocity_smoother.max_velocity: [0.8, 0.0, 0.65]`，和 DWB 最大速度保持一致。
-- local costmap 使用 `odom_nav`，global costmap 使用 `map`。
+- local costmap 使用 `odom_nav`、尺寸为 `6 x 6 m`；global costmap 使用 `map`、以 `2 Hz` 更新。
+- footprint 为以 `base_footprint` 为中心的 `0.82 x 0.506 m` 矩形，局部/全局膨胀半径分别为 `0.6 m` / `1.0 m`。
 - `/odom` 来自 Fast-LIO bridge，`header.frame_id` 是 `odom_nav`.
-- `/scan` 来自 Fast-LIO body 点云，转换到 `base_footprint` 坐标系（自动水平）。
-- AMCL 段虽然保留在 YAML 中，但 `tf_broadcast: false`，且正常启动路径不会启动 AMCL。
+- `/scan` 来自 Fast-LIO body 点云，转换到 `base_footprint` 坐标系（自动水平），量程为 `0.15 m` 至 `12.0 m`。
+- `m20_nav_core.launch.py` 只管理 planner、controller、velocity smoother；正常启动路径不启动 AMCL、BT navigator 或 Nav2 行为节点。
 
 ## Open3D 定位参数
 

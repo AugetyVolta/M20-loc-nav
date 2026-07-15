@@ -27,6 +27,7 @@ def generate_launch_description():
     waypoint_edit_radius = LaunchConfiguration("waypoint_edit_radius")
     waypoint_enable_interactive_markers = LaunchConfiguration("waypoint_enable_interactive_markers")
     waypoint_interactive_marker_ns = LaunchConfiguration("waypoint_interactive_marker_ns")
+    adapter_path_timeout = LaunchConfiguration("adapter_path_timeout")
 
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -68,10 +69,10 @@ def generate_launch_description():
         ],
     )
 
-    nav2_navigation = IncludeLaunchDescription(
+    nav2_core = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
-                [FindPackageShare("nav2_bringup"), "launch", "navigation_launch.py"]
+                [FindPackageShare("m20_fastlio_nav"), "launch", "m20_nav_core.launch.py"]
             )
         ),
         launch_arguments={
@@ -100,6 +101,7 @@ def generate_launch_description():
             "waypoint_edit_radius": waypoint_edit_radius,
             "waypoint_enable_interactive_markers": waypoint_enable_interactive_markers,
             "waypoint_interactive_marker_ns": waypoint_interactive_marker_ns,
+            "adapter_path_timeout": adapter_path_timeout,
         }.items(),
     )
 
@@ -134,11 +136,12 @@ def generate_launch_description():
             DeclareLaunchArgument("waypoint_delete_topic", default_value="/waypoint_sequence/delete_nearest"),
             DeclareLaunchArgument("waypoint_replace_topic", default_value="/waypoint_sequence/replace_nearest"),
             DeclareLaunchArgument("waypoint_status_topic", default_value="/waypoint_sequence/status"),
-            DeclareLaunchArgument("waypoint_replan_period", default_value="2.0"),
+            DeclareLaunchArgument("waypoint_replan_period", default_value="1.0"),
             DeclareLaunchArgument("waypoint_goal_tolerance", default_value="1.5"),
             DeclareLaunchArgument("waypoint_edit_radius", default_value="1.5"),
             DeclareLaunchArgument("waypoint_enable_interactive_markers", default_value="true"),
             DeclareLaunchArgument("waypoint_interactive_marker_ns", default_value="waypoint_editor"),
+            DeclareLaunchArgument("adapter_path_timeout", default_value="1.2"),
             DeclareLaunchArgument(
                 "rl_python_executable",
                 default_value=PathJoinSubstitution(
@@ -147,7 +150,7 @@ def generate_launch_description():
             ),
             localization,
             TimerAction(period=3.0, actions=[map_server, map_lifecycle]),
-            TimerAction(period=8.0, actions=[nav2_navigation]),
+            TimerAction(period=8.0, actions=[nav2_core]),
             external_nav_group,
         ]
     )
