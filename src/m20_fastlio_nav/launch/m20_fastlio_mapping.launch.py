@@ -2,7 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -127,11 +127,17 @@ def generate_launch_description():
             DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument(
                 "map_pcd",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map.pcd",
+                default_value=EnvironmentVariable(
+                    "M20_MAPPING_PCD",
+                    default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_raw.pcd",
+                ),
             ),
             DeclareLaunchArgument(
                 "map_save_dir",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/",
+                default_value=EnvironmentVariable(
+                    "M20_MAP_DIR",
+                    default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/",
+                ),
                 description="Directory where slam_mapping writes global_map.pcd and sc_database.txt.",
             ),
             livox_driver,

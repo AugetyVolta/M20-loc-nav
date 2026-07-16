@@ -13,6 +13,7 @@ setup(
         (f"share/{package_name}/hook", glob("hook/*")),
         (f"share/{package_name}/config", glob("config/*.yaml") + glob("config/*.rviz")),
         (f"share/{package_name}/launch", glob("launch/*.launch.py")),
+        (f"share/{package_name}/scripts", glob("scripts/*.py")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

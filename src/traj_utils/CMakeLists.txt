@@ -21,7 +21,7 @@ find_package(builtin_interfaces REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 find_package(Eigen3 REQUIRED)
-find_package(PCL REQUIRED)
+find_package(PCL REQUIRED COMPONENTS common)
 
 rosidl_generate_interfaces(traj_utils
   "msg/Bspline.msg"

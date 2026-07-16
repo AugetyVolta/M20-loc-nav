@@ -10,7 +10,7 @@ except Exception:  # pragma: no cover - usable from source before ROS env is sou
 DEFAULT_VENV = Path(
     os.environ.get(
         "PCT_VENV",
-        "/home/ubuntu/xlab/M20-loc-nav/.venv/m20_nav_jazzy",
+        "/home/orin/venv/m20_nav_cupy",
     )
 )
 

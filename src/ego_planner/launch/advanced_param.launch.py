@@ -19,6 +19,8 @@ def generate_launch_description():
     ground_height = LaunchConfiguration('ground_height', default=-1.5)
     goal_topic = LaunchConfiguration('goal_topic', default='/ego_goal_pose')
     min_goal_z = LaunchConfiguration('min_goal_z', default=-100.0)
+    goal_change_threshold = LaunchConfiguration('goal_change_threshold', default=0.15)
+    goal_reached_threshold = LaunchConfiguration('goal_reached_threshold', default=0.20)
     
     cx = LaunchConfiguration('cx', default=321.04638671875)
     cy = LaunchConfiguration('cy', default=243.44969177246094)
@@ -74,6 +76,8 @@ def generate_launch_description():
     ground_height_arg = DeclareLaunchArgument('ground_height', default_value=ground_height, description='Grid map lower z boundary in planning frame')
     goal_topic_arg = DeclareLaunchArgument('goal_topic', default_value=goal_topic, description='Manual goal PoseStamped topic')
     min_goal_z_arg = DeclareLaunchArgument('min_goal_z', default_value=min_goal_z, description='Minimum accepted manual goal z')
+    goal_change_threshold_arg = DeclareLaunchArgument('goal_change_threshold', default_value=goal_change_threshold, description='Minimum position change required to accept a refreshed goal')
+    goal_reached_threshold_arg = DeclareLaunchArgument('goal_reached_threshold', default_value=goal_reached_threshold, description='Ignore goals already within this distance of odometry')
     cx_arg = DeclareLaunchArgument('cx', default_value=cx, description='Camera intrinsic cx')
     cy_arg = DeclareLaunchArgument('cy', default_value=cy, description='Camera intrinsic cy')
     fx_arg = DeclareLaunchArgument('fx', default_value=fx, description='Camera intrinsic fx')
@@ -148,6 +152,8 @@ def generate_launch_description():
             {'fsm/fail_safe': True},
             {'fsm/goal_topic': goal_topic},
             {'fsm/min_goal_z': min_goal_z},
+            {'fsm/goal_change_threshold': goal_change_threshold},
+            {'fsm/goal_reached_threshold': goal_reached_threshold},
             
             {'fsm/waypoint_num': point_num},
             {'fsm/waypoint0_x': point0_x},
@@ -257,6 +263,8 @@ def generate_launch_description():
     ld.add_action(ground_height_arg)
     ld.add_action(goal_topic_arg)
     ld.add_action(min_goal_z_arg)
+    ld.add_action(goal_change_threshold_arg)
+    ld.add_action(goal_reached_threshold_arg)
     ld.add_action(cx_arg)
     ld.add_action(cy_arg)
     ld.add_action(fx_arg)

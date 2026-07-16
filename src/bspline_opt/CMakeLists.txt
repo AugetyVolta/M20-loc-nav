@@ -23,7 +23,7 @@ find_package(plan_env REQUIRED)
 find_package(traj_utils REQUIRED)
 find_package(path_searching REQUIRED)
 
-find_package(PCL REQUIRED)
+find_package(PCL REQUIRED COMPONENTS common)
 find_package(pcl_conversions REQUIRED)
 find_package(Eigen3 REQUIRED)
 

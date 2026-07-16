@@ -319,7 +319,10 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "map_pcd",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd",
+                default_value=EnvironmentVariable(
+                    "M20_MAP_PCD",
+                    default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd",
+                ),
             ),
             DeclareLaunchArgument(
                 "params_file",
@@ -383,7 +386,10 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_global_path_perception_raytrace_max_rays", default_value="360"),
             DeclareLaunchArgument(
                 "rl_python_executable",
-                default_value="/home/ubuntu/miniconda3/envs/m20_nav/bin/python",
+                default_value=EnvironmentVariable(
+                    "M20_NAV_PYTHON",
+                    default_value="/home/orin/venv/m20_nav/bin/python",
+                ),
             ),
             localization,
             nav2_group,

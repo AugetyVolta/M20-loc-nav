@@ -1,6 +1,9 @@
-DEFAULT_VENV_SITE = (
-    "/home/ubuntu/xlab/M20-loc-nav/"
-    ".venv/m20_nav_jazzy/lib/python3.12/site-packages"
+import os
+
+
+DEFAULT_VENV_SITE = os.environ.get(
+    "PCT_VENV_SITE",
+    "/home/orin/venv/m20_nav_cupy/lib/python3.10/site-packages",
 )
 
 CUDA_LIBRARY_PACKAGES = (

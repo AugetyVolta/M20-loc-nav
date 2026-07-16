@@ -23,7 +23,7 @@ find_package(plan_env REQUIRED)
 find_package(cv_bridge REQUIRED)
 
 find_package(Eigen3 REQUIRED)
-find_package(PCL REQUIRED)
+find_package(PCL REQUIRED COMPONENTS common)
 find_package(pcl_conversions REQUIRED)
 
 if(BUILD_TESTING)

@@ -1,0 +1,157 @@
+# DWB pure path-tracking profile.
+#
+# BaseObstacle is intentionally not loaded, so DWB neither rejects trajectories
+# that overlap costmap obstacles nor adds obstacle cost to trajectory scores.
+# The local costmap remains active because its traversability layer also publishes
+# /traversability_filtered_scan for the PCT global planner. Its costs are not used
+# by any DWB critic in this profile.
+
+controller_server:
+  ros__parameters:
+    use_sim_time: False
+    odom_topic: /odom_body
+    controller_frequency: 15.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.0
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.05
+      movement_time_allowance: 45.0
+
+    general_goal_checker:
+      stateful: False
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.5
+      yaw_goal_tolerance: 3.14
+
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: false
+
+      min_vel_x: 0.0
+      min_vel_y: 0.0
+      max_vel_x: 0.70
+      max_vel_y: 0.0
+      max_vel_theta: 0.65
+
+      min_speed_xy: 0.00
+      max_speed_xy: 0.70
+      min_speed_theta: 0.40
+
+      acc_lim_x: 1.20
+      acc_lim_y: 0.0
+      acc_lim_theta: 4.30
+      decel_lim_x: -1.50
+      decel_lim_y: 0.0
+      decel_lim_theta: -4.60
+
+      vx_samples: 20
+      vy_samples: 1
+      vtheta_samples: 31
+      sim_time: 1.45
+      linear_granularity: 0.03
+      angular_granularity: 0.025
+      transform_tolerance: 0.1
+      xy_goal_tolerance: 0.5
+      trans_stopped_velocity: 0.08
+      short_circuit_trajectory_evaluation: false
+      stateful: false
+
+      # No BaseObstacle critic: score only tracking quality and goal behavior.
+      critics: ["Oscillation", "PathAlign", "PathDist", "GoalDist", "RotateToGoal"]
+      PathAlign.scale: 26.0
+      PathAlign.forward_point_distance: 0.40
+      PathDist.scale: 34.0
+      GoalDist.scale: 6.0
+      RotateToGoal.scale: 10.0
+      RotateToGoal.slowing_factor: 4.0
+      RotateToGoal.lookahead_time: -1.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: False
+      footprint_padding: 0.03
+      update_frequency: 10.0
+      publish_frequency: 5.0
+      global_frame: odom_body
+      robot_base_frame: base_link
+      rolling_window: true
+      width: 5
+      height: 5
+      resolution: 0.05
+      transform_tolerance: 0.2
+      # base_link 位于机身中心；Lbody=0.82m, Wbody=0.506m。
+      # Nav2 footprint 使用 base_link 坐标系: x 向前, y 向左。
+      footprint: "[ [0.410, 0.253], [0.410, -0.253], [-0.410, -0.253], [-0.410, 0.253] ]"
+      robot_radius: 0.35
+      plugins: ["traversability_layer", "inflation_layer"]
+
+      traversability_layer:
+        # Retained for /traversability_filtered_scan; DWB ignores these costs.
+        plugin: "traversability_layer::TraversabilityLayer"
+        enabled: true
+        pointcloud_topic: /cloud_registered_body_1
+        sensor_frame: ""
+        base_frame: base_link
+
+        min_obstacle_height: -0.3
+        max_obstacle_height: 2.0
+        max_slope_traversable: 85.0
+        slope_cost_start: 70.0
+        step_height_threshold: 0.40
+        height_cost_start: 0.18
+        slope_cost_scale: 5.0
+        height_cost_scale: 10.0
+        lethal_cost_threshold: 254.0
+
+        observation_persistence: 1.0
+        cloud_buffer_size: 5
+        publish_slope_map: true
+
+        publish_filtered_scan: true
+        filtered_scan_input_topic: /scan
+        filtered_scan_topic: /traversability_filtered_scan
+        filtered_scan_min_cost: 160.0
+
+        cell_resolution: 0.0
+        num_threads: 0
+        voxel_z_resolution: 0.05
+        ground_hit_threshold: 1
+        free_space_threshold: 1
+        free_space_window: 3
+        interp_search_radius: 3
+        min_interp_neighbors: 2
+        obstacle_ratio_threshold: 0.75
+        obstacle_hit_threshold: 4
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.6
+
+      always_send_full_costmap: True
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: False
+    smoothing_frequency: 15.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+
+    max_velocity: [0.70, 0.0, 0.65]
+    min_velocity: [0.0, 0.0, -0.65]
+
+    max_accel: [0.9, 0.0, 4.3]
+    max_decel: [-1.1, 0.0, -4.6]
+
+    odom_topic: "/odom_body"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0

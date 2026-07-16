@@ -58,6 +58,8 @@ namespace ego_planner
     int target_type_; // 1 mannual select, 2 hard code
     double no_replan_thresh_, replan_thresh_;
     double min_goal_z_;
+    double goal_change_threshold_{0.15};
+    double goal_reached_threshold_{0.20};
     double waypoints_[50][3];
     int waypoint_num_, wp_id_;
     double planning_horizen_, planning_horizen_time_;

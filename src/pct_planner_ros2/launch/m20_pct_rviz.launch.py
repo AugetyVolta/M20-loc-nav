@@ -3,7 +3,7 @@ import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, SetEnvironmentVariable
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -52,7 +52,10 @@ def generate_launch_description():
             DeclareLaunchArgument("tomogram_file", default_value="m20_3d_map"),
             DeclareLaunchArgument(
                 "pcd_file",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd",
+                default_value=EnvironmentVariable(
+                    "M20_MAP_PCD",
+                    default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd",
+                ),
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("start_source", default_value="tf"),

@@ -255,7 +255,10 @@ def generate_launch_description():
             DeclareLaunchArgument("python_executable", default_value="python3"),
             DeclareLaunchArgument(
                 "rl_python_executable",
-                default_value="/home/ubuntu/miniconda3/envs/m20_nav/bin/python",
+                default_value=EnvironmentVariable(
+                    "M20_NAV_PYTHON",
+                    default_value="/home/orin/venv/m20_nav/bin/python",
+                ),
             ),
             DeclareLaunchArgument("start_pure_pursuit", default_value="true"),
             DeclareLaunchArgument("start_rl_local_path", default_value="true"),

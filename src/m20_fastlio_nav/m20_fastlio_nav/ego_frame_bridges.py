@@ -108,7 +108,7 @@ class EgoOdomBridge(Node):
             return
 
         out = Odometry()
-        out.header.stamp = msg.header.stamp
+        out.header.stamp = msg.header.stamp if msg is not None else tf_msg.header.stamp
         out.header.frame_id = self.output_frame
         out.child_frame_id = self.base_frame
         out.pose.pose.position.x = tf_msg.transform.translation.x

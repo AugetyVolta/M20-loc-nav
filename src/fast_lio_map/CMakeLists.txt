@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.8)
 project(fast_lio_map)
 
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/m20_humble_compat.cmake")
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()

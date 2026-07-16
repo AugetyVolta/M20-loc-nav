@@ -23,8 +23,8 @@ import sys
 import numpy as np
 
 QUATERNION = [-0.00394028, 0.24367785, 0.00970223, 0.96979969]  # x,y,z,w
-DEFAULT_INPUT = "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map.pcd"
-DEFAULT_OUTPUT = "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map_leveled.pcd"
+DEFAULT_INPUT = "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_map_raw.pcd"
+DEFAULT_OUTPUT = "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd"
 
 
 def parse_args():

@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -61,21 +61,33 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "pcd_file",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/global_map.pcd",
+                default_value=EnvironmentVariable(
+                    "M20_RAW_MAP_PCD",
+                    default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd",
+                ),
             ),
             DeclareLaunchArgument(
                 "output_map",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_2d_map",
+                default_value=EnvironmentVariable(
+                    "M20_MAP_2D_PREFIX",
+                    default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_2d_map",
+                ),
                 description="Output prefix for Nav2 2D map .pgm/.yaml files.",
             ),
             DeclareLaunchArgument(
                 "output_pcd",
-                default_value="/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_map_leveled.pcd",
+                default_value=EnvironmentVariable(
+                    "M20_MAP_PCD",
+                    default_value="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd",
+                ),
                 description="Output path for the leveled 3D PCD used by Open3D localization.",
             ),
             DeclareLaunchArgument(
                 "level_pcd_python",
-                default_value="/home/ubuntu/miniconda3/envs/m20_nav/bin/python",
+                default_value=EnvironmentVariable(
+                    "M20_NAV_CUPY_PYTHON",
+                    default_value="/home/orin/venv/m20_nav_cupy/bin/python",
+                ),
                 description="Python executable with open3d/scipy for level_pcd.py.",
             ),
             pcd2pgm,

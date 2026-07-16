@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.8)
 project(open3d_loc)
 
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/m20_humble_compat.cmake")
+
 # Default to C++14
 if(NOT CMAKE_CXX_STANDARD)
         set(CMAKE_CXX_STANDARD 14)
@@ -39,8 +41,15 @@ find_package(PCL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED COMPONENTS filesystem system)
 
-# Use the local Open3D C++ install for this workstation.
-set(Open3D_DIR "/home/ubuntu/xlab/third_party/Open3D/install/lib/cmake/Open3D" CACHE PATH "Open3D CMake package directory")
+# Use -DOpen3D_DIR first, then the environment loaded by source_m20_nav.sh,
+# and finally the Open3D installation on the M20 host.
+if(NOT Open3D_DIR OR NOT EXISTS "${Open3D_DIR}/Open3DConfig.cmake")
+        if(DEFINED ENV{M20_OPEN3D_ROOT})
+                set(Open3D_DIR "$ENV{M20_OPEN3D_ROOT}/lib/cmake/Open3D")
+        else()
+                set(Open3D_DIR "/home/orin/drivers/Open3D/install/lib/cmake/Open3D")
+        endif()
+endif()
 
 # set(Open3D_DIR "/home/unitree/open3d141_arm/open3d141/lib/cmake/Open3D")
 find_package(Open3D REQUIRED)

@@ -59,8 +59,14 @@ export PCT_VENV_SITE="${PCT_VENV_SITE:-${PCT_VENV}/lib/python3.10/site-packages}
 export M20_NAV_PYTHON="${M20_NAV_PYTHON:-/home/orin/venv/m20_nav/bin/python}"
 export M20_NAV_CUPY_PYTHON="${M20_NAV_CUPY_PYTHON:-${PCT_VENV}/bin/python}"
 export M20_MAP_PCD="${M20_MAP_PCD:-${M20_FASTLIO_WS}/maps/fastlio/m20_3d_map.pcd}"
+export M20_MAP_DIR="${M20_MAP_DIR:-${M20_FASTLIO_WS}/maps/fastlio}"
+export M20_MAPPING_PCD="${M20_MAPPING_PCD:-${M20_MAP_DIR}/m20_map_raw.pcd}"
+export M20_RAW_MAP_PCD="${M20_RAW_MAP_PCD:-${M20_MAP_DIR}/global_map.pcd}"
+export M20_MAP_2D_PREFIX="${M20_MAP_2D_PREFIX:-${M20_MAP_DIR}/m20_2d_map}"
 export M20_LIV_WS="${M20_LIV_WS:-${HOME}/liv_ws}"
 export M20_LIVEX_LIBUSB="${M20_LIVEX_LIBUSB:-/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0}"
+export M20_OPEN3D_ROOT="${M20_OPEN3D_ROOT:-/home/orin/drivers/Open3D/install}"
+export M20_OPEN3D_LIB="${M20_OPEN3D_LIB:-${M20_OPEN3D_ROOT}/lib}"
 
 _m20_source_if_exists "/opt/ros/humble/setup.bash" || echo "[m20_nav] missing /opt/ros/humble/setup.bash"
 _m20_source_if_exists "${M20_LIV_WS}/install/setup.bash" || true
@@ -77,6 +83,10 @@ _m20_prepend_path LD_LIBRARY_PATH "${PCT_PLANNER_ROOT}/planner/lib/3rdparty/gtsa
 _m20_prepend_path LD_LIBRARY_PATH "${PCT_PLANNER_ROOT}/planner/lib/3rdparty/osqp/install/lib"
 _m20_prepend_path LD_LIBRARY_PATH "${PCT_PLANNER_ROOT}/planner/lib"
 _m20_prepend_path LD_LIBRARY_PATH "${PCT_PLANNER_ROOT}/planner/lib/build/src/common/smoothing"
+_m20_prepend_path LD_LIBRARY_PATH "${M20_OPEN3D_LIB}"
+for _m20_cuda_lib_dir in "${PCT_VENV_SITE}"/nvidia/*/lib; do
+  _m20_prepend_path LD_LIBRARY_PATH "${_m20_cuda_lib_dir}"
+done
 
 if [ -d "${M20_FASTLIO_WS}/install/pct_planner_ros2" ]; then
   _m20_prepend_path AMENT_PREFIX_PATH "${M20_FASTLIO_WS}/install/pct_planner_ros2"
@@ -100,10 +110,12 @@ export M20_NAV_ENV_LOADED=1
 echo "[m20_nav] workspace: ${M20_FASTLIO_WS}"
 echo "[m20_nav] pct root:  ${PCT_PLANNER_ROOT}"
 echo "[m20_nav] map pcd:   ${M20_MAP_PCD}"
+echo "[m20_nav] Open3D:   ${M20_OPEN3D_ROOT}"
 
 unset -f _m20_source_if_exists
 unset -f _m20_prepend_path
 unset -f _m20_prepend_value
 unset -f _m20_ld_preload_has_realpath
 unset _m20_ld_items
+unset _m20_cuda_lib_dir
 unset _m20_nav_script_dir

@@ -1,6 +1,6 @@
 global_localization_node:
   ros__parameters:
-    path_map: "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd"
+    path_map: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd"
 
     # x, y, z, roll, pitch, yaw in degrees.
     # m20_3d_map.pcd is already leveled, so the default startup pose should stay planar.

@@ -1,4 +1,6 @@
 // #include <fstream>
+#include <algorithm>
+#include <cmath>
 #include <ego_planner/planner_manager.h>
 #include <thread>
 #include "visualization_msgs/msg/marker.hpp" // zx-todo
@@ -65,6 +67,10 @@ namespace ego_planner
                                         Eigen::Vector3d start_acc, Eigen::Vector3d local_target_pt,
                                         Eigen::Vector3d local_target_vel, bool flag_polyInit, bool flag_randomPolyTraj)
   {
+    constexpr size_t kMinPointCount = 7;
+    constexpr int kMaxSamplingAttempts = 30;
+    constexpr double kMinUsableArcLength = 1e-6;
+
     static int count = 0;
     printf("\033[47;30m\n[drone %d replan %d]==============================================\033[0m\n", pp_.drone_id, count++);
 
@@ -126,12 +132,16 @@ namespace ego_planner
           gl_traj = PolynomialTraj::minSnapTraj(pos, start_vel, local_target_vel, start_acc, Eigen::Vector3d::Zero(), t);
         }
 
-        double t;
-        bool flag_too_far;
+        double t = 0.0;
+        bool flag_too_far = false;
+        bool sampling_succeeded = false;
         ts *= 1.5; // ts will be divided by 1.5 in the next
-        do
+        for (int attempt = 0; attempt < kMaxSamplingAttempts; ++attempt)
         {
           ts /= 1.5;
+          if (!std::isfinite(ts) || ts <= 0.0)
+            break;
+
           point_set.clear();
           flag_too_far = false;
           Eigen::Vector3d last_pt = gl_traj.evaluate(0);
@@ -146,7 +156,23 @@ namespace ego_planner
             last_pt = pt;
             point_set.push_back(pt);
           }
-        } while (flag_too_far || point_set.size() < 7); // To make sure the initial path has enough points.
+
+          if (!flag_too_far && point_set.size() >= kMinPointCount)
+          {
+            sampling_succeeded = true;
+            break;
+          }
+        }
+
+        if (!sampling_succeeded)
+        {
+          RCLCPP_ERROR(rclcpp::get_logger("ego_planner"),
+                       "Failed to sample at least %zu points from the polynomial initial trajectory after %d attempts.",
+                       kMinPointCount, kMaxSamplingAttempts);
+          continous_failures_count_++;
+          return false;
+        }
+
         t -= ts;
         start_end_derivatives.push_back(gl_traj.evaluateVel(0));
         start_end_derivatives.push_back(local_target_vel);
@@ -156,8 +182,21 @@ namespace ego_planner
       else // Initial path generated from previous trajectory.
       {
 
-        double t;
+        double t = 0.0;
         double t_cur = (rclcpp::Clock().now() - local_data_.start_time_).seconds();
+
+        if (!std::isfinite(t_cur) || !std::isfinite(local_data_.duration_) || local_data_.duration_ < 0.0)
+        {
+          RCLCPP_WARN(rclcpp::get_logger("ego_planner"),
+                      "Previous trajectory has invalid time data (t_cur=%.6f, duration=%.6f); "
+                      "regenerating from a polynomial trajectory.",
+                      t_cur, local_data_.duration_);
+          flag_force_polynomial = true;
+          flag_regenerate = true;
+          continue;
+        }
+
+        t_cur = std::max(0.0, std::min(t_cur, local_data_.duration_));
 
         vector<double> pseudo_arc_length;
         vector<Eigen::Vector3d> segment_point;
@@ -196,28 +235,73 @@ namespace ego_planner
           }
         }
 
+        const double total_arc_length = pseudo_arc_length.back();
+        if (segment_point.size() != pseudo_arc_length.size() || pseudo_arc_length.size() < 2 ||
+            !std::isfinite(total_arc_length) || total_arc_length <= kMinUsableArcLength)
+        {
+          RCLCPP_WARN(rclcpp::get_logger("ego_planner"),
+                      "Previous trajectory is too short for arc-length sampling "
+                      "(samples=%zu, arc_length=%.9f, t_cur=%.6f, duration=%.6f); "
+                      "regenerating from a polynomial trajectory.",
+                      segment_point.size(), total_arc_length, t_cur, local_data_.duration_);
+          flag_force_polynomial = true;
+          flag_regenerate = true;
+          continue;
+        }
+
         double sample_length = 0;
         double cps_dist = pp_.ctrl_pt_dist * 1.5; // cps_dist will be divided by 1.5 in the next
         size_t id = 0;
-        do
+        bool sampling_succeeded = false;
+        for (int attempt = 0; attempt < kMaxSamplingAttempts; ++attempt)
         {
           cps_dist /= 1.5;
+          if (!std::isfinite(cps_dist) || cps_dist <= 0.0)
+            break;
+
           point_set.clear();
           sample_length = 0;
           id = 0;
-          while ((id <= pseudo_arc_length.size() - 2) && sample_length <= pseudo_arc_length.back())
+          while (id + 1 < pseudo_arc_length.size() && sample_length <= total_arc_length)
           {
-            if (sample_length >= pseudo_arc_length[id] && sample_length < pseudo_arc_length[id + 1])
+            const double arc_begin = pseudo_arc_length[id];
+            const double arc_end = pseudo_arc_length[id + 1];
+            const double arc_interval = arc_end - arc_begin;
+
+            if (!std::isfinite(arc_interval) || arc_interval <= kMinUsableArcLength)
             {
-              point_set.push_back((sample_length - pseudo_arc_length[id]) / (pseudo_arc_length[id + 1] - pseudo_arc_length[id]) * segment_point[id + 1] +
-                                  (pseudo_arc_length[id + 1] - sample_length) / (pseudo_arc_length[id + 1] - pseudo_arc_length[id]) * segment_point[id]);
+              ++id;
+              continue;
+            }
+
+            if (sample_length >= arc_begin && sample_length < arc_end)
+            {
+              point_set.push_back((sample_length - arc_begin) / arc_interval * segment_point[id + 1] +
+                                  (arc_end - sample_length) / arc_interval * segment_point[id]);
               sample_length += cps_dist;
             }
             else
-              id++;
+              ++id;
           }
           point_set.push_back(local_target_pt);
-        } while (point_set.size() < 7); // If the start point is very close to end point, this will help
+
+          if (point_set.size() >= kMinPointCount)
+          {
+            sampling_succeeded = true;
+            break;
+          }
+        }
+
+        if (!sampling_succeeded)
+        {
+          RCLCPP_WARN(rclcpp::get_logger("ego_planner"),
+                      "Arc-length sampling produced fewer than %zu points after %d attempts "
+                      "(arc_length=%.9f); regenerating from a polynomial trajectory.",
+                      kMinPointCount, kMaxSamplingAttempts, total_arc_length);
+          flag_force_polynomial = true;
+          flag_regenerate = true;
+          continue;
+        }
 
         start_end_derivatives.push_back(local_data_.velocity_traj_.evaluateDeBoorT(t_cur));
         start_end_derivatives.push_back(local_target_vel);

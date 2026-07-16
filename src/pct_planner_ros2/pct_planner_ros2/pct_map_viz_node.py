@@ -86,7 +86,9 @@ class PctMapVizNode(Node):
         super().__init__("pct_map_viz_node")
 
         self.declare_parameter("pct_root", default_pct_root())
-        self.declare_parameter("pcd_file", "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd")
+        self.declare_parameter(
+            "pcd_file", "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd"
+        )
         self.declare_parameter("tomogram_file", "m20_3d_map")
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("pointcloud_topic", "/global_points")

@@ -1,8 +1,8 @@
 # M20 MID360 3D 导航
 
-当前主线分支：`feature/3d-body-plane-nav`
+当前适配分支：`egoplanner`（机器狗主机 Ubuntu 22.04 / ROS 2 Humble）
 
-当前方案使用仓库内置的 PCT planner 输出 3D 全局路径，本仓库负责 Fast-LIO/Open3D 定位、PCT 全局规划、机体平面局部控制和底盘输出。Jie/OctoMap 全局规划方案已单独归档到分支 `archive/jie-octomap-global-planner`，归档提交为 `2907d0b`。
+当前方案使用仓库内置的 PCT planner 输出 3D 全局路径，本仓库负责 Fast-LIO/Open3D 定位、PCT 全局规划、机体平面局部控制和底盘输出。默认局部规划仍为实机已验证的 PRIEST-RL；可用 `local_planner_type:=ego` 切换到 EGO-Planner。Jie/OctoMap 全局规划方案已单独归档到分支 `archive/jie-octomap-global-planner`，归档提交为 `2907d0b`。
 
 ## 总体链路
 
@@ -29,6 +29,8 @@ MID360 点云/IMU
 | `/pct_path` | PCT planner 发布的 3D 全局路径 |
 | `/subgoal` | pure pursuit 从 `/pct_path` 选出的 `base_link` 局部目标 |
 | `/local_path` | RL local path 输出给 DWB 的局部路径 |
+| `/ego_goal_pose` | pure pursuit 提供给 EGO-Planner 的局部目标（EGO 模式） |
+| `/ego_local_path` | EGO-Planner B-spline 转换后的 DWB 局部路径（EGO 模式） |
 | `/cmd_vel` | DWB 输出 |
 | `/NAV_CMD` | 底盘控制输出 |
 
@@ -48,7 +50,8 @@ MID360 点云/IMU
 cd /mnt/nvme/workspace/fast_lio_ws
 source ./source_m20_nav.sh
 
-colcon build --symlink-install --packages-select pct_planner_ros2 move m20_fastlio_nav
+colcon build --symlink-install --packages-up-to \
+  pct_planner_ros2 move ego_planner m20_fastlio_nav
 source ./source_m20_nav.sh
 ```
 
@@ -89,6 +92,9 @@ MID360 需要的 libusb LD_PRELOAD
 | `PCT_PLANNER_ROOT` | `src/pct_planner_ros2/PCT_planner` | 仓库内置 PCT core |
 | `M20_NAV_CUPY_PYTHON` | `/home/orin/venv/m20_nav_cupy/bin/python` | PCD/PCT 处理 Python |
 | `M20_NAV_PYTHON` | `/home/orin/venv/m20_nav/bin/python` | RL 本地路径 Python |
+| `M20_OPEN3D_ROOT` | `/home/orin/drivers/Open3D/install` | Open3D C++ 安装目录 |
+
+所有 launch 默认读取这些变量；机器狗保持默认值即可，临时换地图或 Python 环境时只需在 `source_m20_nav.sh` 之前导出对应变量。
 
 ## 建 3D PCD 地图
 
@@ -150,18 +156,19 @@ Fast-LIO/PGO 保存出来的 `global_map.pcd` 是原始 3D 点云地图，可能
 - 处理：应用 MID360 外参粗旋平、RANSAC 地面平面微调、离群点过滤
 - 注意：输出仍然是 **3D PCD**，不是 2D 栅格地图
 
-你本机当前已有：
+机器狗主机默认输入地图：
 
 ```text
-/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/global_map.pcd
+/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd
 ```
 
-本机运行脚本用这个 Python 环境，因为里面有 `open3d`：
+先加载统一环境，再用包含 `open3d` 的地图处理 Python：
 
 ```bash
-cd /home/ubuntu/xlab/M20-loc-nav
+cd /mnt/nvme/workspace/fast_lio_ws
+source ./source_m20_nav.sh
 
-/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+"${M20_NAV_CUPY_PYTHON}" \
   src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py
 ```
 
@@ -180,9 +187,10 @@ maps/fastlio/m20_3d_map.pcd
 如果只是先试跑，不想覆盖正式输出：
 
 ```bash
-cd /home/ubuntu/xlab/M20-loc-nav
+cd /mnt/nvme/workspace/fast_lio_ws
+source ./source_m20_nav.sh
 
-/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+"${M20_NAV_CUPY_PYTHON}" \
   src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
   --output /tmp/m20_3d_map_check.pcd
 ```
@@ -190,7 +198,7 @@ cd /home/ubuntu/xlab/M20-loc-nav
 如果你明确要指定输入地图：
 
 ```bash
-/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+"${M20_NAV_CUPY_PYTHON}" \
   src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
   --input maps/fastlio/global_map.pcd \
   --output maps/fastlio/m20_3d_map.pcd
@@ -199,7 +207,7 @@ cd /home/ubuntu/xlab/M20-loc-nav
 如果只想改写/过滤 PCD，不做旋平：
 
 ```bash
-/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+"${M20_NAV_CUPY_PYTHON}" \
   src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
   --skip-align \
   --output /tmp/m20_3d_map_no_align_check.pcd
@@ -208,7 +216,7 @@ cd /home/ubuntu/xlab/M20-loc-nav
 如果确认地面识别正确，再使用 `--ground-zero` 把拟合地面平移到 `z=0`。建议先输出到临时文件检查：
 
 ```bash
-/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+"${M20_NAV_CUPY_PYTHON}" \
   src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
   --ground-zero \
   --output /tmp/m20_ground_zero_check.pcd
@@ -217,7 +225,7 @@ cd /home/ubuntu/xlab/M20-loc-nav
 确认没问题后再覆盖正式地图：
 
 ```bash
-/home/ubuntu/miniconda3/envs/m20_nav/bin/python \
+"${M20_NAV_CUPY_PYTHON}" \
   src/m20_fastlio_nav/m20_fastlio_nav/prepare_3d_nav_map.py \
   --ground-zero \
   --output maps/fastlio/m20_3d_map.pcd
@@ -243,23 +251,20 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 
 ## 启动 PCT Planner
 
-PCT planner 已放进本仓库。本机路径和环境如下：
+PCT planner 已放进本仓库。机器狗主机路径和环境如下：
 
 ```text
-workspace: /home/ubuntu/xlab/M20-loc-nav
-ROS:       /opt/ros/jazzy
-Livox:     /home/ubuntu/xlab/liv_ws/install
-PCT venv:  /home/ubuntu/xlab/M20-loc-nav/.venv/m20_nav_jazzy
+workspace: /mnt/nvme/workspace/fast_lio_ws
+ROS:       /opt/ros/humble
+Livox:     ~/liv_ws/install
+PCT venv:  /home/orin/venv/m20_nav_cupy
 ```
 
 每个新终端先加载环境：
 
 ```bash
-cd /home/ubuntu/xlab/M20-loc-nav
-
-source /opt/ros/jazzy/setup.bash
-source /home/ubuntu/xlab/liv_ws/install/setup.bash
-source /home/ubuntu/xlab/M20-loc-nav/install/setup.bash
+cd /mnt/nvme/workspace/fast_lio_ws
+source ./source_m20_nav.sh
 ```
 
 先确认 PCT 包已安装、CuPy 可用：
@@ -268,11 +273,11 @@ source /home/ubuntu/xlab/M20-loc-nav/install/setup.bash
 ros2 pkg prefix pct_planner_ros2
 ros2 pkg executables pct_planner_ros2
 
-CUDA_LIBS="$(find .venv/m20_nav_jazzy/lib/python3.12/site-packages/nvidia \
+CUDA_LIBS="$(find "${PCT_VENV_SITE}"/nvidia \
   -type d -name lib -printf '%p:')"
 
 LD_LIBRARY_PATH="${CUDA_LIBS}${LD_LIBRARY_PATH:-}" \
-  .venv/m20_nav_jazzy/bin/python -c \
+  "${M20_NAV_CUPY_PYTHON}" -c \
   "import cupy as cp; x=cp.arange(5); print(cp.__version__, int(cp.asnumpy(x.sum())))"
 ```
 
@@ -283,7 +288,7 @@ Tomography 会把处理后的 3D 导航 PCD 转成 PCT planner 使用的 travers
 当前默认输入地图来自“准备导航 PCD”这一步的输出，而不是原始 `global_map.pcd`：
 
 ```text
-/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd
+/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd
 ```
 
 链路是：
@@ -301,7 +306,7 @@ src/pct_planner_ros2/config/tomography.yaml
 关键参数：
 
 ```yaml
-pcd_file: "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/m20_3d_map.pcd"
+pcd_file: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd"
 output_tomogram_name: "m20_3d_map"
 ```
 
@@ -320,7 +325,7 @@ ros2 launch pct_planner_ros2 tomography.launch.py
 默认输出文件为：
 
 ```text
-/home/ubuntu/xlab/M20-loc-nav/install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle
+/mnt/nvme/workspace/fast_lio_ws/install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle
 ```
 
 输出文件名规则：
@@ -328,13 +333,17 @@ ros2 launch pct_planner_ros2 tomography.launch.py
 ```text
 <pct_root>/rsc/tomogram/<output_tomogram_name>.pickle
 ```
+cd /home/orin/M20-loc-nav
+source ./source_m20_nav.sh
 
+"${M20_NAV_CUPY_PYTHON}" -c \
+'import open3d as o3d; p=o3d.io.read_point_cloud("maps/fastlio/lab/m20_3d_map.pcd"); print(p); o3d.visualization.draw_geometries([p], window_name="M20 PCD Map")'
 生成后确认：
 
 ```bash
 ls -lh install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle
 
-.venv/m20_nav_jazzy/bin/python - <<'PY'
+"${M20_NAV_CUPY_PYTHON}" - <<'PY'
 import pickle
 p = "install/pct_planner_ros2/share/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map.pickle"
 d = pickle.load(open(p, "rb"))
@@ -350,11 +359,11 @@ PY
 `ros2 launch` 仍会读取 install 里的旧 YAML：
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source /home/ubuntu/xlab/liv_ws/install/setup.bash
+source /opt/ros/humble/setup.bash
+source ~/liv_ws/install/setup.bash
 
 colcon build --symlink-install --packages-select pct_planner_ros2
-source /home/ubuntu/xlab/M20-loc-nav/install/setup.bash
+source /mnt/nvme/workspace/fast_lio_ws/install/setup.bash
 ```
 
 ### 启动 PCT 全局规划
@@ -437,10 +446,14 @@ Bag 或仿真时间：
 cd /mnt/nvme/workspace/fast_lio_ws
 source ./source_m20_nav.sh
 
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py   use_sim_time:=true   map_pcd:=/home/orin/M20-loc-nav/maps/fastlio/building5/m20_3d_map.pcd   rviz:=true
+
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   use_sim_time:=true \
   map_pcd:="${M20_MAP_PCD}" \
   rviz:=true
+
+
 ```
 
 实车：
@@ -451,9 +464,59 @@ source ./source_m20_nav.sh
 
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   start_livox:=false \
-  map_pcd:="${M20_MAP_PCD}" \
+  map_pcd:=/home/orin/M20-loc-nav/maps/fastlio/lab/m20_3d_map.pcd \
+  pct_tomogram_file:=lab_m20_3d_map \
+  rviz:=true
+
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  start_livox:=false \
+  map_pcd:=/home/orin/M20-loc-nav/maps/fastlio/building5/m20_3d_map.pcd \
+  pct_tomogram_file:=building5_m20_3d_map \
   rviz:=true
 ```
+
+默认使用 PRIEST-RL 局部规划。切换到 EGO-Planner 时，定位、PCT、DWB 和
+`/NAV_CMD` 接口保持不变，仅替换 `/subgoal -> /local_path` 这一段：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  start_livox:=false \
+  map_pcd:=/home/orin/M20-loc-nav/maps/fastlio/lab/m20_3d_map.pcd \
+  pct_tomogram_file:=lab_m20_3d_map \
+  local_planner_type:=ego \
+  rviz:=true
+```
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  start_livox:=false \
+  map_pcd:=/home/orin/M20-loc-nav/maps/fastlio/building5/m20_3d_map.pcd \
+  pct_tomogram_file:=building5_m20_3d_map \
+  local_planner_type:=ego \
+  rviz:=true
+```
+
+若DWB为纯跟踪：
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  start_livox:=false \
+  map_pcd:=/home/orin/M20-loc-nav/maps/fastlio/building5/m20_3d_map.pcd \
+  pct_tomogram_file:=building5_m20_3d_map \
+  local_planner_type:=ego \
+  params_file:=/home/orin/M20-loc-nav/src/m20_fastlio_nav/config/nav2_dwb_path_tracking_only.yaml \
+  rviz:=true
+```
+
+EGO 模式接口链路：
+
+```text
+/pct_path -> pure_pursuit -> /ego_goal_pose
+/odom_body + /cloud_registered_body_1 -> EGO-Planner -> /ego_local_path
+/ego_local_path -> DWB -> /cmd_vel -> adapter -> /NAV_CMD
+```
+
+首次在实机启用 EGO 模式前，建议先加 `start_adapter:=false` 检查
+`/ego_goal_pose`、`/ego_local_path` 和 `/cmd_vel`，确认方向与 frame 正确后再连接底盘输出。
 
 ### Fast-LIO 前端选择
 
@@ -694,15 +757,15 @@ Package 'pct_planner_ros2' not found
 先确认源码包能够被 `colcon` 识别：
 
 ```bash
-cd /home/ubuntu/xlab/M20-loc-nav
+cd /mnt/nvme/workspace/fast_lio_ws
 colcon list | grep '^pct_planner_ros2'
 ```
 
 单独构建 PCT 包：
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source ~/xlab/liv_ws/install/setup.bash
+source /opt/ros/humble/setup.bash
+source ~/liv_ws/install/setup.bash
 
 colcon build --symlink-install --packages-select pct_planner_ros2
 ```
@@ -711,9 +774,9 @@ colcon build --symlink-install --packages-select pct_planner_ros2
 自动刷新 `AMENT_PREFIX_PATH`：
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source ~/xlab/liv_ws/install/setup.bash
-source ~/xlab/M20-loc-nav/install/setup.bash
+source /opt/ros/humble/setup.bash
+source ~/liv_ws/install/setup.bash
+source /mnt/nvme/workspace/fast_lio_ws/install/setup.bash
 ```
 
 验证包和可执行入口：
@@ -726,7 +789,7 @@ ros2 pkg executables pct_planner_ros2
 正常情况下，第一条命令应输出：
 
 ```text
-/home/ubuntu/xlab/M20-loc-nav/install/pct_planner_ros2
+/mnt/nvme/workspace/fast_lio_ws/install/pct_planner_ros2
 ```
 
 随后再启动：
@@ -737,18 +800,19 @@ ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py
 ```
 
 如果报错中的 `searching:` 路径列表不包含
-`/home/ubuntu/xlab/M20-loc-nav/install/pct_planner_ros2`，说明当前终端仍在
+`/mnt/nvme/workspace/fast_lio_ws/install/pct_planner_ros2`，说明当前终端仍在
 使用构建前的环境，需要再次执行上面的三个 `source` 命令。
 
 ### `ModuleNotFoundError: No module named 'cupy'`
 
-PCT tomography 使用 CuPy 在 NVIDIA GPU 上计算。ROS Jazzy 节点运行在项目的
-Python 3.12 环境中，安装兼容当前 NumPy/SciPy 的固定版本：
+PCT tomography 使用 CuPy 在 NVIDIA GPU 上计算。ROS Humble 节点运行在机器狗的
+Python 3.10 环境中，安装兼容当前 NumPy/SciPy 的固定版本：
 
 ```bash
-cd /home/ubuntu/xlab/M20-loc-nav
+cd /mnt/nvme/workspace/fast_lio_ws
+source ./source_m20_nav.sh
 
-.venv/m20_nav_jazzy/bin/python -m pip install \
+"${M20_NAV_CUPY_PYTHON}" -m pip install \
   -r src/pct_planner_ros2/requirements-cupy.txt
 ```
 
@@ -758,25 +822,25 @@ cd /home/ubuntu/xlab/M20-loc-nav
 安装后重新构建并加载环境：
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source ~/xlab/liv_ws/install/setup.bash
+source /opt/ros/humble/setup.bash
+source ~/liv_ws/install/setup.bash
 
 colcon build --symlink-install --packages-select pct_planner_ros2 m20_fastlio_nav
-source ~/xlab/M20-loc-nav/install/setup.bash
+source /mnt/nvme/workspace/fast_lio_ws/install/setup.bash
 ```
 
-PCT launch 会自动把 `.venv/m20_nav_jazzy` 的 site-packages 和
-`site-packages/nvidia/*/lib` 加入 `PYTHONPATH`、`LD_LIBRARY_PATH`，无需手动
+PCT launch 会自动把 `${PCT_VENV_SITE}` 和其中的
+`nvidia/*/lib` 加入 `PYTHONPATH`、`LD_LIBRARY_PATH`，无需手动
 导出 `libnvrtc.so.12` 路径。
 
 验证 CuPy：
 
 ```bash
-CUDA_LIBS="$(find .venv/m20_nav_jazzy/lib/python3.12/site-packages/nvidia \
+CUDA_LIBS="$(find "${PCT_VENV_SITE}"/nvidia \
   -type d -name lib -printf '%p:')"
 
 LD_LIBRARY_PATH="${CUDA_LIBS}${LD_LIBRARY_PATH:-}" \
-  .venv/m20_nav_jazzy/bin/python -c \
+  "${M20_NAV_CUPY_PYTHON}" -c \
   "import cupy as cp; x=cp.arange(5); print(cp.__version__, int(cp.asnumpy(x.sum())))"
 ```
 

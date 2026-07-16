@@ -1,7 +1,7 @@
 pcd2pgm:
   ros__parameters:
     # Raw Fast-LIO/PGO PCD. pcd2pgm levels it internally before generating the 2D map.
-    pcd_file: "/home/ubuntu/xlab/M20-loc-nav/maps/fastlio/global_map.pcd"
+    pcd_file: "/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/global_map.pcd"
 
     # Optional rigid transform applied before leveling. Keep zero unless the input PCD has a known offset.
     odom_to_lidar_odom: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

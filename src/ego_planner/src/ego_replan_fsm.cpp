@@ -24,6 +24,8 @@ namespace ego_planner
     node_->declare_parameter("fsm/fail_safe", true);
     node_->declare_parameter("fsm/goal_topic", "/move_base_simple/goal");
     node_->declare_parameter("fsm/min_goal_z", -100.0);
+    node_->declare_parameter("fsm/goal_change_threshold", 0.15);
+    node_->declare_parameter("fsm/goal_reached_threshold", 0.20);
 
     node_->get_parameter("fsm/flight_type", target_type_);
     node_->get_parameter("fsm/thresh_replan_time", replan_thresh_);
@@ -36,14 +38,21 @@ namespace ego_planner
     std::string goal_topic;
     node_->get_parameter("fsm/goal_topic", goal_topic);
     node_->get_parameter("fsm/min_goal_z", min_goal_z_);
+    node_->get_parameter("fsm/goal_change_threshold", goal_change_threshold_);
+    node_->get_parameter("fsm/goal_reached_threshold", goal_reached_threshold_);
+
+    goal_change_threshold_ = std::max(0.0, goal_change_threshold_);
+    goal_reached_threshold_ = std::max(0.0, goal_reached_threshold_);
 
     have_trigger_ = !flag_realworld_experiment_;
     RCLCPP_INFO(
         node_->get_logger(),
-        "EGO FSM config: flight_type=%d, goal_topic=%s, min_goal_z=%.3f, realworld_experiment=%s, initial_have_trigger=%s",
+        "EGO FSM config: flight_type=%d, goal_topic=%s, min_goal_z=%.3f, goal_change_threshold=%.3f, goal_reached_threshold=%.3f, realworld_experiment=%s, initial_have_trigger=%s",
         target_type_,
         goal_topic.c_str(),
         min_goal_z_,
+        goal_change_threshold_,
+        goal_reached_threshold_,
         flag_realworld_experiment_ ? "true" : "false",
         have_trigger_ ? "true" : "false");
 
@@ -134,7 +143,7 @@ namespace ego_planner
             rclcpp::QoS(10),
             [this, topic](const std::shared_ptr<const geometry_msgs::msg::PoseStamped> &msg)
             {
-              RCLCPP_INFO(
+              RCLCPP_DEBUG(
                   node_->get_logger(),
                   "EGO received goal on %s: frame=%s, xyz=(%.3f, %.3f, %.3f)",
                   topic.c_str(),
@@ -304,6 +313,33 @@ namespace ego_planner
       return;
     }
 
+    Eigen::Vector3d end_wp(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
+
+    const double goal_distance = (end_wp - odom_pos_).norm();
+    if (goal_distance < goal_reached_threshold_)
+    {
+      RCLCPP_DEBUG(
+          node_->get_logger(),
+          "Ignore EGO goal already reached: distance=%.3f, threshold=%.3f",
+          goal_distance,
+          goal_reached_threshold_);
+      return;
+    }
+
+    if (have_target_)
+    {
+      const double goal_change = (end_wp - end_pt_).norm();
+      if (goal_change < goal_change_threshold_)
+      {
+        RCLCPP_DEBUG(
+            node_->get_logger(),
+            "Ignore duplicate EGO goal: change=%.3f, threshold=%.3f",
+            goal_change,
+            goal_change_threshold_);
+        return;
+      }
+    }
+
     have_trigger_ = true;
     cout << "Triggered!" << endl;
     RCLCPP_INFO(
@@ -318,8 +354,6 @@ namespace ego_planner
         msg->pose.position.z);
 
     init_pt_ = odom_pos_;
-
-    Eigen::Vector3d end_wp(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
 
     planNextWaypoint(end_wp);
   }
