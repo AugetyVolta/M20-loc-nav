@@ -35,7 +35,7 @@ controller_server:
       # Keep the stable 2D DWB tuning; only cap forward speed for 3D testing.
       min_speed_xy: 0.00
       max_speed_xy: 0.70
-      min_speed_theta: 0.40
+      min_speed_theta: 0.50
 
       acc_lim_x: 1.20
       acc_lim_y: 0.0
@@ -76,22 +76,38 @@ local_costmap:
       global_frame: odom_body
       robot_base_frame: base_link
       rolling_window: true
-      width: 5
-      height: 5
+      width: 6
+      height: 6
       resolution: 0.05
       transform_tolerance: 0.2
       # base_link 位于机身中心；Lbody=0.82m, Wbody=0.506m。
       # Nav2 footprint 使用 base_link 坐标系: x 向前, y 向左。
       footprint: "[ [0.410, 0.253], [0.410, -0.253], [-0.410, -0.253], [-0.410, 0.253] ]"
       robot_radius: 0.35
-      plugins: ["traversability_layer", "inflation_layer"]
+      plugins: ["traversability_layer", "obstacle_layer", "inflation_layer"]
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /traversability_filtered_scan
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          inf_is_valid: True
+          raytrace_max_range: 12.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 8.0
+          obstacle_min_range: 0.0
 
       traversability_layer:
         # 插件类名，必须和 traversability_layer_plugin.xml 导出的类一致。
         plugin: "traversability_layer::TraversabilityLayer"
 
         # 是否启用这一层。false 时插件还会加载，但不会往 local costmap 写代价。
-        enabled: true
+        enabled: false
 
         # 输入点云。算法阈值保持源码默认，但话题必须匹配当前 M20 Fast-LIO 输出。
         # 如果这个话题没数据，local costmap 就不会得到三维可通行性信息。
@@ -108,7 +124,7 @@ local_costmap:
 
         # 参与分析的最低点云高度，相对 base_frame，单位 m。
         # 更小会保留更低的地面/下台阶点；太小可能引入地面以下噪声。
-        min_obstacle_height: -0.3
+        min_obstacle_height: 0.0
 
         # 参与分析的最高点云高度，相对 base_frame，单位 m。
         # 更大能看到高障碍；太大可能引入天花板/上层结构并增加计算量。
@@ -152,9 +168,10 @@ local_costmap:
         # 是否发布调试点云 slope_map，用 intensity 表示 cost，方便 RViz 看可通行性结果。
         publish_slope_map: true
 
-        # 订阅原始 /scan，按 traversability cost 过滤后发布给 PCT 全局动态避障使用。
-        # 只有 endpoint 落在已知高代价格子时才保留；可通行、未知、无地面区域都会置为 inf。
-        publish_filtered_scan: true
+        # 兼容旧版按 traversability cost 过滤 /scan 的方案，默认关闭。
+        # 开启后只有 endpoint 落在已知高代价格子时才保留；可通行、未知、无地面区域置为 inf。
+        # 输出话题与独立 tomogram filter 相同；测试时还需 enabled=true，并关闭独立 filter。
+        publish_filtered_scan: false
         filtered_scan_input_topic: /scan
         filtered_scan_topic: /traversability_filtered_scan
         filtered_scan_min_cost: 160.0
@@ -195,7 +212,7 @@ local_costmap:
 
         # 判定某个上方体素是障碍体素的最小 hit 数。
         # 调大可过滤噪声；调小对细障碍更敏感。
-        obstacle_hit_threshold: 4
+        obstacle_hit_threshold: 1
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"

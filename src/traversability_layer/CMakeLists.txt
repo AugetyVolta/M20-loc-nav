@@ -30,6 +30,10 @@ add_library(${PROJECT_NAME} SHARED
   src/traversability_layer.cpp
 )
 
+add_executable(tomogram_scan_filter_node
+  src/tomogram_scan_filter_node.cpp
+)
+
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
@@ -38,6 +42,10 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 target_link_libraries(${PROJECT_NAME}
   ${PCL_LIBRARIES}
   OpenMP::OpenMP_CXX
+)
+
+target_link_libraries(tomogram_scan_filter_node
+  ${PCL_LIBRARIES}
 )
 
 ament_target_dependencies(${PROJECT_NAME}
@@ -52,13 +60,26 @@ ament_target_dependencies(${PROJECT_NAME}
   pcl_conversions
 )
 
+ament_target_dependencies(tomogram_scan_filter_node
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  tf2
+  tf2_ros
+  pcl_conversions
+)
+
 pluginlib_export_plugin_description_file(nav2_costmap_2d traversability_layer_plugin.xml)
 
 install(
   TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin
+)
+
+install(
+  TARGETS tomogram_scan_filter_node
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 install(

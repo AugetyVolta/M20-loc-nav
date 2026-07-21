@@ -11,10 +11,11 @@ MID360 点云/IMU
   -> Fast-LIO 建图或定位
   -> Open3D 全局定位提供 map -> odom
   -> fastlio_odom_bridge 输出 /odom_body，并发布 map -> odom_body 与 odom -> base_link
-  -> pointcloud_to_laserscan 输出 /scan
+  -> pointcloud_to_laserscan 输出原始 /scan（调试）
+  -> tomogram_scan_filter_node 根据静态 tomogram 生成 /traversability_filtered_scan
   -> pct_planner_ros2 输出 /pct_path
   -> pure_pursuit 在 3D 路径上按 1.8m 前视距离发布 /subgoal
-  -> priest_rl_publisher_nav_cmd_fast 根据 /subgoal 和 /scan 发布 /local_path
+  -> priest_rl_publisher_nav_cmd_fast 根据 /subgoal 和 /traversability_filtered_scan 发布 /local_path
   -> DWB 跟踪 /local_path 输出 /cmd_vel
   -> adapter 输出 /NAV_CMD
 ```
@@ -25,7 +26,8 @@ MID360 点云/IMU
 |---|---|
 | `/Odometry_loc` | Fast-LIO 定位原始输出 |
 | `/odom_body` | 局部控制使用的机体平面 odom |
-| `/scan` | local/global costmap 和 RL local path 共用的 LaserScan |
+| `/scan` | 原始 LaserScan，用于 RViz 和过滤前后对比 |
+| `/traversability_filtered_scan` | 基于静态 tomogram XYZ 匹配过滤后，供 PCT 动态层和 RL local path 使用 |
 | `/pct_path` | PCT planner 发布的 3D 全局路径 |
 | `/subgoal` | pure pursuit 从 `/pct_path` 选出的 `base_link` 局部目标 |
 | `/local_path` | RL local path 输出给 DWB 的局部路径 |
@@ -48,7 +50,7 @@ MID360 点云/IMU
 cd /mnt/nvme/workspace/fast_lio_ws
 source ./source_m20_nav.sh
 
-colcon build --symlink-install --packages-select pct_planner_ros2 move m20_fastlio_nav
+colcon build --symlink-install --packages-select pct_planner_ros2 traversability_layer move m20_fastlio_nav
 source ./source_m20_nav.sh
 ```
 
@@ -257,6 +259,12 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   rviz:=true
 ```
 
+上下楼梯步态切换默认开启。需要临时关闭时，加：
+
+```bash
+pct_stair_gait_udp_enabled:=false
+```
+
 ### Fast-LIO 前端选择
 
 主导航默认使用 `fast_lio` 作为 Fast-LIO 前端。当前测试结果是：
@@ -331,25 +339,31 @@ docs/fastlio_frontend_notes.md
 | `pct_replan_interval` | `1.0` | 每 1 秒检查是否需要重规划 |
 | `pct_position_epsilon` | `0.2` | 起点或终点变化超过 0.2m 才重规划 |
 | `pct_always_replan` | `true` | 主导航默认按 `pct_replan_interval` 定周期更新 `/pct_path`；动态感知只更新代价层，不单独触发即时重规划 |
-| `pct_global_path_perception_enabled` | `true` | 主导航默认用 traversability 过滤后的 scan 触发 PCT 全局路径感知更新 |
-| `pct_global_path_perception_scan_topic` | `/traversability_filtered_scan` | PCT 动态避障输入；楼梯/平台交界处由 traversability_layer 先过滤 |
+| `pct_global_path_perception_enabled` | `true` | 主导航默认用三维地面过滤后的 scan 更新 PCT 动态障碍层 |
+| `pct_global_path_perception_scan_topic` | `/traversability_filtered_scan` | PCT 动态避障输入；XYZ 贴合静态 tomogram 的地面点在生成 scan 前被删除 |
 | `pct_global_path_perception_width` | `6.0` | PCT 全局路径感知窗口宽度，覆盖机器人前后左右近场障碍 |
 | `pct_global_path_perception_height` | `6.0` | PCT 全局路径感知窗口高度，覆盖机器人前后左右近场障碍 |
-| `pct_global_path_perception_inflation_radius` | `0.60` | PCT 动态障碍膨胀半径，对齐 2D local costmap 的近场避障宽度 |
-| `pct_global_path_perception_cost_scaling_factor` | `5.0` | 动态代价衰减速度，对齐 Nav2 costmap inflation 的默认调法 |
+| `pct_global_path_perception_inflation_radius` | `0.60` | PCT 动态障碍软膨胀半径，核心外侧仍给 A* 平滑避障代价 |
+| `pct_global_path_perception_inscribed_radius` | `0.35` | PCT 动态障碍硬核心半径；半径内的动态障碍格子在 A* 中直接不可通行 |
+| `pct_global_path_perception_cost_scaling_factor` | `5.0` | 动态软膨胀代价衰减速度，数值越大衰减越快，避免路径被软代价推得过远 |
 | `pct_global_path_perception_persistence` | `5.0` | 动态观测兜底保留时间；主要清除机制是 raytrace clearing |
 | `pct_global_path_perception_raytrace_enabled` | `true` | 使用 LaserScan 射线清除动态层自由空间，行为更接近 Nav2 obstacle_layer |
 | `pct_global_path_perception_raytrace_max_range` | `0.0` | raytrace 最大距离；`0.0` 表示自动使用感知窗口和 scan `range_max` 的较小值 |
 | `pct_global_path_perception_raytrace_max_rays` | `360` | 每次最多处理的清除射线数，限制 Python 动态层计算量 |
-| `scan_topic` | `/scan` | costmap 与 RL 使用同一个 LaserScan |
+| `scan_topic` | `/scan` | 原始 LaserScan，由 pointcloud_to_laserscan 输出，保留用于对比和调试 |
+| `rl_scan_topic` | `/traversability_filtered_scan` | RL/PRIEST local path 使用的过滤后 LaserScan |
+| `start_tomogram_scan_filter` | `true` | 启动独立三维点云地面过滤和 filtered scan 生成节点 |
+| `tomogram_scan_filter.yaml` | 见配置文件 | 调节 tomogram XYZ 匹配和 scan 范围 |
 | `output_odom_topic` | `/odom_body` | DWB、RL 和 adapter 使用的 body-plane odom |
 | `start_pure_pursuit` | `true` | 默认启动 pure pursuit |
+| `heading_change_guard_stair_only` | `true` | pure pursuit 大转角保护只在 `/pct_stair_state=stair_up/stair_down` 时生效，平地允许原地掉头 |
 | `start_rl_local_path` | `true` | 默认启动 RL local path |
 | `start_adapter` | `true` | 默认启动 `/local_path -> /NAV_CMD` 适配 |
+| `pct_stair_down_gait_param` | `4099` | 下楼默认切到标准楼梯步态；需要测试敏捷楼梯步态时改为 `12291` |
 | `body_scan_min_height` | `-0.1` | 从 body 点云生成 scan 的最低高度 |
 | `body_scan_max_height` | `0.55` | 从 body 点云生成 scan 的最高高度 |
 
-PCT 全局路径感知更新在 C++ core 中维护，不会修改或重新生成完整 tomogram；离线 3D tomogram 仍是长期地形地图。主导航默认不再直接使用原始 `/scan`，而是使用 `traversability_layer` 发布的 `/traversability_filtered_scan`。这个 scan 来自原始 `/scan`，但只有 endpoint 落在 traversability 明确判为高代价/不可通行的格子时才保留；可通行、未知、无地面区域都会置为 `inf`。当前 `local_costmap` 是 `5m x 5m`，filtered scan 的有效范围先受 local costmap 限制。PCT 动态层按 Nav2 costmap 思路维护 source grid：有限 hit beam 只 mark 障碍源点，`inf`/远距离 beam 或 hit 前方自由空间会 raytrace clear 障碍源点；source 变化后再统一重算 inflation cost。`persistence` 只是兜底超时清除。
+PCT 全局路径感知更新在 C++ core 中维护，不会修改或重新生成完整 tomogram；离线 3D tomogram 仍是长期地形地图。当前 local costmap 使用 `ObstacleLayer` 订阅 `/traversability_filtered_scan`，`traversability_layer.enabled=false`；旧的 traversability cost 过滤和 slope map 发布代码仍保留，只有显式开启该 layer 后才运行。独立 `tomogram_scan_filter_node` 读取 `/cloud_registered_body_1` 的真实三维点，只删除 XYZ 贴合静态 PCT 可通行 tomogram 的点；栏杆、人、高于地面的动态障碍和 tomogram 未覆盖点默认保留。具体参数在 `src/m20_fastlio_nav/config/tomogram_scan_filter.yaml`。PCT 动态层继续按 Nav2 costmap 思路维护 source grid：有限 hit beam mark 障碍源点，`inf`/远距离 beam 或 hit 前方自由空间执行 raytrace clear，然后统一重算 inflation cost。
 
 PCT 动态层保留静态障碍跳过保护，避免静态 tomogram 已经包含的墙体又作为动态障碍重复膨胀：
 

@@ -45,7 +45,8 @@ void TraversabilityLayer::onInitialize()
   declareParameter("publish_slope_map", rclcpp::ParameterValue(false));
   declareParameter("publish_filtered_scan", rclcpp::ParameterValue(false));
   declareParameter("filtered_scan_input_topic", rclcpp::ParameterValue(std::string("/scan")));
-  declareParameter("filtered_scan_topic", rclcpp::ParameterValue(std::string("/traversability_filtered_scan")));
+  declareParameter(
+    "filtered_scan_topic", rclcpp::ParameterValue(std::string("/traversability_filtered_scan")));
   declareParameter("filtered_scan_min_cost", rclcpp::ParameterValue(128.0));
   declareParameter("cell_resolution", rclcpp::ParameterValue(0.0));
   declareParameter("num_threads", rclcpp::ParameterValue(0));
@@ -120,8 +121,7 @@ void TraversabilityLayer::onInitialize()
     interp_search_radius_, min_interp_neighbors_,
     obstacle_ratio_threshold_, obstacle_hit_threshold_,
     static_cast<int>(publish_filtered_scan_), filtered_scan_input_topic_.c_str(),
-    filtered_scan_topic_.c_str(),
-    filtered_scan_min_cost_, num_threads_);
+    filtered_scan_topic_.c_str(), filtered_scan_min_cost_, num_threads_);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -323,8 +323,8 @@ void TraversabilityLayer::filteredScanCallback(const sensor_msgs::msg::LaserScan
       continue;
     }
 
-    // M20 launch generates /scan in base_link. If another frame is fed in,
-    // keep the beam instead of filtering with a wrong transform.
+    // The M20 launch generates /scan in base_link. Preserve beams from an
+    // unexpected frame instead of filtering them with a wrong transform.
     if (!frame_ok) {
       kept++;
       continue;
@@ -1037,7 +1037,9 @@ unsigned char TraversabilityLayer::computeCost(const GroundCell & cell) const
 
 bool TraversabilityLayer::shouldKeepScanPoint(double x_base, double y_base) const
 {
-  if (!voxel_grid_valid_ || !robot_pose_valid_ || ground_map_.empty() || cell_resolution_ <= 0.0) {
+  if (!voxel_grid_valid_ || !robot_pose_valid_ || ground_map_.empty() ||
+    cell_resolution_ <= 0.0)
+  {
     return false;
   }
 
@@ -1049,15 +1051,14 @@ bool TraversabilityLayer::shouldKeepScanPoint(double x_base, double y_base) cons
   const int cy = static_cast<int>(std::floor((wy - voxel_oy_) / cell_resolution_));
 
   if (cx < 0 || cy < 0 ||
-      cx >= static_cast<int>(ground_size_x_) ||
-      cy >= static_cast<int>(ground_size_y_))
+    cx >= static_cast<int>(ground_size_x_) ||
+    cy >= static_cast<int>(ground_size_y_))
   {
     return false;
   }
 
   const auto & cell = ground_map_[groundIndex(
-      static_cast<unsigned int>(cx),
-      static_cast<unsigned int>(cy))];
+      static_cast<unsigned int>(cx), static_cast<unsigned int>(cy))];
   if (!cell.has_ground) {
     return false;
   }
@@ -1269,7 +1270,9 @@ void TraversabilityLayer::updateCosts(
           pcl::PointXYZI pt;
           pt.x = static_cast<float>(voxel_ox_ + cx * cell_resolution_);
           pt.y = static_cast<float>(voxel_oy_ + cy * cell_resolution_);
-          pt.z = cell.obstacle_ratio > 0.0f ? cell.min_obstacle_z : cell.ground_z;
+          // slope_map is a ground-surface product. Keep obstacle information in
+          // intensity so consumers never mistake an obstacle bottom for ground.
+          pt.z = cell.ground_z;
           unsigned char cost = computeCost(cell);
           pt.intensity = static_cast<float>(cost) / 254.0f;
           slope_cloud->push_back(pt);

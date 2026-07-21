@@ -115,6 +115,66 @@ local_costmap:
 - **局部costmap缓冲**: 消除cost写入的临界区
 - **数据压缩**: voxel数据从uint16_t压缩为uint8_t，使用memset快速初始化
 
+## 独立 filtered scan 节点
+
+`TraversabilityLayer` 只负责 Nav2 local costmap，当前主导航配置中默认关闭。过滤后的
+LaserScan 由独立的 `tomogram_scan_filter_node` 生成，不再用二维 costmap cost 判断一个
+beam 是否为地面；local costmap 的 `ObstacleLayer` 订阅这份过滤结果。
+
+节点订阅：
+
+- `/cloud_registered_body_1`：保留真实 Z 的当前帧三维点云。
+- `/traversability_tomogram`：主导航专用的 PCT 可通行表面；与 tomography
+  调试使用的 `/tomogram` 分开，避免多个 transient-local 发布者互相覆盖。
+
+节点对每个三维点同时计算 `base_link` 坐标和 `map` 坐标。先用 `base_link.z` 选择参与
+LaserScan 的高度范围，再用点的 `map.x/y/z` 查询最近的 tomogram 可通行表面。只有 XY
+足够接近且 Z 高度落在地面容差内的点才删除。过滤只使用静态 tomogram，不再使用
+`slope_map`，避免局部地面提取把稀疏栏杆误判为地面并删除。栏杆、人和高于地面的障碍
+继续进入 `/traversability_filtered_scan`；tomogram 未覆盖的位置默认保留。
+
+M20 参数位于：
+
+```text
+src/m20_fastlio_nav/config/tomogram_scan_filter.yaml
+```
+
+主要参数：
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `enabled` | `true` | `false` 时不删地面，只从三维点云生成原始 scan，便于 A/B 测试 |
+| `min_height` / `max_height` | `-0.10m` / `0.80m` | 生成 scan 的 `base_link` 高度范围；上限覆盖稀疏栏杆的更多回波 |
+| `tomogram_grid_resolution` | `0.20m` | 必须与当前 `m20_3d_map.pickle` 的生成分辨率一致 |
+| `ground_xy_tolerance` | `0.20m` | 点与可通行 tomogram cell 的最大平面距离；包含网格角点及少量定位误差 |
+| `ground_z_min_offset` | `-0.20m` | M20 主导航允许点低于 tomogram 地面的高度误差 |
+| `ground_z_max_offset` | `0.22m` | M20 主导航允许点高于 tomogram 地面的高度；调大可能漏掉低矮障碍 |
+| `traversable_cost_max` | `45.0` | 可作为地面的最大 tomogram cost，主 launch 与 PCT 阈值同步 |
+| `keep_points_without_ground` | `true` | tomogram 未覆盖位置保留点，保护未知障碍和稀疏栏杆 |
+| `min_tomogram_points` | `1000` | tomogram 可通行点数完整性下限；不足时拒绝该消息并继续等待，避免空地图或测试地图锁死过滤器 |
+
+### 旧版 cost 过滤对比
+
+`TraversabilityLayer` 仍保留按实时 traversability cost 过滤原始 `/scan` 的旧方案，参数位于
+`nav2_dwb_body_plane.yaml` 的 `local_costmap.traversability_layer`：
+
+| 参数 | M20 配置值 | 说明 |
+|---|---:|---|
+| `publish_filtered_scan` | `false` | 是否启用旧版 cost 过滤；默认关闭 |
+| `filtered_scan_input_topic` | `/scan` | 输入原始 LaserScan |
+| `filtered_scan_topic` | `/traversability_filtered_scan` | 过滤后输出话题 |
+| `filtered_scan_min_cost` | `160.0` | endpoint 所在格 cost 不低于该值才保留；未知或无地面格删除 |
+
+旧版过滤与独立 `tomogram_scan_filter_node` 使用相同输出话题，不能同时开启。测试旧版时将
+`traversability_layer.enabled` 和 `publish_filtered_scan` 都改为 `true`，并在主 launch
+命令中传入 `start_tomogram_scan_filter:=false`。
+
+修改 YAML 后只需要重启主导航，不需要重新编译。修改 C++ 源码后执行：
+
+```bash
+colcon build --symlink-install --packages-select traversability_layer m20_fastlio_nav
+```
+
 ## 编译
 
 ```bash

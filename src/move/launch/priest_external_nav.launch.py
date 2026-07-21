@@ -64,6 +64,8 @@ def generate_launch_description():
     rl_expand_external_subgoal = LaunchConfiguration("rl_expand_external_subgoal")
     use_arc_length_lookahead = LaunchConfiguration("use_arc_length_lookahead")
     heading_change_guard_enabled = LaunchConfiguration("heading_change_guard_enabled")
+    heading_change_guard_stair_only = LaunchConfiguration("heading_change_guard_stair_only")
+    stair_state_topic = LaunchConfiguration("stair_state_topic")
     max_heading_change_deg = LaunchConfiguration("max_heading_change_deg")
     turn_guard_min_lookahead = LaunchConfiguration("turn_guard_min_lookahead")
     turn_guard_pre_distance = LaunchConfiguration("turn_guard_pre_distance")
@@ -141,6 +143,10 @@ def generate_launch_description():
             ["use_arc_length_lookahead:=", use_arc_length_lookahead],
             "-p",
             ["heading_change_guard_enabled:=", heading_change_guard_enabled],
+            "-p",
+            ["heading_change_guard_stair_only:=", heading_change_guard_stair_only],
+            "-p",
+            ["stair_state_topic:=", stair_state_topic],
             "-p",
             ["max_heading_change_deg:=", max_heading_change_deg],
             "-p",
@@ -291,6 +297,8 @@ def generate_launch_description():
             DeclareLaunchArgument("rl_expand_external_subgoal", default_value="false"),
             DeclareLaunchArgument("use_arc_length_lookahead", default_value="true"),
             DeclareLaunchArgument("heading_change_guard_enabled", default_value="true"),
+            DeclareLaunchArgument("heading_change_guard_stair_only", default_value="true"),
+            DeclareLaunchArgument("stair_state_topic", default_value="/pct_stair_state"),
             DeclareLaunchArgument("max_heading_change_deg", default_value="35.0"),
             DeclareLaunchArgument("turn_guard_min_lookahead", default_value="0.6"),
             DeclareLaunchArgument("turn_guard_pre_distance", default_value="0.7"),
