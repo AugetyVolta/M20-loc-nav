@@ -306,7 +306,7 @@ def generate_launch_description():
             DeclareLaunchArgument("require_localization_confidence", default_value="false"),
             DeclareLaunchArgument("adapter_goal_send_hz", default_value="3.0"),
             DeclareLaunchArgument("adapter_min_goal_resend_interval", default_value="0.35"),
-            DeclareLaunchArgument("adapter_path_timeout", default_value="1.0"),
+            DeclareLaunchArgument("adapter_path_timeout", default_value="1.2"),
             DeclareLaunchArgument("adapter_pause_nav_cmd_topic", default_value="/stair_gait_pause_nav_cmd"),
             DeclareLaunchArgument("adapter_pause_nav_cmd_timeout", default_value="0.5"),
             rviz_waypoints,

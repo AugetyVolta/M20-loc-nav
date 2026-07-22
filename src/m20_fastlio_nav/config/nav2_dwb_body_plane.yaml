@@ -28,39 +28,41 @@ controller_server:
 
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.70
+      max_vel_x: 0.80
       max_vel_y: 0.0
       max_vel_theta: 0.65
 
-      # Keep the stable 2D DWB tuning; only cap forward speed for 3D testing.
-      min_speed_xy: 0.00
-      max_speed_xy: 0.70
+      # 与 2D 稳定版保持同一底盘死区：非零线速度不低于 0.20，
+      # 非零角速度不低于 0.50；velocity_smoother 不再二次截断死区。
+      min_speed_xy: 0.20
+      max_speed_xy: 0.80
       min_speed_theta: 0.50
 
-      acc_lim_x: 1.20
+      acc_lim_x: 1.50
       acc_lim_y: 0.0
-      acc_lim_theta: 4.30
-      decel_lim_x: -1.50
+      acc_lim_theta: 4.60
+      decel_lim_x: -3.50
       decel_lim_y: 0.0
       decel_lim_theta: -4.60
 
       vx_samples: 20
       vy_samples: 1
       vtheta_samples: 31
-      sim_time: 1.45
+      sim_time: 2.0
       linear_granularity: 0.03
       angular_granularity: 0.025
-      transform_tolerance: 0.1
+      transform_tolerance: 0.3
       xy_goal_tolerance: 0.5
-      trans_stopped_velocity: 0.08
-      short_circuit_trajectory_evaluation: false
+      trans_stopped_velocity: 0.15
+      short_circuit_trajectory_evaluation: true
       stateful: false
 
-      critics: ["Oscillation", "BaseObstacle", "PathAlign", "PathDist", "GoalDist", "RotateToGoal"]
-      BaseObstacle.scale: 0.02
+      critics: ["ObstacleFootprint", "BaseObstacle", "PathAlign", "PathDist", "GoalDist", "RotateToGoal"]
+      ObstacleFootprint.scale: 0.02
+      BaseObstacle.scale: 0.03
       PathAlign.scale: 26.0
       PathAlign.forward_point_distance: 0.40
-      PathDist.scale: 34.0
+      PathDist.scale: 28.0
       GoalDist.scale: 6.0
       RotateToGoal.scale: 10.0
       RotateToGoal.slowing_factor: 4.0
@@ -79,7 +81,7 @@ local_costmap:
       width: 6
       height: 6
       resolution: 0.05
-      transform_tolerance: 0.2
+      transform_tolerance: 0.3
       # base_link 位于机身中心；Lbody=0.82m, Wbody=0.506m。
       # Nav2 footprint 使用 base_link 坐标系: x 向前, y 向左。
       footprint: "[ [0.410, 0.253], [0.410, -0.253], [-0.410, -0.253], [-0.410, 0.253] ]"
@@ -228,11 +230,11 @@ velocity_smoother:
     scale_velocities: False
     feedback: "OPEN_LOOP"
 
-    max_velocity: [0.70, 0.0, 0.65]
+    max_velocity: [0.8, 0.0, 0.65]
     min_velocity: [0.0, 0.0, -0.65]
 
-    max_accel: [0.9, 0.0, 4.3]
-    max_decel: [-1.1, 0.0, -4.6]
+    max_accel: [1.5, 0.0, 4.6]
+    max_decel: [-3.5, 0.0, -4.6]
 
     odom_topic: "/odom_body"
     odom_duration: 0.1

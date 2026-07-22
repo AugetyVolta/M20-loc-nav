@@ -43,7 +43,9 @@ class PriestMppiAdapterNavCmd(Node):
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("path_transform_use_3d", False)
         self.declare_parameter("tf_timeout", 0.03)
-        self.declare_parameter("path_timeout", 1.0)
+        # Local paths normally arrive much faster than this. The grace period
+        # tolerates one delayed inference cycle without hiding a real stall.
+        self.declare_parameter("path_timeout", 1.2)
         self.declare_parameter("goal_send_hz", 3.0)
         self.declare_parameter("min_goal_resend_interval", 0.35)
         self.declare_parameter("min_path_points", 4)
@@ -488,9 +490,18 @@ class PriestMppiAdapterNavCmd(Node):
         if goal_handle is None or not goal_handle.accepted:
             self.get_logger().warn("FollowPath goal rejected")
             return
-        if goal_seq != self.latest_path_seq or self.latest_path is None:
-            self._cancel_follow_path_goal_handle(goal_handle, f"stale path seq {goal_seq}")
+        if self.latest_path is None:
+            self._cancel_follow_path_goal_handle(goal_handle, "local path cleared")
             return
+
+        # A newer local path may arrive while this asynchronous request is
+        # accepted. Keep this valid goal running until the timer submits the
+        # newer path; canceling here would insert a zero-velocity gap.
+        if goal_seq != self.latest_path_seq:
+            self.get_logger().debug(
+                f"FollowPath goal seq {goal_seq} accepted behind latest path "
+                f"seq {self.latest_path_seq}; scheduling a seamless update"
+            )
 
         self._active_goal_handle = goal_handle
         self._active_goal_seq = goal_seq

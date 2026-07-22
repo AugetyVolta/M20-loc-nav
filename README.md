@@ -359,6 +359,7 @@ docs/fastlio_frontend_notes.md
 | `heading_change_guard_stair_only` | `true` | pure pursuit 大转角保护只在 `/pct_stair_state=stair_up/stair_down` 时生效，平地允许原地掉头 |
 | `start_rl_local_path` | `true` | 默认启动 RL local path |
 | `start_adapter` | `true` | 默认启动 `/local_path -> /NAV_CMD` 适配 |
+| `adapter_path_timeout` | `1.2` | 局部路径超过 1.2 秒未更新才取消 FollowPath，允许一次推理延迟但不会长期沿旧路径运动 |
 | `pct_stair_down_gait_param` | `4099` | 下楼默认切到标准楼梯步态；需要测试敏捷楼梯步态时改为 `12291` |
 | `body_scan_min_height` | `-0.1` | 从 body 点云生成 scan 的最低高度 |
 | `body_scan_max_height` | `0.55` | 从 body 点云生成 scan 的最高高度 |
@@ -385,6 +386,14 @@ colcon build --packages-select pct_planner_ros2 m20_fastlio_nav
 ```
 
 pure pursuit 的前视距离在 `src/move/move/pure_pursuit.py` 中默认是 `1.8`，启动文件不覆盖这个值。`rl_pp_lookahead=4.0` 只作为 RL 节点在没有 `/subgoal` 时的备用全局路径取点距离。
+
+### DWB 与 adapter 控制参数
+
+`nav2_dwb_body_plane.yaml` 的底盘动力学和 critic 参数已同步 2D 稳定版提交 `6588506`：最大线速度 `0.8 m/s`、最大角速度 `0.65 rad/s`、非零线速度下限 `0.2 m/s`、非零角速度下限 `0.5 rad/s`，并使用 `ObstacleFootprint` 对完整矩形 footprint 做碰撞评价。`velocity_smoother` 使用同一组速度、加速度和减速度限制，避免 DWB 输出在后级被另一套约束改变。
+
+这里只移植了与同一底盘相关的控制参数。3D 导航仍使用 `odom_body -> base_link`、`/traversability_filtered_scan`、滚动局部 costmap 和现有楼梯逻辑；2D 仓库的 `odom_nav/base_footprint`、静态地图层及原始 `/scan` 没有复制。`sim_time=2.0` 和 `min_speed_xy=0.2` 会让前向预测更远、底盘更快越过速度死区，但在窄楼梯平台上可能表现得比原配置更积极，实车测试时应重点观察转弯半径、贴栏杆距离和制动距离。
+
+adapter 向 Nav2 发送 `FollowPath` 使用异步 action。若发送期间收到更新的 `/local_path`，已经被 controller 接受的旧 goal 不会立即取消；它会持续到下一次发送周期由新路径接管，避免中间插入零速度。只有 local path 被清空或超过 `adapter_path_timeout` 才会取消当前 goal。
 
 ## 发布终点
 

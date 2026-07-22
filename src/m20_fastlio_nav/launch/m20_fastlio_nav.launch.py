@@ -42,6 +42,7 @@ def generate_launch_description():
     max_heading_change_deg = LaunchConfiguration("max_heading_change_deg")
     turn_guard_min_lookahead = LaunchConfiguration("turn_guard_min_lookahead")
     turn_guard_pre_distance = LaunchConfiguration("turn_guard_pre_distance")
+    adapter_path_timeout = LaunchConfiguration("adapter_path_timeout")
     rl_python_executable = LaunchConfiguration("rl_python_executable")
     pct_root = LaunchConfiguration("pct_root")
     pct_venv_site = LaunchConfiguration("pct_venv_site")
@@ -193,6 +194,7 @@ def generate_launch_description():
             "scan_topic": rl_scan_topic,
             "global_plan_use_3d": "true",
             "adapter_path_transform_use_3d": "true",
+            "adapter_path_timeout": adapter_path_timeout,
             "adapter_pause_nav_cmd_topic": pct_stair_gait_pause_nav_cmd_topic,
             "adapter_pause_nav_cmd_timeout": "0.5",
             "pure_pursuit_use_3d_path_distance": "true",
@@ -527,6 +529,7 @@ def generate_launch_description():
             DeclareLaunchArgument("max_heading_change_deg", default_value="35.0"),
             DeclareLaunchArgument("turn_guard_min_lookahead", default_value="0.6"),
             DeclareLaunchArgument("turn_guard_pre_distance", default_value="0.7"),
+            DeclareLaunchArgument("adapter_path_timeout", default_value="1.2"),
             DeclareLaunchArgument("body_scan_min_height", default_value="-0.1"),
             DeclareLaunchArgument("body_scan_max_height", default_value="0.55"),
             DeclareLaunchArgument("start_initialpose_3d_marker", default_value="true"),
