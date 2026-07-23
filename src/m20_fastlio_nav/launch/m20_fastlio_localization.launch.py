@@ -238,7 +238,7 @@ def generate_launch_description():
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
             DeclareLaunchArgument("start_scan", default_value="true"),
             DeclareLaunchArgument("scan_min_height", default_value="-0.1"),
-            DeclareLaunchArgument("scan_max_height", default_value="0.55"),
+            DeclareLaunchArgument("scan_max_height", default_value="0.8"),
             DeclareLaunchArgument("output_odom_topic", default_value="/odom_body"),
             DeclareLaunchArgument("start_initialpose_3d_marker", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),

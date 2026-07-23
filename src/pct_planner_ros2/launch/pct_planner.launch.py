@@ -55,6 +55,7 @@ def generate_launch_description():
             DeclareLaunchArgument("safe_cost_margin", default_value="15.0"),
             DeclareLaunchArgument("step_cost_weight", default_value="1.0"),
             DeclareLaunchArgument("layer_match_height_tolerance", default_value="1.2"),
+            DeclareLaunchArgument("path_ground_offset", default_value="0.10"),
             DeclareLaunchArgument("global_path_perception_enabled", default_value="false"),
             DeclareLaunchArgument("global_path_perception_scan_topic", default_value="/scan"),
             DeclareLaunchArgument("global_path_perception_width", default_value="4.0"),
@@ -107,6 +108,10 @@ def generate_launch_description():
                         ),
                         "layer_match_height_tolerance": ParameterValue(
                             LaunchConfiguration("layer_match_height_tolerance"),
+                            value_type=float,
+                        ),
+                        "path_ground_offset": ParameterValue(
+                            LaunchConfiguration("path_ground_offset"),
                             value_type=float,
                         ),
                         "global_path_perception_enabled": ParameterValue(

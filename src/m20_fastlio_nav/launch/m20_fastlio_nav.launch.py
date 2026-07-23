@@ -29,7 +29,6 @@ def generate_launch_description():
     start_pure_pursuit = LaunchConfiguration("start_pure_pursuit")
     start_rl_local_path = LaunchConfiguration("start_rl_local_path")
     start_adapter = LaunchConfiguration("start_adapter")
-    start_tomogram_scan_filter = LaunchConfiguration("start_tomogram_scan_filter")
     scan_topic = LaunchConfiguration("scan_topic")
     rl_scan_topic = LaunchConfiguration("rl_scan_topic")
     body_scan_min_height = LaunchConfiguration("body_scan_min_height")
@@ -104,10 +103,6 @@ def generate_launch_description():
     pct_pkg_share = FindPackageShare("pct_planner_ros2")
     default_pct_root = PathJoinSubstitution([pct_pkg_share, "PCT_planner"])
     pct_config_file = PathJoinSubstitution([pct_pkg_share, "config", "pct_planner.yaml"])
-    scan_filter_config_file = PathJoinSubstitution(
-        [FindPackageShare("m20_fastlio_nav"), "config", "tomogram_scan_filter.yaml"]
-    )
-
     pct_python_paths = [
         pct_venv_site,
         ":",
@@ -210,54 +205,6 @@ def generate_launch_description():
     nav2_group = GroupAction(
         condition=IfCondition(start_nav2),
         actions=[TimerAction(period=8.0, actions=[nav2_navigation])],
-    )
-    tomogram_scan_filter_group = GroupAction(
-        condition=IfCondition(start_tomogram_scan_filter),
-        actions=[
-            TimerAction(
-                period=9.0,
-                actions=[
-                    Node(
-                        package="pct_planner_ros2",
-                        executable="pct_map_viz_node",
-                        name="pct_tomogram_surface_publisher",
-                        output="screen",
-                        parameters=[
-                            {
-                                "use_sim_time": ParameterValue(use_sim_time, value_type=bool),
-                                "pct_root": pct_root,
-                                "tomogram_file": pct_tomogram_file,
-                                "map_frame": "map",
-                                "publish_pcd": False,
-                                "publish_tomogram": True,
-                                "tomogram_topic": "/traversability_tomogram",
-                                "tomogram_visual_cost_max": ParameterValue(
-                                    pct_a_star_cost_threshold,
-                                    value_type=float,
-                                ),
-                                "republish_period": 30.0,
-                            }
-                        ],
-                    ),
-                    Node(
-                        package="traversability_layer",
-                        executable="tomogram_scan_filter_node",
-                        name="tomogram_scan_filter_node",
-                        output="screen",
-                        parameters=[
-                            scan_filter_config_file,
-                            {
-                                "use_sim_time": ParameterValue(use_sim_time, value_type=bool),
-                                "traversable_cost_max": ParameterValue(
-                                    pct_a_star_cost_threshold,
-                                    value_type=float,
-                                ),
-                            },
-                        ],
-                    ),
-                ],
-            )
-        ],
     )
     pct_planner_group = GroupAction(
         condition=IfCondition(start_pct_planner),
@@ -517,7 +464,6 @@ def generate_launch_description():
             DeclareLaunchArgument("start_pure_pursuit", default_value="true"),
             DeclareLaunchArgument("start_rl_local_path", default_value="true"),
             DeclareLaunchArgument("start_adapter", default_value="true"),
-            DeclareLaunchArgument("start_tomogram_scan_filter", default_value="true"),
             DeclareLaunchArgument("global_path_topic", default_value="/pct_path"),
             # Raw scan generated from Fast-LIO cloud, retained for RViz and A/B comparison.
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
@@ -531,7 +477,7 @@ def generate_launch_description():
             DeclareLaunchArgument("turn_guard_pre_distance", default_value="0.7"),
             DeclareLaunchArgument("adapter_path_timeout", default_value="1.2"),
             DeclareLaunchArgument("body_scan_min_height", default_value="-0.1"),
-            DeclareLaunchArgument("body_scan_max_height", default_value="0.55"),
+            DeclareLaunchArgument("body_scan_max_height", default_value="0.8"),
             DeclareLaunchArgument("start_initialpose_3d_marker", default_value="true"),
             DeclareLaunchArgument("pct_root", default_value=default_pct_root),
             DeclareLaunchArgument(
@@ -594,7 +540,6 @@ def generate_launch_description():
             ),
             localization,
             nav2_group,
-            tomogram_scan_filter_group,
             pct_planner_group,
             external_nav_group,
             stair_gait_group,

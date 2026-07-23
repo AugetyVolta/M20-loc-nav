@@ -15,16 +15,16 @@ pct_tomography_node:
 
     # m20 stair-friendly defaults. Tune here; m20_tomography_rviz.launch.py
     # does not override these mapping/traversability parameters.
-    resolution: 0.15
-    ground_h: -1.0
-    slice_dh: 0.5
+    resolution: 0.2
+    ground_h: 0.0
+    slice_dh: 1.0    # 垂直切片间距；当前值用于保留稳定的楼梯层间连接，垂直切片越细，越能保留楼梯踏步，减少楼梯断裂 0.15也可以，好像0.8效果更好, 1.0也可以，不知道为什么
     kernel_size: 5
-    interval_min: 0.45
-    interval_free: 0.3
+    interval_min: 0.45    # 最小净空，低于这个值的格子会被判为不可通行
+    interval_free: 0.6    # 舒适净空阈值，低于这个值但高于 interval_min 会增加通行代价
     slope_max: 0.6
     step_max: 0.4
     standable_ratio: 0.1
     cost_barrier: 50.0
-    safe_margin: 0.15
+    safe_margin: 0.4      # 障碍物周围的安全距离 0.15
     safe_margin_gamma: 1.0
-    inflation: 0.05
+    inflation: 0.1        # tomogram 障碍代价的膨胀距离 0.05

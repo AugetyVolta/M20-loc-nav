@@ -13,6 +13,7 @@ from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 
 from .pct_paths import configure_tomography_imports, default_pct_root, expand_path, tomogram_stem
+from .tomogram_surface import build_surface_points, write_binary_xyzi_pcd
 
 
 SCENE_DEFAULTS = {
@@ -256,7 +257,8 @@ class PctTomographyNode(Node):
     def _export_tomogram(self, tomogram, map_file):
         output_dir = self.pct_root / "rsc/tomogram"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{tomogram_stem(map_file)}.pickle"
+        output_stem = tomogram_stem(map_file)
+        output_path = output_dir / f"{output_stem}.pickle"
         data_dict = {
             "data": tomogram.astype(np.float16),
             "resolution": self.scene_cfg.map.resolution,
@@ -267,6 +269,25 @@ class PctTomographyNode(Node):
         with output_path.open("wb") as handle:
             pickle.dump(data_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
         self.get_logger().info(f"Tomogram exported: {output_path}")
+
+        surface_points = build_surface_points(
+            tomogram[0],
+            tomogram[3],
+            self.scene_cfg.map.resolution,
+            self.center,
+            self.scene_cfg.map.slice_dh,
+        )
+        if surface_points.shape[0] == 0:
+            raise RuntimeError("Generated tomogram has no finite surface points")
+        surface_path = write_binary_xyzi_pcd(
+            output_dir / f"{output_stem}.surface.pcd",
+            surface_points,
+            resolution=self.scene_cfg.map.resolution,
+            frame_id=self.map_frame,
+        )
+        self.get_logger().info(
+            f"Tomogram surface exported: {surface_path}, points={surface_points.shape[0]}"
+        )
 
     def _init_publishers(self, n_slice):
         qos = QoSProfile(
@@ -312,27 +333,16 @@ class PctTomographyNode(Node):
             pub_list[i].publish(point_cloud2.create_cloud(self._header(), POINT_FIELDS_XYZI, valid_points))
 
     def _publish_tomogram(self, layers_g, layers_t):
-        n_slice = layers_g.shape[0]
-        vis_g = layers_g.copy()
-        vis_t = layers_t.copy()
-        layer_points = self.visproto_p.copy()
-        layer_points[:, :2] += self.center
-
-        global_points = None
-        for i in range(n_slice - 1):
-            mask_h = (vis_g[i + 1] - vis_g[i]) < self.scene_cfg.map.slice_dh
-            vis_g[i, mask_h] = np.nan
-            vis_t[i + 1, mask_h] = np.minimum(vis_t[i, mask_h], vis_t[i + 1, mask_h])
-            layer_points[:, 2] = vis_g[i, self.visproto_i[:, 0], self.visproto_i[:, 1]]
-            layer_points[:, 3] = vis_t[i, self.visproto_i[:, 0], self.visproto_i[:, 1]]
-            valid_points = layer_points[~np.isnan(layer_points).any(axis=-1)]
-            global_points = valid_points if global_points is None else np.concatenate((global_points, valid_points), axis=0)
-
-        layer_points[:, 2] = vis_g[-1, self.visproto_i[:, 0], self.visproto_i[:, 1]]
-        layer_points[:, 3] = vis_t[-1, self.visproto_i[:, 0], self.visproto_i[:, 1]]
-        valid_points = layer_points[~np.isnan(layer_points).any(axis=-1)]
-        global_points = valid_points if global_points is None else np.concatenate((global_points, valid_points), axis=0)
-        self.tomogram_pub.publish(point_cloud2.create_cloud(self._header(), POINT_FIELDS_XYZI, global_points))
+        surface_points = build_surface_points(
+            layers_t,
+            layers_g,
+            self.scene_cfg.map.resolution,
+            self.center,
+            self.scene_cfg.map.slice_dh,
+        )
+        self.tomogram_pub.publish(
+            point_cloud2.create_cloud(self._header(), POINT_FIELDS_XYZI, surface_points)
+        )
 
 
 def main(args=None):

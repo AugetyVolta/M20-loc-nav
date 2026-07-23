@@ -1,0 +1,10 @@
+<library path="tomogram_filter_layer">
+  <class
+    type="tomogram_filter_layer::TomogramFilterLayer"
+    base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Filters a current 3D point cloud against a static PCT tomogram surface and
+      publishes a LaserScan for a following Nav2 ObstacleLayer.
+    </description>
+  </class>
+</library>

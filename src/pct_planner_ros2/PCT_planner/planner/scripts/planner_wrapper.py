@@ -22,6 +22,7 @@ class TomogramPlanner(object):
         self.safe_cost_margin = getattr(self.cfg.planner, 'safe_cost_margin', 15)
         self.step_cost_weight = getattr(self.cfg.planner, 'step_cost_weight', 1)
         self.layer_match_height_tolerance = getattr(self.cfg.planner, 'layer_match_height_tolerance', 1.0)
+        self.path_ground_offset = getattr(self.cfg.planner, 'path_ground_offset', 0.1)
 
         self.tomo_dir = rsg_root + self.cfg.wrapper.tomo_dir
 
@@ -314,6 +315,7 @@ class TomogramPlanner(object):
             trav_gy.reshape(-1, trav_gy.shape[-1]).astype(np.double),
             -trav_gx.reshape(-1, trav_gx.shape[-1]).astype(np.double)
         )
+        self.planner.set_reference_height(float(self.path_ground_offset))
 
 
 

@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>tomogram_filter_layer</name>
+  <version>1.0.0</version>
+  <description>Nav2 costmap plugin that removes static PCT tomogram surfaces from a 3D cloud and publishes a filtered LaserScan.</description>
+
+  <maintainer email="1193040110@qq.com">zby</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+
+  <build_depend>libpcl-all-dev</build_depend>
+  <exec_depend>libpcl-all</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

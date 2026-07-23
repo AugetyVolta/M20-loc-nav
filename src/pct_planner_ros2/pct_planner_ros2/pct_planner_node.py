@@ -56,6 +56,7 @@ class PctPlannerNode(Node):
         self.declare_parameter("step_cost_weight", 1.0)
         self.declare_parameter("max_heading_rate", 10.0)
         self.declare_parameter("layer_match_height_tolerance", 1.0)
+        self.declare_parameter("path_ground_offset", 0.10)
         self.declare_parameter("global_path_perception_enabled", False)
         self.declare_parameter("global_path_perception_scan_topic", "/scan")
         self.declare_parameter("global_path_perception_cloud_topic", "")
@@ -216,6 +217,9 @@ class PctPlannerNode(Node):
         self._load_pct_core()
         self.planner.loadTomogram(self.tomogram_file)
         self.get_logger().info(f"Loaded tomogram '{self.tomogram_file}' from {self.pct_root}")
+        self.get_logger().info(
+            f"Path ground offset: {float(self.get_parameter('path_ground_offset').value):.3f} m"
+        )
         self._init_global_path_perception_inputs()
 
         self.create_subscription(
@@ -372,6 +376,7 @@ class PctPlannerNode(Node):
         cfg.planner.layer_match_height_tolerance = float(
             self.get_parameter("layer_match_height_tolerance").value
         )
+        cfg.planner.path_ground_offset = float(self.get_parameter("path_ground_offset").value)
         self.planner = tomogram_planner(cfg)
 
     def _timer_cb(self):

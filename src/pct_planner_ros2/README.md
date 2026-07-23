@@ -98,35 +98,62 @@ src/pct_planner_ros2/config/tomography.yaml
 
 ```yaml
 output_tomogram_name: "m20_3d_map"
-resolution: 0.15
-ground_h: -1.0
-slice_dh: 0.5
+resolution: 0.2
+ground_h: 0.0
+slice_dh: 1.0
 kernel_size: 5
 interval_min: 0.45
-interval_free: 0.3
+interval_free: 0.6
 slope_max: 0.6
 step_max: 0.4
 standable_ratio: 0.1
 cost_barrier: 50.0
-safe_margin: 0.15
-inflation: 0.05
+safe_margin: 0.4
+inflation: 0.1
 ```
 
 生成 tomogram：
 
 ```bash
-ros2 launch pct_planner_ros2 m20_tomography_rviz.launch.py
+cd /mnt/nvme/workspace/fast_lio_ws
+source ./source_m20_nav.sh
+ros2 launch pct_planner_ros2 m20_tomography_rviz.launch.py \
+  pct_root:="${PCT_PLANNER_ROOT}"
 ```
 
-输出文件：
+一次运行会同时生成两个文件，位置在传入的 `pct_root` 下：
 
 ```bash
-PCT_planner/rsc/tomogram/m20_3d_map.pickle
+${PCT_PLANNER_ROOT}/rsc/tomogram/m20_3d_map.pickle
+${PCT_PLANNER_ROOT}/rsc/tomogram/m20_3d_map.surface.pcd
 ```
 
-注意：`ros2 launch` 实际读取的是 `install/pct_planner_ros2/share/...` 下的 YAML。修改 `src/pct_planner_ros2/config/tomography.yaml` 后，必须重新 `colcon build`，否则 launch 仍然会用旧参数。
+`.pickle` 保存完整 tomogram，供 PCT planner 使用；`.surface.pcd` 保存 `XYZ + cost`，
+供 `tomogram_filter_layer` 直接加载。过滤插件不再依赖 PCT planner 在线发布表面。
+已有 pickle 可以直接补生成 PCD：
+
+```bash
+ros2 run pct_planner_ros2 pct_export_tomogram_surface m20_3d_map
+```
+
+主导航 launch 不会把 tomogram 名称和阈值自动写入 Nav2 参数。修改
+`output_tomogram_name` 或规划时的 `pct_tomogram_file` 后，还要手动修改
+`src/m20_fastlio_nav/config/nav2_dwb_body_plane.yaml`：
+
+```yaml
+tomogram_surface_file: "/absolute/path/to/m20_3d_map.surface.pcd"
+traversable_cost_max: 45.0  # 与 pct_a_star_cost_threshold 保持一致
+```
+
+注意：`ros2 launch` 从 `install/pct_planner_ros2/share/...` 查找 YAML。当前工作空间使用
+`colcon build --symlink-install`，该文件最终链接到 `src/pct_planner_ros2/config/tomography.yaml`，
+所以修改参数后重启 tomography 即可，不需要重新编译。只有重新建立了非 symlink 安装空间时，
+才需要再次执行 `colcon build`。
 
 ## 当前稳定的规划参数
+
+`path_ground_offset` 是优化路径相对 tomogram 地形表面的目标高度，单位为米。当前值
+`0.10` 让路径贴近楼梯和平面；坐标转换不会再额外叠加旧版固定的 `0.5m` 高度。
 
 当前推荐直接启动：
 
@@ -140,7 +167,8 @@ ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py
 ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py \
   tomogram_file:=m20_3d_map \
   tomogram_visual_cost_max:=45 \
-  step_cost_weight:=1.0
+  step_cost_weight:=1.0 \
+  path_ground_offset:=0.10
 ```
 
 当前默认规划参数：
@@ -150,6 +178,7 @@ tomogram_file = m20_3d_map
 a_star_cost_threshold = 45.0
 step_cost_weight = 1.0
 layer_match_height_tolerance = 1.2
+path_ground_offset = 0.10
 tomogram_visual_cost_max = 45.0
 ```
 

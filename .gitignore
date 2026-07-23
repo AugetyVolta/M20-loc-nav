@@ -78,5 +78,6 @@ src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/install/
 src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/osqp/build/
 src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/osqp/install/
 src/pct_planner_ros2/PCT_planner/rsc/tomogram/*.pickle
+src/pct_planner_ros2/PCT_planner/rsc/tomogram/*.surface.pcd
 src/pct_planner_ros2/PCT_planner/rsc/pcd/*.pcd
 !src/pct_planner_ros2/PCT_planner/**/*.csv

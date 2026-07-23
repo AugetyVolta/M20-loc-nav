@@ -176,6 +176,9 @@ void TraversabilityLayer::matchSize()
 
 void TraversabilityLayer::pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 {
+  if (!enabled_) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   static auto clock = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
   cloud_received_++;

@@ -31,6 +31,8 @@ pct_planner_node:
     # for stair-friendly navigation.
     a_star_cost_threshold: 20.0
     layer_match_height_tolerance: 1.2
+    # Desired optimized path height above the tomogram terrain surface, in metres.
+    path_ground_offset: 0.10
 
     # Optional global-path perception update. This mirrors the small set of
     # knobs used by Nav2's local costmap/inflation layer; advanced filtering
