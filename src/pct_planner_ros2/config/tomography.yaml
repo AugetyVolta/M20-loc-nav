@@ -25,6 +25,6 @@ pct_tomography_node:
     step_max: 0.4
     standable_ratio: 0.1
     cost_barrier: 50.0
-    safe_margin: 0.4      # 障碍物周围的安全距离 0.15
+    safe_margin: 0.3      # 障碍物周围的安全距离 0.15
     safe_margin_gamma: 1.0
     inflation: 0.1        # tomogram 障碍代价的膨胀距离 0.05
