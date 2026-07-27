@@ -1,4 +1,5 @@
 #include "ele_planner/offline_ele_planner.h"
+#include <cmath>
 #include <iostream>
 #include <fstream>      // 新增：用于文件操作
 #include <iomanip>      // 可选：用于格式化输出
@@ -36,6 +37,31 @@ int OfflineElePlanner::UpdateGlobalPathPerception(
   return changed;
 }
 
+int OfflineElePlanner::ApplyGlobalPathPerception(
+    const Eigen::MatrixXi& mark_indices,
+    const Eigen::MatrixXi& clear_indices,
+    const double inflation_radius,
+    const double inscribed_radius,
+    const double peak_cost,
+    const double cost_scaling_factor,
+    const double stamp,
+    const double persistence,
+    const Eigen::Vector3i& clear_center,
+    const double clear_radius,
+    const Eigen::Vector4i& window_bounds) {
+  int changed = path_finder_.ApplyGlobalPathPerception(
+      mark_indices, clear_indices, inflation_radius, inscribed_radius,
+      peak_cost, cost_scaling_factor, stamp, persistence, clear_center,
+      clear_radius, window_bounds);
+  if (map_) {
+    map_->ApplyGlobalPathPerception(
+        mark_indices, clear_indices, inflation_radius, inscribed_radius,
+        peak_cost, cost_scaling_factor, stamp, persistence, clear_center,
+        clear_radius, window_bounds);
+  }
+  return changed;
+}
+
 int OfflineElePlanner::DecayGlobalPathPerception(const double stamp,
                                              const double persistence) {
   int changed = path_finder_.DecayGlobalPathPerception(stamp, persistence);
@@ -64,21 +90,25 @@ void OfflineElePlanner::ClearGlobalPathPerception() {
 Eigen::MatrixXi OfflineElePlanner::BuildGlobalPathPerceptionMarkIndices(
     const Eigen::MatrixXi& mark_cells, const int current_layer,
     const double robot_height, const bool skip_static_obstacles,
-    const double static_skip_cost) const {
+    const double static_skip_cost, const double layer_height_tolerance,
+    const bool mark_all_layers) const {
   return path_finder_.BuildGlobalPathPerceptionMarkIndices(
       mark_cells, current_layer, robot_height, skip_static_obstacles,
-      static_skip_cost);
+      static_skip_cost, layer_height_tolerance, mark_all_layers);
 }
 
 Eigen::MatrixXi OfflineElePlanner::BuildGlobalPathPerceptionClearIndices(
     const Eigen::Vector2i& origin_cell, const Eigen::MatrixXi& endpoint_cells,
-    const int current_layer, const double robot_height) const {
+    const int current_layer, const double robot_height,
+    const double layer_height_tolerance, const bool mark_all_layers) const {
   return path_finder_.BuildGlobalPathPerceptionClearIndices(
-      origin_cell, endpoint_cells, current_layer, robot_height);
+      origin_cell, endpoint_cells, current_layer, robot_height,
+      layer_height_tolerance, mark_all_layers);
 }
 
 bool OfflineElePlanner::Plan(const Eigen::Vector3i& start,
-                             const Eigen::Vector3i& goal, const bool optimize) {
+                             const Eigen::Vector3i& goal, const bool optimize,
+                             const double goal_heading) {
 
   if (!path_finder_.Search(start, goal)) {
     printf("A star Failed!\n");
@@ -88,24 +118,15 @@ bool OfflineElePlanner::Plan(const Eigen::Vector3i& start,
   if (optimize) {
     path_ = path_finder_.GetPathPoints();
 
-// ====================== 修改部分：写入 log 文件 ======================
-    std::ofstream log_file("offline_ele_planner_path.log", std::ios::trunc);  // 追加模式
-
-    if (log_file.is_open()) {
-      for (const auto& point : path_) {
-        log_file << point.x << "," 
-                 << point.y << "," 
-                 << point.layer << "\n";
-      }
-      
-      log_file.close();
-    } else {
-      std::cerr << "Warning: Cannot open offline_ele_planner_path.log for writing!\n";
-    }
-    // ===================================================================
-   
     path_.front().ref_v = 1;
     path_.back().ref_v = 1;
+    const bool constrain_goal_heading = std::isfinite(goal_heading);
+    if (constrain_goal_heading) {
+      path_.back().heading = goal_heading;
+    }
+    const double goal_velocity_sigma = constrain_goal_heading ? 0.1 : 1.0;
+    trajectory_optimizer_.SetGoalVelocitySigma(goal_velocity_sigma);
+    trajectory_optimizer_wnoj_.SetGoalVelocitySigma(goal_velocity_sigma);
 
     bool success = false;
     if (use_quintic_) {

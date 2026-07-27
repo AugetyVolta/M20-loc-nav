@@ -23,7 +23,6 @@ pct_planner_node:
     marker_namespace: "basic_controls"
     marker_z_offset: 0.5
     replan_interval: 1.0
-    position_epsilon: 0.01
     auto_plan: true
     always_replan: true
 
@@ -38,12 +37,25 @@ pct_planner_node:
     # knobs used by Nav2's local costmap/inflation layer; advanced filtering
     # and layer-matching settings use pct_planner_node defaults.
     global_path_perception_enabled: false
+    # One raw scan frame first raytraces free space and then marks finite hits.
     global_path_perception_scan_topic: "/scan"
-    global_path_perception_width: 4.0
-    global_path_perception_height: 4.0
-    global_path_perception_inflation_radius: 0.60
+    global_path_perception_width: 8.0
+    global_path_perception_height: 8.0
+    global_path_perception_inflation_radius: 1.0
+    global_path_perception_inscribed_radius: 0.45
     global_path_perception_cost_scaling_factor: 5.0
     global_path_perception_persistence: 1.0
+    # Apply one 2D scan obstacle to overlapping tomogram layers representing
+    # the same physical surface, without marking a different floor.
+    global_path_perception_height_tolerance: 0.75
+    global_path_perception_mark_all_layers: false
+
+    # Keep a static route to the final goal and select an anchor this far ahead.
+    # The implementation optimizes an additional 1.0 m reference overlap and
+    # constrains its terminal heading before joining the unchanged suffix.
+    # A* has no lateral search bounds.
+    local_replan_enabled: true
+    local_replan_forward_distance: 10.0
 
     # Stair mode uses the 3D PCT path slope ahead of the robot to suppress
     # dynamic global-path perception on stairs. Local DWB/costmap avoidance is

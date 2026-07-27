@@ -33,7 +33,7 @@ struct VoxelData
 {
   uint8_t hit_count = 0;
   uint8_t pass_count = 0;
-  uint16_t last_update_frame = 0;
+  uint16_t remaining_uses = 0;  // 次数制衰减：剩余参与计算次数，0=过期
 };
 
 struct GroundCell
@@ -54,6 +54,11 @@ struct IncrementalRay
 {
   size_t hit_idx;
   std::vector<size_t> pass_indices;
+};
+
+struct PersistentCostCell
+{
+  unsigned char cost = 255;  // 255 = NO_INFORMATION = 从未观测
 };
 
 class TraversabilityLayer : public nav2_costmap_2d::CostmapLayer
@@ -84,13 +89,17 @@ private:
     const std::vector<Point3D> & transformed_pts,
     const Point3D & sensor_pos);
   void shiftVoxelGrid(int shift_x, int shift_y);
+  void shiftGroundMap(int shift_x, int shift_y);
   void expandVoxelGridZ(double new_z_lo, double new_z_hi);
-  void decayVoxelGrid();
+  void shrinkVoxelGridZ(double new_z_lo, double new_z_hi);  // 缩小Z范围，防止长期膨胀
+  void tickVoxelGrid();  // 次数制衰减（替代 decayVoxelGrid）
+  void shiftPersistentCostMap(int shift_x, int shift_y);
   void extractGroundInCache();
+  void fillGroundNearRobot();  // 填充机器人周围地面，补偿雷达盲区
   void interpolateGround();
   void computeGroundSlope();
   unsigned char computeCost(const GroundCell & cell) const;
-  bool shouldKeepScanPoint(double x_base, double y_base) const;
+  bool shouldKeepScanPoint(double world_x, double world_y) const;
   void resetMaps();
 
   inline size_t voxelIndex(unsigned int ix, unsigned int iy, unsigned int iz) const
@@ -107,10 +116,13 @@ private:
 
   std::mutex mutex_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr filtered_scan_sub_;
 
   std::string pointcloud_topic_;
   std::string sensor_frame_;
   std::string base_frame_;
+  std::string filtered_scan_input_topic_;
+  std::string filtered_scan_topic_;
   double max_obstacle_height_;
   double min_obstacle_height_;
   double max_slope_traversable_;
@@ -120,13 +132,11 @@ private:
   double slope_cost_scale_;
   double height_cost_scale_;
   double lethal_cost_threshold_;
-  double observation_persistence_;
+  int observation_persistence_int_;  // 次数制衰减次数（0=仅最新帧，>0=体素存留计算次数）
   int cloud_buffer_size_;
   bool enabled_;
   bool publish_slope_map_;
   bool publish_filtered_scan_;
-  std::string filtered_scan_input_topic_;
-  std::string filtered_scan_topic_;
   double filtered_scan_min_cost_;
   double cell_resolution_;
   int num_threads_;
@@ -140,11 +150,30 @@ private:
   double obstacle_ratio_threshold_;
   int obstacle_hit_threshold_;
 
+  // 新增参数
+  int skip_frames_;                     // 跳帧：N帧取1帧计算cost，0=不跳帧
+  bool persist_cost_;                   // 永久cost记忆开关
+  bool trust_interpolated_ground_;      // 信任插值地面开关
+  bool enable_perf_log_;                // 性能统计开关
+  double transform_tolerance_;          // TF 查找容差（秒），应对 fast_tf 模式
+  double ground_fill_radius_;           // 地面填充半径（m）：机器人周围填充地面补偿盲区
+  double ground_fill_height_;           // base_footprint 到地面的高度偏移（m），fallback用
+
+  // 性能统计（每30秒输出各模块平均耗时）
   rclcpp::Time last_perf_log_{0, 0, RCL_ROS_TIME};
-  int perf_frame_count_ = 0;
-  double perf_total_time_ = 0.0;
+  int perf_frame_count_ = 0;              // 点云回调帧数（仅计算帧）
+  int perf_cost_frame_count_ = 0;         // updateCosts帧数
+  double perf_cloud_transform_ms_ = 0.0;  // 点云坐标变换+滤波
+  double perf_voxel_grid_ms_ = 0.0;       // 体素更新（updateVoxelGrid）
+  double perf_tick_voxel_ms_ = 0.0;       // 体素衰减（tickVoxelGrid）
+  double perf_extract_ground_ms_ = 0.0;   // 地面提取（extractGroundInCache）
+  double perf_interpolate_ms_ = 0.0;      // 地面插值（interpolateGround）
+  double perf_slope_ms_ = 0.0;            // 坡度计算（computeGroundSlope）
+  double perf_costmap_ms_ = 0.0;          // 代价图更新（updateCosts）
+  double perf_total_ms_ = 0.0;            // 完整流水线总耗时（仅计算帧）
 
   std::vector<VoxelData> voxel_grid_;
+  std::vector<VoxelData> voxel_grid_backbuffer_;  // shift用双缓冲，避免频繁分配
   unsigned int voxel_size_x_ = 0;
   unsigned int voxel_size_y_ = 0;
   unsigned int voxel_size_z_ = 0;
@@ -153,13 +182,20 @@ private:
   double voxel_oy_ = 0.0;  // 缓存网格左下角 y 坐标（odom 坐标系）
   bool voxel_grid_valid_ = false;
   uint16_t frame_counter_ = 0;
+  uint32_t compute_counter_ = 0;  // 计算帧计数（跳帧时 != frame_counter_）
   uint16_t decay_interval_frames_ = 10;
   uint32_t cloud_received_ = 0;
   uint32_t cloud_processed_ = 0;
 
   std::vector<GroundCell> ground_map_;
-  unsigned int ground_size_x_ = 0;  // 缓存网格 x 方向大小（costmap 2倍）
-  unsigned int ground_size_y_ = 0;  // 缓存网格 y 方向大小（costmap 2倍）
+  std::vector<GroundCell> ground_map_backbuffer_;  // shift用双缓冲，避免频繁分配
+  unsigned int ground_size_x_ = 0;  // 缓存网格 = costmap + 安全边界
+  unsigned int ground_size_y_ = 0;
+  int half_margin_ = 0;             // 半边界 cells，用于缓存居中计算
+
+  // 永久 cost 记忆
+  std::vector<PersistentCostCell> persistent_cost_map_;
+  std::vector<PersistentCostCell> persistent_cost_backbuffer_;  // shift用双缓冲
 
   unsigned int costmap_size_x_ = 0;  // costmap 原始 x 大小
   unsigned int costmap_size_y_ = 0;  // costmap 原始 y 大小
@@ -170,16 +206,13 @@ private:
   double sensor_global_x_ = 0.0;
   double sensor_global_y_ = 0.0;
   double sensor_global_z_ = 0.0;
+  double base_global_x_ = 0.0;
+  double base_global_y_ = 0.0;
   double base_global_z_ = 0.0;
   bool cloud_updated_ = false;
-  double last_robot_x_ = 0.0;
-  double last_robot_y_ = 0.0;
-  double last_robot_yaw_ = 0.0;
-  bool robot_pose_valid_ = false;
 
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr slope_pub_;
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr filtered_scan_pub_;
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr filtered_scan_sub_;
 
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;

@@ -65,8 +65,6 @@ struct GroundCell
 | `pointcloud_topic` | `/lio/body/cloud` | 点云输入话题 |
 | `sensor_frame` | `""` (自动) | 传感器坐标系 |
 | `voxel_z_resolution` | 0.1m | 体素Z轴分辨率 |
-| `voxel_z_min` | -1.0m | 体素Z轴最小值 |
-| `voxel_z_max` | 3.0m | 体素Z轴最大值 |
 | `ground_hit_threshold` | 1 | 地面判定最小hit数 |
 | `free_space_threshold` | 1 | 自由空间判定阈值 |
 | `free_space_window` | 3 | 自由空间搜索窗口(Z方向cell数) |
@@ -79,11 +77,36 @@ struct GroundCell
 | `slope_cost_scale` | 5.0 | 坡度cost缩放系数 |
 | `height_cost_scale` | 10.0 | 高度差cost缩放系数 |
 | `lethal_cost_threshold` | 254.0 | 致命cost阈值 |
-| `observation_persistence` | 5.0s | 观测数据持久时间 |
+| `observation_persistence` | 50 | 体素保留的点云帧数，不是秒 |
+| `skip_frames` | 0 | 每 N+1 帧执行一次完整地面和代价计算 |
+| `persist_cost` | false | 无新观测时是否继续使用历史 cost |
+| `trust_interpolated_ground` | true | 插值地面是否写入低代价 1 |
+| `transform_tolerance` | 0.3s | 按消息时间戳查询 TF 的等待时间 |
+| `ground_fill_radius` | 0.5m | 机器人附近缺失地面的填充半径，0 为关闭 |
+| `ground_fill_height` | 0.3m | 找不到真实地面时 base frame 到地面的高度估计 |
+| `enable_perf_log` | false | 是否每 120 秒输出性能统计 |
 | `cloud_buffer_size` | 5 | 点云缓冲帧数 |
 | `interp_search_radius` | 3 | 插值搜索半径(cell数) |
 | `min_interp_neighbors` | 2 | 插值最小邻居数 |
 | `num_threads` | 0 (自动) | OpenMP线程数 |
+
+### M20 当前实测参数
+
+本工作空间在 `m20_fastlio_nav/config/nav2_dwb_body_plane.yaml` 中覆盖了源码默认值：
+
+| 参数 | 当前值 | 当前行为 |
+|------|--------|----------|
+| `observation_persistence` | 10 | 点云约 10Hz 时，体素命中约保留 1s；按输入帧衰减 |
+| `skip_frames` | 1 | 每帧累积体素，每 2 帧更新一次地面和 cost |
+| `persist_cost` | false | 无新观测时不永久保留历史 cost |
+| `trust_interpolated_ground` | false | 插值/填充地面不直接写成低代价 |
+| `transform_tolerance` | 0.3s | 点云和 scan 均按消息时间戳等待 TF |
+| `ground_fill_radius` | 0.2m | 仅补偿机器人近身地面盲区 |
+| `ground_fill_height` | 0.5m | 找不到真实地面时使用的 fallback 高度 |
+| `filtered_scan_min_cost` | 64 | 只保留已知且 cost 不低于 64 的 scan endpoint |
+
+这些是当前测试组合，不等同于插件源码默认值。`persist_cost=false` 只关闭永久 cost
+记忆，短时体素保留仍由 `observation_persistence` 控制。
 
 ## nav2 集成配置
 
@@ -112,6 +135,10 @@ local_costmap:
 
 - **OpenMP并行**: 体素构建和地面提取均使用多线程，`num_threads=0`自动检测核心数
 - **Thread-local缓冲**: 减少原子操作竞争，voxel写入使用线程局部缓冲后合并
+- **滚动窗口同步**: voxel、ground map 和历史 cost 使用同一 costmap origin 原子移位
+- **双缓冲移位**: 滚动窗口更新时复用内存，避免反复分配大数组
+- **按时间戳查询TF**: 不使用最新 TF 处理旧点云，避免运动时产生位置拖影
+- **Z轴自动收缩**: 上下楼后根据当前观测回收不再需要的体素高度范围
 - **局部costmap缓冲**: 消除cost写入的临界区
 - **数据压缩**: voxel数据从uint16_t压缩为uint8_t，使用memset快速初始化
 
@@ -127,6 +154,9 @@ local_costmap:
 | `filtered_scan_input_topic` | `/scan` | 输入原始 LaserScan |
 | `filtered_scan_topic` | `/traversability_filtered_scan` | 过滤后输出话题 |
 | `filtered_scan_min_cost` | `64.0` | endpoint 所在格 cost 不低于该值才保留；未知或无地面格删除 |
+
+scan endpoint 使用消息时间戳的 TF 转换到 local costmap 全局坐标系。TF 查询失败时发布
+未过滤 scan，避免因为坐标暂时不可用而删除真实障碍。
 
 静态 PCT tomogram 过滤已经拆到独立包 `tomogram_filter_layer`。切换时只修改同一 YAML 的
 `local_costmap.plugins`，不要同时加载两个过滤插件，否则它们会同时发布

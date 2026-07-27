@@ -48,7 +48,6 @@ class PctPlannerNode(Node):
         self.declare_parameter("marker_namespace", "basic_controls")
         self.declare_parameter("marker_z_offset", 0.5)
         self.declare_parameter("replan_interval", 0.5)
-        self.declare_parameter("position_epsilon", 0.01)
         self.declare_parameter("auto_plan", True)
         self.declare_parameter("always_replan", True)
         self.declare_parameter("a_star_cost_threshold", 20.0)
@@ -61,10 +60,10 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_path_perception_scan_topic", "/scan")
         self.declare_parameter("global_path_perception_cloud_topic", "")
         self.declare_parameter("global_path_perception_min_range", 0.45)
-        self.declare_parameter("global_path_perception_width", 4.0)
-        self.declare_parameter("global_path_perception_height", 4.0)
-        self.declare_parameter("global_path_perception_inflation_radius", 0.60)
-        self.declare_parameter("global_path_perception_inscribed_radius", 0.35)
+        self.declare_parameter("global_path_perception_width", 8.0)
+        self.declare_parameter("global_path_perception_height", 8.0)
+        self.declare_parameter("global_path_perception_inflation_radius", 1.0)
+        self.declare_parameter("global_path_perception_inscribed_radius", 0.45)
         self.declare_parameter("global_path_perception_cost", -1.0)
         self.declare_parameter("global_path_perception_cost_scaling_factor", 5.0)
         self.declare_parameter("global_path_perception_height_tolerance", 0.75)
@@ -77,6 +76,11 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_path_perception_raytrace_enabled", True)
         self.declare_parameter("global_path_perception_raytrace_max_range", 0.0)
         self.declare_parameter("global_path_perception_raytrace_max_rays", 360)
+        self.declare_parameter("global_path_perception_footprint_length", 0.82)
+        self.declare_parameter("global_path_perception_footprint_width", 0.506)
+        self.declare_parameter("global_path_perception_footprint_padding", 0.03)
+        self.declare_parameter("local_replan_enabled", True)
+        self.declare_parameter("local_replan_forward_distance", 6.0)
         self.declare_parameter("stair_mode_enabled", True)
         self.declare_parameter("stair_state_topic", "/pct_stair_state")
         self.declare_parameter("stair_disable_global_path_perception", True)
@@ -101,7 +105,6 @@ class PctPlannerNode(Node):
         self.global_frame = str(self.get_parameter("global_frame").value)
         self.robot_frame = str(self.get_parameter("robot_frame").value)
         self.marker_z_offset = float(self.get_parameter("marker_z_offset").value)
-        self.position_epsilon = float(self.get_parameter("position_epsilon").value)
         self.auto_plan = bool(self.get_parameter("auto_plan").value)
         self.always_replan = bool(self.get_parameter("always_replan").value)
         self.global_path_perception_enabled = bool(self.get_parameter("global_path_perception_enabled").value)
@@ -158,6 +161,24 @@ class PctPlannerNode(Node):
         self.global_path_perception_raytrace_max_rays = int(
             self.get_parameter("global_path_perception_raytrace_max_rays").value
         )
+        self.global_path_perception_footprint_length = max(
+            0.0,
+            float(self.get_parameter("global_path_perception_footprint_length").value),
+        )
+        self.global_path_perception_footprint_width = max(
+            0.0,
+            float(self.get_parameter("global_path_perception_footprint_width").value),
+        )
+        self.global_path_perception_footprint_padding = max(
+            0.0,
+            float(self.get_parameter("global_path_perception_footprint_padding").value),
+        )
+        self.local_replan_enabled = bool(self.get_parameter("local_replan_enabled").value)
+        self.local_replan_forward_distance = max(
+            0.5,
+            float(self.get_parameter("local_replan_forward_distance").value),
+        )
+        self.local_replan_join_extension = 1.0
         self.stair_mode_enabled = bool(self.get_parameter("stair_mode_enabled").value)
         self.stair_disable_global_path_perception = bool(
             self.get_parameter("stair_disable_global_path_perception").value
@@ -189,6 +210,9 @@ class PctPlannerNode(Node):
         self.planning = False
         self.last_perception_update_time = None
         self.last_perception_update_wall_time = 0.0
+        self.reference_path = None
+        self.reference_goal = None
+        self.reference_progress_index = 0
         self.stair_state = "flat"
         self._stair_state_since = time.monotonic()
         self._stair_enter_candidate = None
@@ -415,15 +439,126 @@ class PctPlannerNode(Node):
         if self.last_planned_start is None or self.last_planned_goal is None:
             return True
         return (
-            np.linalg.norm(self.start_pos - self.last_planned_start) >= self.position_epsilon
-            or np.linalg.norm(self.goal_pos - self.last_planned_goal) >= self.position_epsilon
+            self._position_differs(self.start_pos, self.last_planned_start)
+            or self._position_differs(self.goal_pos, self.last_planned_goal)
         )
+
+    @staticmethod
+    def _position_differs(first, second):
+        return float(np.linalg.norm(np.asarray(first) - np.asarray(second))) > 1.0e-4
+
+    def _nearest_reference_index(self, reference_path):
+        reference_path = np.asarray(reference_path, dtype=np.float32)
+        if reference_path.ndim != 2 or reference_path.shape[0] == 0:
+            return 0
+        search_start = max(0, min(self.reference_progress_index, len(reference_path) - 1) - 5)
+        distances = np.linalg.norm(
+            reference_path[search_start:, :3] - self.start_pos[:3],
+            axis=1,
+        )
+        nearest = search_start + int(np.argmin(distances))
+        self.reference_progress_index = max(self.reference_progress_index, nearest)
+        return nearest
+
+    def _reference_anchor_index(self, reference_path, nearest_index, forward_distance=None):
+        reference_path = np.asarray(reference_path, dtype=np.float32)
+        if nearest_index >= len(reference_path) - 1:
+            return len(reference_path) - 1
+        if forward_distance is None:
+            forward_distance = self.local_replan_forward_distance
+        distance = 0.0
+        for index in range(nearest_index + 1, len(reference_path)):
+            distance += float(
+                np.linalg.norm(reference_path[index, :3] - reference_path[index - 1, :3])
+            )
+            if distance >= forward_distance:
+                return index
+        return len(reference_path) - 1
+
+    @staticmethod
+    def _reference_join_heading(reference_path, anchor_index):
+        reference_path = np.asarray(reference_path, dtype=np.float32)
+        anchor_xy = reference_path[anchor_index, :2]
+        for index in range(anchor_index + 1, len(reference_path)):
+            delta = reference_path[index, :2] - anchor_xy
+            if np.linalg.norm(delta) >= 0.3:
+                return math.atan2(float(delta[1]), float(delta[0]))
+        for index in range(anchor_index - 1, -1, -1):
+            delta = anchor_xy - reference_path[index, :2]
+            if np.linalg.norm(delta) >= 0.3:
+                return math.atan2(float(delta[1]), float(delta[0]))
+        return None
+
+    def _reference_path_needs_rebuild(self):
+        if self.reference_path is None or self.reference_goal is None:
+            return True
+        return self._position_differs(self.goal_pos, self.reference_goal)
+
+    def _ensure_reference_path(self):
+        if not self._reference_path_needs_rebuild():
+            return True
+        reference = self.planner.plan(
+            self.start_pos,
+            self.goal_pos,
+            use_dynamic=False,
+            search_bounds=None,
+        )
+        if reference is None:
+            return False
+        self.reference_path = np.asarray(reference, dtype=np.float32)
+        self.reference_goal = self.goal_pos.copy()
+        self.reference_progress_index = 0
+        return True
+
+    def _plan_forward_window(self):
+        if not self._ensure_reference_path():
+            return None
+        nearest = self._nearest_reference_index(self.reference_path)
+        self._update_stair_state_from_path(self.reference_path[nearest:])
+        join_distance = (
+            self.local_replan_forward_distance
+            + self.local_replan_join_extension
+        )
+        anchor = self._reference_anchor_index(
+            self.reference_path,
+            nearest,
+            forward_distance=join_distance,
+        )
+        goal_heading = self._reference_join_heading(self.reference_path, anchor)
+        use_dynamic = self._global_path_perception_active()
+        local_path = self.planner.plan(
+            self.start_pos,
+            self.reference_path[anchor, :3],
+            use_dynamic=use_dynamic,
+            search_bounds=None,
+            goal_heading=goal_heading,
+        )
+        if local_path is None:
+            return None
+
+        local_path = np.asarray(local_path, dtype=np.float32)
+        suffix = self.reference_path[anchor + 1 :]
+        if suffix.size == 0:
+            combined = local_path
+        else:
+            combined = np.concatenate([local_path, suffix], axis=0)
+        self.get_logger().debug(
+            f"Local PCT repair: nearest={nearest}, anchor={anchor}, "
+            f"local={len(local_path)}, suffix={len(suffix)}, "
+            f"forward={self.local_replan_forward_distance:.2f}m, "
+            f"join_extension={self.local_replan_join_extension:.2f}m, "
+            f"unbounded_search=1"
+        )
+        return combined
 
     def _plan_and_publish(self):
         self.planning = True
         start_time = time.perf_counter()
         try:
-            traj_3d = self.planner.plan(self.start_pos, self.goal_pos)
+            if self.local_replan_enabled:
+                traj_3d = self._plan_forward_window()
+            else:
+                traj_3d = self.planner.plan(self.start_pos, self.goal_pos)
             if traj_3d is None:
                 plan_info = getattr(self.planner, "last_plan_info", {})
                 self.get_logger().warn(
@@ -440,7 +575,8 @@ class PctPlannerNode(Node):
             traj_first = traj_np[0, :3].tolist() if traj_np.ndim == 2 and traj_np.shape[0] > 0 else []
             self.get_logger().info(
                 f"Published /pct_path with {len(traj_3d)} poses in {dt_ms:.1f} ms, "
-                f"start={self.start_pos.tolist()}, traj_first={traj_first}"
+                f"start={self.start_pos.tolist()}, traj_first={traj_first}, "
+                f"local_window={int(self.local_replan_enabled)}"
             )
         except Exception as exc:
             self.get_logger().error(f"PCT planning failed: {exc}")
@@ -499,7 +635,10 @@ class PctPlannerNode(Node):
         clear_hit_mask = None
         if self.global_path_perception_raytrace_enabled:
             clear_points, clear_hit_mask = self._build_global_path_perception_clear_rays(
-                msg, ranges_raw, angles_raw, min_range
+                msg,
+                ranges_raw,
+                angles_raw,
+                min_range,
             )
 
         self._apply_global_path_perception_points(
@@ -508,6 +647,7 @@ class PctPlannerNode(Node):
             clear_points,
             clear_hit_mask,
             use_current_layer=True,
+            stamp_msg=msg.header.stamp,
         )
 
     def _on_global_path_perception_cloud(self, msg):
@@ -532,7 +672,11 @@ class PctPlannerNode(Node):
             points_np = np.asarray(points, dtype=np.float32)
         else:
             points_np = np.empty((0, 3), dtype=np.float32)
-        self._apply_global_path_perception_points(points_np, msg.header.frame_id)
+        self._apply_global_path_perception_points(
+            points_np,
+            msg.header.frame_id,
+            stamp_msg=msg.header.stamp,
+        )
 
     def _global_path_perception_update_due(self):
         now = time.monotonic()
@@ -613,18 +757,22 @@ class PctPlannerNode(Node):
         clear_points_sensor=None,
         clear_hit_mask=None,
         use_current_layer=False,
+        stamp_msg=None,
     ):
         source_frame = (source_frame or self.robot_frame).lstrip("/")
-        transform = self._lookup_transform_to_map(source_frame)
+        transform = self._lookup_transform_to_map(source_frame, stamp_msg=stamp_msg)
         if transform is None:
             return
 
+        self._update_start_from_stamped_tf(stamp_msg)
         points_map = self._transform_points_with_transform(points_sensor, transform)
 
-        changed_cells = 0
-        clear_cells = 0
+        clear_indices = np.zeros((0, 3), dtype=np.int32)
         if clear_points_sensor is not None and clear_hit_mask is not None:
-            clear_points_map = self._transform_points_with_transform(clear_points_sensor, transform)
+            clear_points_map = self._transform_points_with_transform(
+                clear_points_sensor,
+                transform,
+            )
             origin_map = self._transform_origin_with_transform(transform)
             clear_indices = self._build_global_path_perception_clear_indices(
                 origin_map,
@@ -632,27 +780,34 @@ class PctPlannerNode(Node):
                 clear_hit_mask,
                 use_current_layer=use_current_layer,
             )
-            if clear_indices.size > 0:
-                clear_cells = self.planner.clear_global_path_perception_indices(clear_indices)
-                changed_cells += clear_cells
 
         perception_indices = self._build_global_path_perception_indices(
             points_map,
             use_current_layer=use_current_layer,
         )
+        footprint_indices = self._build_footprint_clear_indices(stamp_msg)
+        if footprint_indices.size > 0:
+            clear_indices = np.unique(
+                np.concatenate([clear_indices, footprint_indices], axis=0),
+                axis=0,
+            )
+        # Marking is already limited by the configured perception width/height.
+        # Do not clip dynamic cells or A* search to a reference-path corridor.
+        window_bounds = np.full(4, -1, dtype=np.int32)
         clear_center = self._current_robot_grid_index()
-        mark_changed_cells = self.planner.update_global_path_perception(
+        changed_cells = self.planner.apply_global_path_perception(
             perception_indices,
+            clear_indices,
             self.global_path_perception_inflation_radius,
             self.global_path_perception_inscribed_radius,
             self.global_path_perception_cost,
             self.global_path_perception_cost_scaling_factor,
-            self._now_seconds(),
+            self._stamp_seconds(stamp_msg),
             self.global_path_perception_persistence,
             clear_center,
-            self.global_path_perception_clear_robot_radius,
+            -1.0,
+            window_bounds,
         )
-        changed_cells += mark_changed_cells
         if changed_cells < self.global_path_perception_min_changed_cells:
             self.last_perception_update_time = self.get_clock().now()
             return
@@ -660,11 +815,18 @@ class PctPlannerNode(Node):
         active_cells = self.planner.global_path_perception_cell_count()
         self.get_logger().info(
             f"Updated C++ PCT global path perception: active_cells={active_cells}, "
-            f"changed_cells={changed_cells}, clear_cells={clear_cells}, "
-            f"mark_cells={perception_indices.shape[0]}",
+            f"changed_cells={changed_cells}, clear_cells={clear_indices.shape[0]}, "
+            f"mark_cells={perception_indices.shape[0]}, "
+            "path_corridor=disabled",
             throttle_duration_sec=1.0,
         )
         self.last_perception_update_time = self.get_clock().now()
+
+    def _stamp_seconds(self, stamp_msg):
+        if stamp_msg is None:
+            return self._now_seconds()
+        stamp = float(stamp_msg.sec) + float(stamp_msg.nanosec) * 1.0e-9
+        return stamp if stamp > 0.0 else self._now_seconds()
 
     def _now_seconds(self):
         now = self.get_clock().now().nanoseconds
@@ -675,6 +837,64 @@ class PctPlannerNode(Node):
         grid_idx = self.planner.pos2idx(self.start_pos[:2]).astype(int)
         return np.array([layer, int(grid_idx[1]), int(grid_idx[0])], dtype=np.int32)
 
+    def _update_start_from_stamped_tf(self, stamp_msg):
+        if self.start_source != "tf":
+            return None
+        transform = self._lookup_transform_to_map(
+            self.robot_frame,
+            stamp_msg=stamp_msg,
+            context="Robot pose for dynamic layer",
+        )
+        if transform is None:
+            return None
+        translation = transform.transform.translation
+        self.start_pos = np.array(
+            [translation.x, translation.y, translation.z],
+            dtype=np.float32,
+        )
+        return transform
+
+    def _build_footprint_clear_indices(self, stamp_msg):
+        robot_transform = self._update_start_from_stamped_tf(stamp_msg)
+        if robot_transform is None:
+            return np.zeros((0, 3), dtype=np.int32)
+        half_length = (
+            0.5 * self.global_path_perception_footprint_length
+            + self.global_path_perception_footprint_padding
+        )
+        half_width = (
+            0.5 * self.global_path_perception_footprint_width
+            + self.global_path_perception_footprint_padding
+        )
+        resolution = max(0.01, float(self.planner.resolution))
+        sample_step = 0.5 * resolution
+        local_x = np.arange(-half_length, half_length + sample_step, sample_step)
+        local_y = np.arange(-half_width, half_width + sample_step, sample_step)
+        grid_x, grid_y = np.meshgrid(local_x, local_y, indexing="ij")
+        local_points = np.stack(
+            [grid_x.reshape(-1), grid_y.reshape(-1), np.zeros(grid_x.size)],
+            axis=1,
+        ).astype(np.float32)
+        footprint_map = self._transform_points_with_transform(
+            local_points,
+            robot_transform,
+        )
+        cells = self.planner.points2rowcol(footprint_map[:, :2])
+        if cells.size == 0:
+            return np.zeros((0, 3), dtype=np.int32)
+        return np.asarray(
+            self.planner.build_global_path_perception_mark_indices(
+                cells,
+                self._global_path_perception_current_layer(),
+                float(self.start_pos[2]),
+                False,
+                0.0,
+                self.global_path_perception_height_tolerance,
+                self.global_path_perception_mark_all_layers,
+            ),
+            dtype=np.int32,
+        ).reshape((-1, 3))
+
     def _transform_points_to_map(self, points, source_frame):
         if points.size == 0:
             return points.reshape(0, 3).astype(np.float32, copy=False)
@@ -684,10 +904,22 @@ class PctPlannerNode(Node):
             return None
         return self._transform_points_with_transform(points, transform)
 
-    def _lookup_transform_to_map(self, source_frame, context="Dynamic layer"):
+    def _lookup_transform_to_map(
+        self,
+        source_frame,
+        stamp_msg=None,
+        context="Dynamic layer",
+    ):
         target_frame = self.global_frame or self.frame_id
+        lookup_time = Time()
+        if stamp_msg is not None and (stamp_msg.sec != 0 or stamp_msg.nanosec != 0):
+            lookup_time = Time.from_msg(stamp_msg)
         try:
-            return self.tf_buffer.lookup_transform(target_frame, source_frame, Time())
+            return self.tf_buffer.lookup_transform(
+                target_frame,
+                source_frame,
+                lookup_time,
+            )
         except Exception as exc:
             self.get_logger().warn(
                 f"{context} waiting for TF {target_frame}<-{source_frame}: {exc}",
@@ -804,6 +1036,8 @@ class PctPlannerNode(Node):
                 float(self.start_pos[2]),
                 False,
                 0.0,
+                self.global_path_perception_height_tolerance,
+                self.global_path_perception_mark_all_layers,
             ),
             dtype=np.int32,
         ).reshape((-1, 3))
@@ -879,6 +1113,8 @@ class PctPlannerNode(Node):
                 endpoint_cells,
                 self._global_path_perception_current_layer(),
                 float(self.start_pos[2]),
+                self.global_path_perception_height_tolerance,
+                self.global_path_perception_mark_all_layers,
             ),
             dtype=np.int32,
         ).reshape((-1, 3))

@@ -25,6 +25,10 @@ class GPMPOptimizerWnoa {
     max_iterations_ = max_iterations;
   }
 
+  void SetGoalVelocitySigma(const double sigma) {
+    goal_velocity_sigma_ = sigma;
+  }
+
   Eigen::MatrixXd GetOptInitValue() const { return opt_init_value_; }
   Eigen::MatrixXd GetOptInitLayer() const { return opt_init_layer_; }
   Eigen::MatrixXd GetResultMatrix() const { return trajectory_; }
@@ -57,6 +61,7 @@ class GPMPOptimizerWnoa {
   int sample_interval_ = 10;
   int interpolate_num_ = 8;
   double safe_cost_margin_ = 10;
+  double goal_velocity_sigma_ = 1.0;
   int max_iterations_ = 100;
 
   HeightSmoother height_smoother_;

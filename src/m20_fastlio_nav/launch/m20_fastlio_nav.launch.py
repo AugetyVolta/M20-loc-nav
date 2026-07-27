@@ -48,7 +48,6 @@ def generate_launch_description():
     pct_tomogram_file = LaunchConfiguration("pct_tomogram_file")
     pct_start_source = LaunchConfiguration("pct_start_source")
     pct_replan_interval = LaunchConfiguration("pct_replan_interval")
-    pct_position_epsilon = LaunchConfiguration("pct_position_epsilon")
     pct_always_replan = LaunchConfiguration("pct_always_replan")
     pct_a_star_cost_threshold = LaunchConfiguration("pct_a_star_cost_threshold")
     pct_safe_cost_margin = LaunchConfiguration("pct_safe_cost_margin")
@@ -71,6 +70,10 @@ def generate_launch_description():
     )
     pct_global_path_perception_raytrace_max_rays = LaunchConfiguration(
         "pct_global_path_perception_raytrace_max_rays"
+    )
+    pct_local_replan_enabled = LaunchConfiguration("pct_local_replan_enabled")
+    pct_local_replan_forward_distance = LaunchConfiguration(
+        "pct_local_replan_forward_distance"
     )
     pct_stair_mode_enabled = LaunchConfiguration("pct_stair_mode_enabled")
     pct_stair_disable_global_path_perception = LaunchConfiguration("pct_stair_disable_global_path_perception")
@@ -233,7 +236,6 @@ def generate_launch_description():
                                 "global_frame": "map",
                                 "robot_frame": "base_link",
                                 "replan_interval": ParameterValue(pct_replan_interval, value_type=float),
-                                "position_epsilon": ParameterValue(pct_position_epsilon, value_type=float),
                                 "always_replan": ParameterValue(pct_always_replan, value_type=bool),
                                 "a_star_cost_threshold": ParameterValue(
                                     pct_a_star_cost_threshold,
@@ -295,6 +297,14 @@ def generate_launch_description():
                                 "global_path_perception_raytrace_max_rays": ParameterValue(
                                     pct_global_path_perception_raytrace_max_rays,
                                     value_type=int,
+                                ),
+                                "local_replan_enabled": ParameterValue(
+                                    pct_local_replan_enabled,
+                                    value_type=bool,
+                                ),
+                                "local_replan_forward_distance": ParameterValue(
+                                    pct_local_replan_forward_distance,
+                                    value_type=float,
                                 ),
                                 "stair_mode_enabled": ParameterValue(
                                     pct_stair_mode_enabled,
@@ -487,7 +497,6 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_tomogram_file", default_value="m20_3d_map"),
             DeclareLaunchArgument("pct_start_source", default_value="tf"),
             DeclareLaunchArgument("pct_replan_interval", default_value="1.0"),
-            DeclareLaunchArgument("pct_position_epsilon", default_value="0.2"),
             DeclareLaunchArgument("pct_always_replan", default_value="true"),
             DeclareLaunchArgument("pct_a_star_cost_threshold", default_value="45.0"),
             DeclareLaunchArgument("pct_safe_cost_margin", default_value="15.0"),
@@ -495,16 +504,18 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_layer_match_height_tolerance", default_value="1.2"),
             DeclareLaunchArgument("pct_use_interactive_markers", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_enabled", default_value="true"),
-            DeclareLaunchArgument("pct_global_path_perception_scan_topic", default_value="/traversability_filtered_scan"),
-            DeclareLaunchArgument("pct_global_path_perception_width", default_value="6.0"),
-            DeclareLaunchArgument("pct_global_path_perception_height", default_value="6.0"),
-            DeclareLaunchArgument("pct_global_path_perception_inflation_radius", default_value="0.60"),
-            DeclareLaunchArgument("pct_global_path_perception_inscribed_radius", default_value="0.35"),
+            DeclareLaunchArgument("pct_global_path_perception_scan_topic", default_value="/scan"),
+            DeclareLaunchArgument("pct_global_path_perception_width", default_value="8.0"),
+            DeclareLaunchArgument("pct_global_path_perception_height", default_value="8.0"),
+            DeclareLaunchArgument("pct_global_path_perception_inflation_radius", default_value="1.0"),
+            DeclareLaunchArgument("pct_global_path_perception_inscribed_radius", default_value="0.45"),
             DeclareLaunchArgument("pct_global_path_perception_cost_scaling_factor", default_value="5.0"),
             DeclareLaunchArgument("pct_global_path_perception_persistence", default_value="5.0"),
             DeclareLaunchArgument("pct_global_path_perception_raytrace_enabled", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_raytrace_max_range", default_value="0.0"),
             DeclareLaunchArgument("pct_global_path_perception_raytrace_max_rays", default_value="360"),
+            DeclareLaunchArgument("pct_local_replan_enabled", default_value="true"),
+            DeclareLaunchArgument("pct_local_replan_forward_distance", default_value="10.0"),
             DeclareLaunchArgument("pct_stair_mode_enabled", default_value="true"),
             DeclareLaunchArgument("pct_stair_disable_global_path_perception", default_value="true"),
             DeclareLaunchArgument("pct_stair_lookahead", default_value="3.0"),

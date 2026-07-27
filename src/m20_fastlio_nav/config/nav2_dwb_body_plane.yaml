@@ -99,8 +99,8 @@ local_costmap:
         # 是否启用这一层。false 时插件还会加载，但不会往 local costmap 写代价。
         enabled: true
 
-        # 输入点云。算法阈值保持源码默认，但话题必须匹配当前 M20 Fast-LIO 输出。
-        # 如果这个话题没数据，local costmap 就不会得到三维可通行性信息。
+        # 输入当前 M20 Fast-LIO 的 body 点云；下方参数均显式覆盖源码默认值。
+        # 话题无数据时，插件不会生成 traversability cost 和过滤后 scan。
         pointcloud_topic: /cloud_registered_body_1
 
         # 点云坐标系覆盖。空字符串表示使用 PointCloud2 header.frame_id。
@@ -148,9 +148,39 @@ local_costmap:
         # 致命代价阈值。Nav2 costmap 中 254 通常表示 LETHAL_OBSTACLE。
         lethal_cost_threshold: 254.0
 
-        # 观测保留时间，单位秒。0 表示只用最新帧；>0 会累积短时历史并衰减。
-        # 调大能减少点云缺帧导致的闪烁；太大会让旧障碍残留。
-        observation_persistence: 1.0
+        # 体素命中数据可继续参与后续计算的点云帧数，不再是秒。
+        # 当前点云约 10Hz，10 帧约为 1.0s；数值越大越稳定，但旧障碍消失越慢。
+        observation_persistence: 10
+
+        # 每 N+1 帧执行一次完整地面与代价计算；0 表示每帧计算。
+        # 当前 1 表示点云每帧更新体素、每 2 帧提取一次地面并更新 cost，10Hz 输入约为 5Hz。
+        # 这样能减小楼梯点云抖动和计算量；需要更快响应时可改为 0。
+        skip_frames: 1
+
+        # 是否在当前格无新地面观测时继续写入历史 cost。
+        # 实测保持 false 更好，可避免楼梯边缘、定位抖动和临时障碍的旧高代价长期残留。
+        # 这不会关闭体素短时记忆，短时保留仍由 observation_persistence 控制。
+        persist_cost: false
+
+        # 是否把插值/填充地面直接写成低代价 1；false 时这些格保持 NO_INFORMATION。
+        # 当前 local costmap 不叠加 ObstacleLayer，实测 false 更稳，可避免把栏杆间隙、
+        # 楼梯边缘和缺少真实观测的区域直接当作可通行地面。
+        trust_interpolated_ground: false
+
+        # 按点云和 scan 消息时间戳等待 TF 的最长时间，单位秒。
+        # 超时的点云帧会丢弃；filtered scan 查询失败时会原样发布，避免漏掉真实障碍。
+        transform_tolerance: 0.3
+
+        # 在机器人周围 0.2m 内，为无地面数据的格子补充参考地面，缓解雷达近身盲区。
+        # 优先使用半径内真实地面高度；完全找不到时才使用 base_link.z-ground_fill_height。
+        # 填充格会标记为 interpolated；由于 trust_interpolated_ground=false，它不会直接写
+        # 低代价 1，但仍会参与邻域坡度/高度差计算，因此可能影响周围真实格子的 cost。
+        ground_fill_radius: 0.2
+        # 当前 base_link 到地面的 fallback 高度估计，单位 m，仅在找不到真实地面时使用。
+        ground_fill_height: 0.5
+
+        # 是否每 120 秒打印点云变换、体素、地面提取和 costmap 更新的平均耗时。
+        enable_perf_log: false
 
         # 点云订阅队列长度。大一点抗突发延迟，小一点更实时。
         cloud_buffer_size: 5
@@ -158,8 +188,9 @@ local_costmap:
         # 是否发布调试点云 slope_map，用 intensity 表示 cost，方便 RViz 看可通行性结果。
         publish_slope_map: true
 
-        # 按实时 traversability cost 过滤 /scan；切回 traversability 模式时启用这个插件。
-        # 开启后只有 endpoint 落在已知高代价格子时才保留；可通行、未知、无地面区域置为 inf。
+        # 按 scan 时间戳转换 endpoint，并用实时 traversability cost 过滤原始 /scan。
+        # 只有 endpoint 落在已知且 cost>=filtered_scan_min_cost 的格子时才保留；
+        # 可通行、插值未知、无地面和范围外区域都会置为 inf。
         publish_filtered_scan: true
         filtered_scan_input_topic: /scan
         filtered_scan_topic: /traversability_filtered_scan

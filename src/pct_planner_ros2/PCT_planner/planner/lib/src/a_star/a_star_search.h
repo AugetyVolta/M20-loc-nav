@@ -1,7 +1,9 @@
 #pragma once
 
 #include <Eigen/Core>
+#include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common/data_types.h"
@@ -29,6 +31,7 @@ class Node {
   double cost = 0.0;
   double static_cost = 0.0;
   double perception_cost = 0.0;
+  std::uint8_t perception_nav2_cost = 0;
   double perception_source_stamp = -1.0;
   int layer = 0;
   Eigen::Vector3i idx = Eigen::Vector3i(0, 0, 0);  // layer, row, col
@@ -88,6 +91,18 @@ class Astar {
                              const double persistence,
                              const Eigen::Vector3i& clear_center,
                              const double clear_radius);
+  int ApplyGlobalPathPerception(
+      const Eigen::MatrixXi& mark_indices,
+      const Eigen::MatrixXi& clear_indices,
+      const double inflation_radius,
+      const double inscribed_radius,
+      const double peak_cost,
+      const double cost_scaling_factor,
+      const double stamp,
+      const double persistence,
+      const Eigen::Vector3i& clear_center,
+      const double clear_radius,
+      const Eigen::Vector4i& window_bounds);
   int DecayGlobalPathPerception(const double stamp, const double persistence);
   int ClearGlobalPathPerceptionIndices(const Eigen::MatrixXi& clear_indices);
   void ClearGlobalPathPerception();
@@ -98,12 +113,22 @@ class Astar {
       const int current_layer,
       const double robot_height,
       const bool skip_static_obstacles,
-      const double static_skip_cost) const;
+      const double static_skip_cost,
+      const double layer_height_tolerance,
+      const bool mark_all_layers) const;
   Eigen::MatrixXi BuildGlobalPathPerceptionClearIndices(
       const Eigen::Vector2i& origin_cell,
       const Eigen::MatrixXi& endpoint_cells,
       const int current_layer,
-      const double robot_height) const;
+      const double robot_height,
+      const double layer_height_tolerance,
+      const bool mark_all_layers) const;
+  void SetGlobalPathPerceptionEnabled(bool enabled);
+  void SetSearchBounds(const Eigen::Vector4i& bounds);
+  void ClearSearchBounds() { search_bounds_enabled_ = false; }
+  bool IsGlobalPathPerceptionLethal(const Eigen::Vector3i& index) const;
+  bool HasLethalGlobalPathPerception(
+      const Eigen::MatrixXi& indices) const;
 
  private:
   double CalculateStepCost(const Node* node1, const Node* node2) const;
@@ -133,16 +158,24 @@ class Astar {
                                        double inscribed_radius,
                                        double peak_cost,
                                        double cost_scaling_factor);
-  double PerceptionInflationCost(int drow, int dcol, double inflation_radius,
-                              double inscribed_radius, double peak_cost,
-                              double cost_scaling_factor) const;
+  std::uint8_t PerceptionInflationCost(
+      int drow, int dcol, double inflation_radius,
+      double inscribed_radius, double cost_scaling_factor) const;
+  double PctPerceptionCost(std::uint8_t nav2_cost) const;
   bool MarkPerceptionSource(int layer, int row, int col, double stamp);
   bool ClearPerceptionSource(int layer, int row, int col);
   int ClearPerceptionSourceCircle(const Eigen::Vector3i& center, double radius);
   int DecayGlobalPathPerceptionSources(double stamp, double persistence);
   int RebuildGlobalPathPerceptionCosts();
+  int ClearPerceptionSourcesOutside(const Eigen::Vector4i& window_bounds);
+  int PerceptionKey(int layer, int row, int col) const;
+  Eigen::Vector3i DecodePerceptionKey(int key) const;
+  bool IsInsideSearchBounds(int row, int col) const;
   int SelectPerceptionLayerForCell(int row, int col, int current_layer,
                                    double robot_height) const;
+  std::vector<int> SelectPerceptionLayersForCell(
+      int row, int col, int current_layer, double robot_height,
+      double layer_height_tolerance, bool mark_all_layers) const;
   bool IsStaticObstacleCell(int layer, int row, int col,
                             double static_skip_cost) const;
   std::vector<Eigen::Vector2i> BresenhamCells(int row0, int col0, int row1,
@@ -170,6 +203,14 @@ class Astar {
   double perception_inscribed_radius_ = 0.0;
   double perception_peak_cost_ = 0.0;
   double perception_cost_scaling_factor_ = 0.0;
+  std::unordered_set<int> perception_source_indices_;
+  std::unordered_set<int> perception_cost_indices_;
+  bool global_path_perception_enabled_ = true;
+  bool search_bounds_enabled_ = false;
+  int search_min_row_ = 0;
+  int search_max_row_ = 0;
+  int search_min_col_ = 0;
+  int search_max_col_ = 0;
 
   // int search_layer_depth_ = 1;
   std::vector<int> search_layers_offset_;

@@ -28,7 +28,7 @@ MID360 点云/IMU
 | `/Odometry_loc` | Fast-LIO 定位原始输出 |
 | `/odom_body` | 局部控制使用的机体平面 odom |
 | `/scan` | 原始 LaserScan，用于 RViz 和过滤前后对比 |
-| `/traversability_filtered_scan` | 当前选中 costmap 过滤插件的唯一输出，供 ObstacleLayer、PCT 动态层和 RL local path 使用 |
+| `/traversability_filtered_scan` | 当前选中 costmap 过滤插件的输出，供 ObstacleLayer 和 RL local path 使用；PCT 动态层直接订阅 `/scan` |
 | `/traversability_tomogram` | `tomogram_filter_layer` 可选发布的 transient-local 静态表面，仅供 RViz 调试 |
 | `/pct_path` | PCT planner 发布的 3D 全局路径 |
 | `/subgoal` | pure pursuit 从 `/pct_path` 选出的 `base_link` 局部目标 |
@@ -340,19 +340,21 @@ docs/fastlio_frontend_notes.md
 | `start_pct_planner` | `true` | 默认随主导航启动 PCT planner |
 | `pct_start_source` | `tf` | PCT 起点默认来自 TF `map -> base_link`，会随机器人位置更新 |
 | `pct_replan_interval` | `1.0` | 每 1 秒检查是否需要重规划 |
-| `pct_position_epsilon` | `0.2` | 起点或终点变化超过 0.2m 才重规划 |
 | `pct_always_replan` | `true` | 主导航默认按 `pct_replan_interval` 定周期更新 `/pct_path`；动态感知只更新代价层，不单独触发即时重规划 |
-| `pct_global_path_perception_enabled` | `true` | 主导航默认用三维地面过滤后的 scan 更新 PCT 动态障碍层 |
-| `pct_global_path_perception_scan_topic` | `/traversability_filtered_scan` | PCT 动态避障输入，与 local costmap 当前选择的过滤插件保持一致 |
-| `pct_global_path_perception_width` | `6.0` | PCT 全局路径感知窗口宽度，覆盖机器人前后左右近场障碍 |
-| `pct_global_path_perception_height` | `6.0` | PCT 全局路径感知窗口高度，覆盖机器人前后左右近场障碍 |
-| `pct_global_path_perception_inflation_radius` | `0.60` | PCT 动态障碍软膨胀半径，核心外侧仍给 A* 平滑避障代价 |
-| `pct_global_path_perception_inscribed_radius` | `0.35` | PCT 动态障碍硬核心半径；半径内的动态障碍格子在 A* 中直接不可通行 |
+| `pct_global_path_perception_enabled` | `true` | 主导航平地模式默认用原始 scan 更新 PCT 动态障碍层；楼梯模式关闭 |
+| `pct_global_path_perception_scan_topic` | `/scan` | 同一帧先 raytrace clear，再 mark 有限 endpoint |
+| `pct_global_path_perception_width` | `8.0` | PCT 动态感知窗口 X 向尺寸，以机器人为中心前后各约 4m |
+| `pct_global_path_perception_height` | `8.0` | PCT 动态感知窗口 Y 向尺寸，以机器人为中心左右各约 4m |
+| `pct_global_path_perception_inflation_radius` | `1.0` | PCT 动态障碍总代价膨胀半径；硬核心外侧给 A* 渐变避障代价 |
+| `pct_global_path_perception_inscribed_radius` | `0.45` | PCT 动态障碍硬核心半径；半径内的动态障碍格子在 A* 中直接不可通行 |
 | `pct_global_path_perception_cost_scaling_factor` | `5.0` | 动态软膨胀代价衰减速度，数值越大衰减越快，避免路径被软代价推得过远 |
 | `pct_global_path_perception_persistence` | `5.0` | 动态观测兜底保留时间；主要清除机制是 raytrace clearing |
 | `pct_global_path_perception_raytrace_enabled` | `true` | 使用 LaserScan 射线清除动态层自由空间，行为更接近 Nav2 obstacle_layer |
 | `pct_global_path_perception_raytrace_max_range` | `0.0` | raytrace 最大距离；`0.0` 表示自动使用感知窗口和 scan `range_max` 的较小值 |
 | `pct_global_path_perception_raytrace_max_rays` | `360` | 每次最多处理的清除射线数，限制 Python 动态层计算量 |
+| `global_path_perception_height_tolerance` | `0.75` | 同一物理地面上的等高 tomogram layer 同时 mark/clear，避免 A* 从重叠层穿过障碍 |
+| `pct_local_replan_enabled` | `true` | 保留静态全局参考线，只重规划机器人到前方锚点并平滑衔接后缀 |
+| `pct_local_replan_forward_distance` | `10.0` | 基础前视距离；内部额外联合优化 `1.0m` 参考重叠段并约束末端切线，A* 不限制左右范围 |
 | `scan_topic` | `/scan` | 原始 LaserScan，由 pointcloud_to_laserscan 输出，保留用于对比和调试 |
 | `rl_scan_topic` | `/traversability_filtered_scan` | RL/PRIEST local path 使用的过滤后 LaserScan |
 | `local_costmap.plugins` | `traversability_layer` | 当前默认使用实时 traversability 过滤；可在 `nav2_dwb_body_plane.yaml` 中切换为静态 tomogram 过滤 |
@@ -423,12 +425,11 @@ ros2 topic info /traversability_filtered_scan -v
 ros2 topic echo /traversability_tomogram --once --field width
 ```
 
-PCT 动态层继续按 Nav2 costmap 思路维护 source grid：有限 hit beam mark 障碍源点，`inf`/远距离 beam 或 hit 前方自由空间执行 raytrace clear，然后统一重算 inflation cost。
+PCT 动态层按 Nav2 costmap 语义维护：原始 `/scan` 的同一帧先 raytrace clear，再 mark 有限 endpoint。障碍源为 `254`，内切区为 `253`，外圈按 `cost_scaling_factor` 指数衰减。A* 把 `253/254` 当硬障碍，优化器使用同一动态代价的梯度。同一物理地面的重叠 tomogram layer 会在高度容差内一起更新，防止 A* 换层穿过动态障碍；不同楼层不会互相污染。楼梯状态下 PCT 动态层关闭。
 
-PCT 动态层保留静态障碍跳过保护，避免静态 tomogram 已经包含的墙体又作为动态障碍重复膨胀：
+`254/253` 是动态层内部保留的 Nav2 障碍标签，不会直接写进 PCT 的 `0..50` cost。软代价按 `PCT峰值 * Nav2代价 / 254` 换算；当前 `a_star_cost_threshold=45`、自动动态峰值为 `50`。A* 先无条件拒绝 `253/254`，再使用映射后的软代价参与搜索。
 
-- `global_path_perception_skip_static_obstacles=true`：静态 tomogram cost 已经高于阈值的点不会重复写入动态层。`global_path_perception_static_skip_cost=-1.0` 表示自动使用 `a_star_cost_threshold`，主导航里实际是 45.0。
-- `global_path_perception_path_corridor_radius=0.0`：默认不按已有路径裁剪动态障碍，行为更接近 Nav2 global costmap；需要临时限制路径附近障碍时再手动调大。
+动态更新只遍历活动 source 和其膨胀格，旧 source 由同帧 raytrace 或 `persistence` 清除，不再按参考路径走廊裁剪。路径规划保留静态全局参考线，每个周期以基础前视距离选择局部段，再额外联合优化 `1.0m` 静态参考重叠段。重叠段末端位置和切线与静态后缀对齐后再拼接，避免 RViz 中出现接缝尖角；A* 可以在完整 tomogram 范围内绕行。
 
 如需对比原始 `/scan`：
 
@@ -456,7 +457,7 @@ adapter 向 Nav2 发送 `FollowPath` 使用异步 action。若发送期间收到
 
 ## 发布终点
 
-主导航默认已经启动 PCT planner，不需要再单独启动 `m20_pct_rviz.launch.py`。PCT 起点默认来自 TF `map -> base_link`，所以全局路径会从机器人真实 `base_link` 位置开始；终点改变或机器人移动超过 `pct_position_epsilon` 后，会重新规划并更新 `/pct_path`。
+主导航默认已经启动 PCT planner，不需要再单独启动 `m20_pct_rviz.launch.py`。PCT 起点默认来自 TF `map -> base_link`，所以全局路径会从机器人真实 `base_link` 位置开始；默认每 `1.0s` 从最新机器人位置重新规划并更新 `/pct_path`。
 
 RViz 里推荐两种方式：
 

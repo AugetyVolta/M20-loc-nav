@@ -100,6 +100,46 @@ class TomogramPlanner(object):
             )
         )
 
+    def apply_global_path_perception(
+        self,
+        mark_indices,
+        clear_indices,
+        inflation_radius,
+        inscribed_radius,
+        perception_cost,
+        cost_scaling_factor,
+        stamp,
+        persistence,
+        clear_center,
+        clear_radius,
+        window_bounds,
+    ):
+        mark_indices = np.asarray(mark_indices, dtype=np.int32)
+        if mark_indices.size == 0:
+            mark_indices = np.zeros((0, 3), dtype=np.int32)
+        mark_indices = mark_indices.reshape((-1, 3))
+        clear_indices = np.asarray(clear_indices, dtype=np.int32)
+        if clear_indices.size == 0:
+            clear_indices = np.zeros((0, 3), dtype=np.int32)
+        clear_indices = clear_indices.reshape((-1, 3))
+        clear_center = np.asarray(clear_center, dtype=np.int32).reshape((3,))
+        window_bounds = np.asarray(window_bounds, dtype=np.int32).reshape((4,))
+        return int(
+            self.planner.apply_global_path_perception(
+                mark_indices,
+                clear_indices,
+                float(inflation_radius),
+                float(inscribed_radius),
+                float(perception_cost),
+                float(cost_scaling_factor),
+                float(stamp),
+                float(persistence),
+                clear_center,
+                float(clear_radius),
+                window_bounds,
+            )
+        )
+
     def decay_global_path_perception(self, stamp, persistence):
         return int(self.planner.decay_global_path_perception(float(stamp), float(persistence)))
 
@@ -132,6 +172,8 @@ class TomogramPlanner(object):
         robot_height,
         skip_static_obstacles,
         static_skip_cost,
+        layer_height_tolerance,
+        mark_all_layers,
     ):
         mark_cells = np.asarray(mark_cells, dtype=np.int32)
         if mark_cells.size == 0:
@@ -143,6 +185,8 @@ class TomogramPlanner(object):
             float(robot_height),
             bool(skip_static_obstacles),
             float(static_skip_cost),
+            float(layer_height_tolerance),
+            bool(mark_all_layers),
         )
 
     def build_global_path_perception_clear_indices(
@@ -151,6 +195,8 @@ class TomogramPlanner(object):
         endpoint_cells,
         current_layer,
         robot_height,
+        layer_height_tolerance,
+        mark_all_layers,
     ):
         origin_cell = np.asarray(origin_cell, dtype=np.int32).reshape((2,))
         endpoint_cells = np.asarray(endpoint_cells, dtype=np.int32)
@@ -162,6 +208,8 @@ class TomogramPlanner(object):
             endpoint_cells,
             int(current_layer),
             float(robot_height),
+            float(layer_height_tolerance),
+            bool(mark_all_layers),
         )
 
 
@@ -319,7 +367,14 @@ class TomogramPlanner(object):
 
 
 
-    def plan(self, start_pos, end_pos):
+    def plan(
+        self,
+        start_pos,
+        end_pos,
+        use_dynamic=True,
+        search_bounds=None,
+        goal_heading=None,
+    ):
         # TODO: calculate slice index. By default the start and end pos are all at slice 0
 
         # print("pos origin start:", start_pos)
@@ -350,7 +405,30 @@ class TomogramPlanner(object):
         }
     
 
-        self.planner.plan(self.start_idx, self.end_idx, True)
+        self.planner.set_global_path_perception_enabled(bool(use_dynamic))
+        if search_bounds is None:
+            self.planner.clear_search_bounds()
+        else:
+            bounds = np.asarray(search_bounds, dtype=np.int32).reshape((4,))
+            self.planner.set_search_bounds(bounds)
+        try:
+            # Optimizer x/y axes are transposed relative to map x/y:
+            # internal_x = map_y and internal_y = map_x.
+            heading = (
+                float("nan")
+                if goal_heading is None
+                else 0.5 * np.pi - float(goal_heading)
+            )
+            plan_success = self.planner.plan(
+                self.start_idx,
+                self.end_idx,
+                True,
+                heading,
+            )
+        finally:
+            self.planner.clear_search_bounds()
+        if not plan_success:
+            return None
         path_finder: a_star.Astar = self.planner.get_path_finder()
         path = path_finder.get_result_matrix()
         if len(path) == 0:
@@ -375,6 +453,33 @@ class TomogramPlanner(object):
         y_idx = (traj.shape[-1] - 1) // 2
         traj_3d = np.stack([traj[:, 0], traj[:, y_idx], heights / self.resolution], axis=1)
         traj_3d = transTrajGrid2Map(self.map_dim, self.center, self.resolution, traj_3d)
+        if goal_heading is not None and len(traj_3d) > 0:
+            traj_3d[-1, :3] = np.asarray(end_pos[:3], dtype=traj_3d.dtype)
+
+        if use_dynamic and len(traj_3d) > 0:
+            sampled_points = [traj_3d[0]]
+            sampled_layers = [layers[0]]
+            sample_spacing = max(0.01, 0.5 * self.resolution)
+            for index in range(1, len(traj_3d)):
+                segment_length = np.linalg.norm(
+                    traj_3d[index, :2] - traj_3d[index - 1, :2]
+                )
+                sample_count = max(1, int(np.ceil(segment_length / sample_spacing)))
+                for sample_index in range(1, sample_count + 1):
+                    ratio = float(sample_index) / float(sample_count)
+                    sampled_points.append(
+                        traj_3d[index - 1] * (1.0 - ratio) + traj_3d[index] * ratio
+                    )
+                    sampled_layers.append(
+                        layers[index - 1] * (1.0 - ratio) + layers[index] * ratio
+                    )
+            sampled_points = np.asarray(sampled_points, dtype=np.float32)
+            path_cells = self.points2rowcol(sampled_points[:, :2])
+            path_layers = np.rint(sampled_layers).astype(np.int32).reshape((-1, 1))
+            dynamic_indices = np.concatenate([path_layers, path_cells], axis=1)
+            if self.planner.has_lethal_global_path_perception(dynamic_indices):
+                self.last_plan_info["dynamic_collision_rejected"] = True
+                return None
 
         # print(traj_raw,"traj_raw")
         return traj_3d

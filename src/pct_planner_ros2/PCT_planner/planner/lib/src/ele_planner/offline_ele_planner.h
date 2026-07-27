@@ -22,7 +22,7 @@ class OfflineElePlanner {
                const Eigen::MatrixXd& grad_x, const Eigen::MatrixXd& grad_y);
 
   bool Plan(const Eigen::Vector3i& start, const Eigen::Vector3i& goal,
-            const bool optimize = true);
+            const bool optimize, const double goal_heading);
   int UpdateGlobalPathPerception(const Eigen::MatrixXi& perception_indices,
                              const double inflation_radius,
                              const double inscribed_radius,
@@ -32,6 +32,18 @@ class OfflineElePlanner {
                              const double persistence,
                              const Eigen::Vector3i& clear_center,
                              const double clear_radius);
+  int ApplyGlobalPathPerception(
+      const Eigen::MatrixXi& mark_indices,
+      const Eigen::MatrixXi& clear_indices,
+      const double inflation_radius,
+      const double inscribed_radius,
+      const double peak_cost,
+      const double cost_scaling_factor,
+      const double stamp,
+      const double persistence,
+      const Eigen::Vector3i& clear_center,
+      const double clear_radius,
+      const Eigen::Vector4i& window_bounds);
   int DecayGlobalPathPerception(const double stamp, const double persistence);
   int ClearGlobalPathPerceptionIndices(const Eigen::MatrixXi& clear_indices);
   void ClearGlobalPathPerception();
@@ -43,12 +55,30 @@ class OfflineElePlanner {
       const int current_layer,
       const double robot_height,
       const bool skip_static_obstacles,
-      const double static_skip_cost) const;
+      const double static_skip_cost,
+      const double layer_height_tolerance,
+      const bool mark_all_layers) const;
   Eigen::MatrixXi BuildGlobalPathPerceptionClearIndices(
       const Eigen::Vector2i& origin_cell,
       const Eigen::MatrixXi& endpoint_cells,
       const int current_layer,
-      const double robot_height) const;
+      const double robot_height,
+      const double layer_height_tolerance,
+      const bool mark_all_layers) const;
+  void SetGlobalPathPerceptionEnabled(bool enabled) {
+    path_finder_.SetGlobalPathPerceptionEnabled(enabled);
+    if (map_) {
+      map_->SetGlobalPathPerceptionEnabled(enabled);
+    }
+  }
+  void SetSearchBounds(const Eigen::Vector4i& bounds) {
+    path_finder_.SetSearchBounds(bounds);
+  }
+  void ClearSearchBounds() { path_finder_.ClearSearchBounds(); }
+  bool HasLethalGlobalPathPerception(
+      const Eigen::MatrixXi& indices) const {
+    return path_finder_.HasLethalGlobalPathPerception(indices);
+  }
 
   void SetReferenceHeight(const double height) {
     trajectory_optimizer_wnoj_.SetReferenceHeight(height);

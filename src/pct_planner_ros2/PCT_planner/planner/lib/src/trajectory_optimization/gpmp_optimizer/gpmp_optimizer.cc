@@ -25,10 +25,11 @@ bool GPMPOptimizer::GenerateTrajectory(const std::vector<PathPoint>& input_path,
 
   Vector6 s_init, s_target;
   s_init << 0.001, 0.1, 1, 0.001, 0.1, 1;
-  s_target << 0.001, 1, 1, 0.001, 1, 1;
+  s_target << 0.001, goal_velocity_sigma_, 1, 0.001,
+      goal_velocity_sigma_, 1;
 
-  static auto sigma_initial = Diagonal::Sigmas(s_init);
-  static auto sigma_goal = Diagonal::Sigmas(s_target);
+  auto sigma_initial = Diagonal::Sigmas(s_init);
+  auto sigma_goal = Diagonal::Sigmas(s_target);
 
   std::vector<PathPoint> path;
   SubSamplePath(input_path, path);

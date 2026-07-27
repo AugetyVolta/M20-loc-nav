@@ -25,6 +25,9 @@ class GPMPOptimizer {
   }
 
   void SetReferenceHeight(const double height) { reference_height_ = height; }
+  void SetGoalVelocitySigma(const double sigma) {
+    goal_velocity_sigma_ = sigma;
+  }
 
   Eigen::MatrixXd GetOptInitValue() const { return opt_init_value_; }
   Eigen::MatrixXd GetOptInitLayer() const { return opt_init_layer_; }
@@ -64,6 +67,7 @@ class GPMPOptimizer {
   int max_iterations_ = 100;
   double max_heading_rate_ = 0.5;
   double reference_height_ = 0.1;
+  double goal_velocity_sigma_ = 1.0;
 
   HeightSmoother height_smoother_;
 };
