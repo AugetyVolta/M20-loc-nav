@@ -58,6 +58,7 @@ def generate_launch_description():
             DeclareLaunchArgument("path_ground_offset", default_value="0.10"),
             DeclareLaunchArgument("global_path_perception_enabled", default_value="false"),
             DeclareLaunchArgument("global_path_perception_scan_topic", default_value="/scan"),
+            DeclareLaunchArgument("global_path_perception_min_range", default_value="0.15"),
             DeclareLaunchArgument("global_path_perception_width", default_value="8.0"),
             DeclareLaunchArgument("global_path_perception_height", default_value="8.0"),
             DeclareLaunchArgument("global_path_perception_inflation_radius", default_value="1.0"),
@@ -120,6 +121,10 @@ def generate_launch_description():
                             value_type=bool,
                         ),
                         "global_path_perception_scan_topic": LaunchConfiguration("global_path_perception_scan_topic"),
+                        "global_path_perception_min_range": ParameterValue(
+                            LaunchConfiguration("global_path_perception_min_range"),
+                            value_type=float,
+                        ),
                         "global_path_perception_width": ParameterValue(
                             LaunchConfiguration("global_path_perception_width"),
                             value_type=float,

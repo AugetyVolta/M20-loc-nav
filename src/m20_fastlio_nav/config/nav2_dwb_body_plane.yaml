@@ -117,8 +117,9 @@ local_costmap:
         min_obstacle_height: 0.0
 
         # 参与分析的最高点云高度，相对 base_frame，单位 m。
-        # 更大能看到高障碍；太大可能引入天花板/上层结构并增加计算量。
-        max_obstacle_height: 2.0
+        # 当前设为 1.0m，保留机器人身体高度范围内的人员和实体障碍，
+        # 同时避免把机器人可以从下方通过的头顶门框误写成障碍物。
+        max_obstacle_height: 1.0
 
         # 最大可通行坡度，单位度。坡度角超过它会直接写 LETHAL_OBSTACLE。
         # 调大更容易允许斜坡/楼梯；调小更保守。

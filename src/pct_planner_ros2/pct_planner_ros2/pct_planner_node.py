@@ -47,7 +47,7 @@ class PctPlannerNode(Node):
         self.declare_parameter("use_interactive_markers", True)
         self.declare_parameter("marker_namespace", "basic_controls")
         self.declare_parameter("marker_z_offset", 0.5)
-        self.declare_parameter("replan_interval", 0.5)
+        self.declare_parameter("replan_interval", 1.0)
         self.declare_parameter("auto_plan", True)
         self.declare_parameter("always_replan", True)
         self.declare_parameter("a_star_cost_threshold", 20.0)
@@ -59,7 +59,7 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_path_perception_enabled", False)
         self.declare_parameter("global_path_perception_scan_topic", "/scan")
         self.declare_parameter("global_path_perception_cloud_topic", "")
-        self.declare_parameter("global_path_perception_min_range", 0.45)
+        self.declare_parameter("global_path_perception_min_range", 0.15)
         self.declare_parameter("global_path_perception_width", 8.0)
         self.declare_parameter("global_path_perception_height", 8.0)
         self.declare_parameter("global_path_perception_inflation_radius", 1.0)
@@ -67,8 +67,7 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_path_perception_cost", -1.0)
         self.declare_parameter("global_path_perception_cost_scaling_factor", 5.0)
         self.declare_parameter("global_path_perception_height_tolerance", 0.75)
-        self.declare_parameter("global_path_perception_clear_robot_radius", -1.0)
-        self.declare_parameter("global_path_perception_update_interval", 0.2)
+        self.declare_parameter("global_path_perception_update_interval", 0.5)
         self.declare_parameter("global_path_perception_persistence", 1.0)
         self.declare_parameter("global_path_perception_min_changed_cells", 3)
         self.declare_parameter("global_path_perception_max_points", 720)
@@ -76,9 +75,6 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_path_perception_raytrace_enabled", True)
         self.declare_parameter("global_path_perception_raytrace_max_range", 0.0)
         self.declare_parameter("global_path_perception_raytrace_max_rays", 360)
-        self.declare_parameter("global_path_perception_footprint_length", 0.82)
-        self.declare_parameter("global_path_perception_footprint_width", 0.506)
-        self.declare_parameter("global_path_perception_footprint_padding", 0.03)
         self.declare_parameter("local_replan_enabled", True)
         self.declare_parameter("local_replan_forward_distance", 6.0)
         self.declare_parameter("stair_mode_enabled", True)
@@ -132,11 +128,6 @@ class PctPlannerNode(Node):
         self.global_path_perception_height_tolerance = float(
             self.get_parameter("global_path_perception_height_tolerance").value
         )
-        self.global_path_perception_clear_robot_radius = float(
-            self.get_parameter("global_path_perception_clear_robot_radius").value
-        )
-        if self.global_path_perception_clear_robot_radius <= 0.0:
-            self.global_path_perception_clear_robot_radius = self.global_path_perception_inscribed_radius + 0.03
         self.global_path_perception_update_interval = float(
             self.get_parameter("global_path_perception_update_interval").value
         )
@@ -160,18 +151,6 @@ class PctPlannerNode(Node):
             self.global_path_perception_raytrace_max_range = self.global_path_perception_window_range
         self.global_path_perception_raytrace_max_rays = int(
             self.get_parameter("global_path_perception_raytrace_max_rays").value
-        )
-        self.global_path_perception_footprint_length = max(
-            0.0,
-            float(self.get_parameter("global_path_perception_footprint_length").value),
-        )
-        self.global_path_perception_footprint_width = max(
-            0.0,
-            float(self.get_parameter("global_path_perception_footprint_width").value),
-        )
-        self.global_path_perception_footprint_padding = max(
-            0.0,
-            float(self.get_parameter("global_path_perception_footprint_padding").value),
         )
         self.local_replan_enabled = bool(self.get_parameter("local_replan_enabled").value)
         self.local_replan_forward_distance = max(
@@ -343,6 +322,7 @@ class PctPlannerNode(Node):
                 f"inflation={self.global_path_perception_inflation_radius:.2f}m, "
                 f"scale={self.global_path_perception_cost_scaling_factor:.2f}, "
                 f"cost={self.global_path_perception_cost:.1f}, "
+                f"min_range={self.global_path_perception_min_range:.2f}m, "
                 f"raytrace={int(self.global_path_perception_raytrace_enabled)}"
             )
 
@@ -785,12 +765,6 @@ class PctPlannerNode(Node):
             points_map,
             use_current_layer=use_current_layer,
         )
-        footprint_indices = self._build_footprint_clear_indices(stamp_msg)
-        if footprint_indices.size > 0:
-            clear_indices = np.unique(
-                np.concatenate([clear_indices, footprint_indices], axis=0),
-                axis=0,
-            )
         # Marking is already limited by the configured perception width/height.
         # Do not clip dynamic cells or A* search to a reference-path corridor.
         window_bounds = np.full(4, -1, dtype=np.int32)
@@ -853,47 +827,6 @@ class PctPlannerNode(Node):
             dtype=np.float32,
         )
         return transform
-
-    def _build_footprint_clear_indices(self, stamp_msg):
-        robot_transform = self._update_start_from_stamped_tf(stamp_msg)
-        if robot_transform is None:
-            return np.zeros((0, 3), dtype=np.int32)
-        half_length = (
-            0.5 * self.global_path_perception_footprint_length
-            + self.global_path_perception_footprint_padding
-        )
-        half_width = (
-            0.5 * self.global_path_perception_footprint_width
-            + self.global_path_perception_footprint_padding
-        )
-        resolution = max(0.01, float(self.planner.resolution))
-        sample_step = 0.5 * resolution
-        local_x = np.arange(-half_length, half_length + sample_step, sample_step)
-        local_y = np.arange(-half_width, half_width + sample_step, sample_step)
-        grid_x, grid_y = np.meshgrid(local_x, local_y, indexing="ij")
-        local_points = np.stack(
-            [grid_x.reshape(-1), grid_y.reshape(-1), np.zeros(grid_x.size)],
-            axis=1,
-        ).astype(np.float32)
-        footprint_map = self._transform_points_with_transform(
-            local_points,
-            robot_transform,
-        )
-        cells = self.planner.points2rowcol(footprint_map[:, :2])
-        if cells.size == 0:
-            return np.zeros((0, 3), dtype=np.int32)
-        return np.asarray(
-            self.planner.build_global_path_perception_mark_indices(
-                cells,
-                self._global_path_perception_current_layer(),
-                float(self.start_pos[2]),
-                False,
-                0.0,
-                self.global_path_perception_height_tolerance,
-                self.global_path_perception_mark_all_layers,
-            ),
-            dtype=np.int32,
-        ).reshape((-1, 3))
 
     def _transform_points_to_map(self, points, source_frame):
         if points.size == 0:
@@ -984,9 +917,6 @@ class PctPlannerNode(Node):
                 or abs(float(delta_xy[1])) > self.global_path_perception_half_height
             ):
                 continue
-            if np.linalg.norm(delta_xy) < self.global_path_perception_clear_robot_radius:
-                continue
-
             center_row, center_col = self._global_path_perception_row_col(point[:2])
             if center_row < 0 or center_row >= size_x or center_col < 0 or center_col >= size_y:
                 continue
@@ -1020,7 +950,6 @@ class PctPlannerNode(Node):
         mask = (
             (np.abs(delta_xy[:, 0]) <= self.global_path_perception_half_width)
             & (np.abs(delta_xy[:, 1]) <= self.global_path_perception_half_height)
-            & (np.linalg.norm(delta_xy, axis=1) >= self.global_path_perception_clear_robot_radius)
         )
         if not np.any(mask):
             return np.zeros((0, 3), dtype=np.int32)

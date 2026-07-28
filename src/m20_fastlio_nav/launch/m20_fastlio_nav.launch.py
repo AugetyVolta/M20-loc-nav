@@ -56,6 +56,9 @@ def generate_launch_description():
     pct_use_interactive_markers = LaunchConfiguration("pct_use_interactive_markers")
     pct_global_path_perception_enabled = LaunchConfiguration("pct_global_path_perception_enabled")
     pct_global_path_perception_scan_topic = LaunchConfiguration("pct_global_path_perception_scan_topic")
+    pct_global_path_perception_min_range = LaunchConfiguration(
+        "pct_global_path_perception_min_range"
+    )
     pct_global_path_perception_width = LaunchConfiguration("pct_global_path_perception_width")
     pct_global_path_perception_height = LaunchConfiguration("pct_global_path_perception_height")
     pct_global_path_perception_inflation_radius = LaunchConfiguration("pct_global_path_perception_inflation_radius")
@@ -262,6 +265,10 @@ def generate_launch_description():
                                     value_type=bool,
                                 ),
                                 "global_path_perception_scan_topic": pct_global_path_perception_scan_topic,
+                                "global_path_perception_min_range": ParameterValue(
+                                    pct_global_path_perception_min_range,
+                                    value_type=float,
+                                ),
                                 "global_path_perception_width": ParameterValue(
                                     pct_global_path_perception_width,
                                     value_type=float,
@@ -505,6 +512,7 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_use_interactive_markers", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_enabled", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_scan_topic", default_value="/scan"),
+            DeclareLaunchArgument("pct_global_path_perception_min_range", default_value="0.15"),
             DeclareLaunchArgument("pct_global_path_perception_width", default_value="8.0"),
             DeclareLaunchArgument("pct_global_path_perception_height", default_value="8.0"),
             DeclareLaunchArgument("pct_global_path_perception_inflation_radius", default_value="1.0"),

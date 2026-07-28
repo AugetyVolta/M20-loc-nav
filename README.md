@@ -343,6 +343,7 @@ docs/fastlio_frontend_notes.md
 | `pct_always_replan` | `true` | 主导航默认按 `pct_replan_interval` 定周期更新 `/pct_path`；动态感知只更新代价层，不单独触发即时重规划 |
 | `pct_global_path_perception_enabled` | `true` | 主导航平地模式默认用原始 scan 更新 PCT 动态障碍层；楼梯模式关闭 |
 | `pct_global_path_perception_scan_topic` | `/scan` | 同一帧先 raytrace clear，再 mark 有限 endpoint |
+| `pct_global_path_perception_min_range` | `0.15` | 与 `/scan.range_min` 对齐；不再按机器人半径或 footprint 额外过滤有限回波 |
 | `pct_global_path_perception_width` | `8.0` | PCT 动态感知窗口 X 向尺寸，以机器人为中心前后各约 4m |
 | `pct_global_path_perception_height` | `8.0` | PCT 动态感知窗口 Y 向尺寸，以机器人为中心左右各约 4m |
 | `pct_global_path_perception_inflation_radius` | `1.0` | PCT 动态障碍总代价膨胀半径；硬核心外侧给 A* 渐变避障代价 |
@@ -382,7 +383,7 @@ plugins: ["traversability_layer", "inflation_layer"]
 
 只允许启用其中一个过滤插件，因为二者都会发布 `/traversability_filtered_scan`。Nav2 只实例化 `plugins` 列表中的过滤插件，另一个不会启动；旧的独立 `tomogram_scan_filter_node` 已删除。
 
-- `traversability_layer` 自己计算并写入 local costmap，所以默认列表不再重复加载 `ObstacleLayer`；它发布 filtered scan 是为了继续供 PCT 动态层和 RL local path 使用。
+- `traversability_layer` 自己计算并写入 local costmap，所以默认列表不再重复加载 `ObstacleLayer`；它发布 filtered scan 供 RL local path 使用，PCT 动态层直接使用原始 `/scan`。
 - `tomogram_filter_layer` 只生成 filtered scan，不直接写 master costmap，所以 tomogram 列表必须同时保留 `ObstacleLayer`。
 
 tomogram 插件启动时直接读取 `nav2_dwb_body_plane.yaml` 中配置的 `.surface.pcd`，不再订阅 PCT planner。主 launch 不会自动拼接文件路径或覆盖 cost 阈值；切换 `pct_tomogram_file` 时，需要手动把 `tomogram_surface_file` 改成对应的同名 PCD，并让 `traversable_cost_max` 与 `pct_a_star_cost_threshold` 一致。当前三项对应关系是：
@@ -430,6 +431,8 @@ PCT 动态层按 Nav2 costmap 语义维护：原始 `/scan` 的同一帧先 rayt
 `254/253` 是动态层内部保留的 Nav2 障碍标签，不会直接写进 PCT 的 `0..50` cost。软代价按 `PCT峰值 * Nav2代价 / 254` 换算；当前 `a_star_cost_threshold=45`、自动动态峰值为 `50`。A* 先无条件拒绝 `253/254`，再使用映射后的软代价参与搜索。
 
 动态更新只遍历活动 source 和其膨胀格，旧 source 由同帧 raytrace 或 `persistence` 清除，不再按参考路径走廊裁剪。路径规划保留静态全局参考线，每个周期以基础前视距离选择局部段，再额外联合优化 `1.0m` 静态参考重叠段。重叠段末端位置和切线与静态后缀对齐后再拼接，避免 RViz 中出现接缝尖角；A* 可以在完整 tomogram 范围内绕行。
+
+近距离障碍输入下限与 `/scan.range_min=0.15m` 对齐，不再按机器人半径或 footprint 额外过滤、清空动态障碍点。PCT 全局路径不是近距离急停器，最终防撞仍由 local costmap 和 DWB 的合法轨迹检查负责。
 
 如需对比原始 `/scan`：
 

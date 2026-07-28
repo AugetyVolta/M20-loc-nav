@@ -188,13 +188,13 @@ tomogram_visual_cost_max = 45.0
 - scan 使用消息时间戳对应的 TF，不使用规划定时器中的旧机器人位置。
 - 障碍源格为 `254`，内切半径内为 `253`，外圈使用 Nav2 指数公式衰减。A* 无条件拒绝 `253/254`，不会再被楼梯 `ele` 分支绕过。
 - 同一物理地面的等高 tomogram layer 在 `0.75m` 容差内一起 mark/clear，避免 A* 从重叠 layer 穿过动态障碍；不会标记不同楼层。
-- 机器人 footprint 使用 `0.82m x 0.506m` 加 `0.03m` padding 清空，和 DWB local costmap 一致。
+- 不再按机器人半径或 footprint 额外过滤、清空动态障碍点，避免误删贴近机身的真实回波。
 - 动态源、膨胀格和过期检测只遍历当前活动集合，不再扫描完整 3D tomogram。
 
 动态层同时保留两套量纲。`perception_nav2_cost` 使用 `0..254`，其中 `254` 是障碍源、`253` 是硬核心；A* 在展开邻居前直接拒绝 `>=253`。其余软代价按
 `perception_cost = perception_peak_cost * perception_nav2_cost / 254` 映射回 PCT 量纲，再与静态 tomogram cost 取最大值。`global_path_perception_cost=-1` 时，峰值自动取 `a_star_cost_threshold+5`；主导航阈值为 `45`，所以动态峰值为 `50`。
 
-`global_path_perception_min_range=0.45` 是以 `/scan` 的 `base_link` 原点为基准的近距离输入过滤，不是机器人碰撞半径。`global_path_perception_footprint_length/width/padding` 用来清除机器人自身 footprint 内的动态点；`global_path_perception_inscribed_radius=0.45` 则在每个有效障碍点周围建立 A* 不可进入的圆形硬核心，两者职责不同。
+`global_path_perception_min_range=0.15` 与当前 `pointcloud_to_laserscan.range_min` 对齐，只负责过滤雷达无法可靠测量的近距数据，不是机器人碰撞半径。PCT 不再额外剔除机器人 footprint 或某个自清除半径内的有限回波；`global_path_perception_inscribed_radius=0.45` 只负责在每个有效障碍点周围建立 A* 不可进入的圆形硬核心。不要再把 `min_range` 调到 `0.45`，否则障碍突然靠近狗头时会形成真实的感知盲区。
 
 规划器保留一条不含动态障碍的静态参考路径。定周期更新时，以 `local_replan_forward_distance` 选择基础局部段，并额外带入 `1.0m` 静态参考重叠段共同优化。优化器使用重叠段末端的参考切线作为终点方向，并把终点位置精确放回参考路径后再拼接静态后缀，从而避免接缝尖角。A* 左右搜索范围不受参考路径走廊限制；动态观测也不会按参考路径走廊二次裁剪。
 
@@ -211,7 +211,7 @@ ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py \
 ```text
 global_path_perception_width = 8.0                    # 机器人中心前后各约 4m
 global_path_perception_height = 8.0                   # 机器人中心左右各约 4m
-global_path_perception_min_range = 0.45               # base_link 周围的 scan 近距过滤
+global_path_perception_min_range = 0.15               # 对齐 /scan.range_min；不做额外自车范围过滤
 global_path_perception_inflation_radius = 1.0        # 动态代价覆盖到障碍点外 1.0m
 global_path_perception_inscribed_radius = 0.45       # 253 硬障碍区半径
 global_path_perception_cost_scaling_factor = 5.0     # M20 主导航推荐值，对齐 Nav2 inflation
@@ -225,9 +225,9 @@ local_replan_enabled = true                          # 修复当前位置到前�
 local_replan_forward_distance = 10.0                 # 基础前视；内部再优化 1.0m 重叠段
 ```
 
-完整 M20 导航 launch 会覆盖为 `global_path_perception_width=8.0`、`global_path_perception_height=8.0`、scan topic `/scan`、`inflation_radius=1.0`、`inscribed_radius=0.45`、`cost_scaling_factor=5.0`、`persistence=5.0`。该窗口以机器人为中心覆盖前后、左右各约 `4m`。局部修复使用 `10.0m` 基础前视和内部 `1.0m` 衔接重叠段，A* 不限制左右搜索范围。楼梯模式关闭 PCT 动态层，因此原始 scan 中的台阶不会写入 PCT。
+完整 M20 导航 launch 会覆盖为 `global_path_perception_width=8.0`、`global_path_perception_height=8.0`、scan topic `/scan`、`min_range=0.15`、`inflation_radius=1.0`、`inscribed_radius=0.45`、`cost_scaling_factor=5.0`、`persistence=5.0`。该窗口以机器人为中心覆盖前后、左右各约 `4m`。局部修复使用 `10.0m` 基础前视和内部 `1.0m` 衔接重叠段，A* 不限制左右搜索范围。楼梯模式关闭 PCT 动态层，因此原始 scan 中的台阶不会写入 PCT。
 
-动态层变化只更新 C++ 临时代价层，不单独立即触发重规划。主导航默认 `always_replan=true`，所以局部前缀按 `replan_interval=1.0s` 定周期刷新；最终目标未变时不会重新规划整张地图。动态观测仍由 `global_path_perception_width/height` 限制在机器人近场，但不再按参考路径走廊二次裁剪。LaserScan 默认写当前物理表面对应的等高 PCT layers。楼梯状态根据静态参考路径预判，因此动态局部规划失败也不会阻止进入楼梯模式；楼梯段仍关闭 PCT 动态避障。
+动态层变化只更新 C++ 临时代价层，不单独立即触发重规划。动态层默认按 `global_path_perception_update_interval=0.5s`（2 Hz）吸收 `/scan`，主导航默认 `always_replan=true`，所以局部前缀按 `replan_interval=1.0s`（1 Hz）定周期刷新；最终目标未变时不会重新规划整张地图。动态观测仍由 `global_path_perception_width/height` 限制在机器人近场，但不再按参考路径走廊二次裁剪。LaserScan 默认写当前物理表面对应的等高 PCT layers。楼梯状态根据静态参考路径预判，因此动态局部规划失败也不会阻止进入楼梯模式；楼梯段仍关闭 PCT 动态避障。
 
 因为全局路径感知更新改在 PCT C++/pybind core 内，修改后需要重新构建 core：
 

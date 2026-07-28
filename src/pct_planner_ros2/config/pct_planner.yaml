@@ -39,8 +39,14 @@ pct_planner_node:
     global_path_perception_enabled: false
     # One raw scan frame first raytraces free space and then marks finite hits.
     global_path_perception_scan_topic: "/scan"
+    # Match pointcloud_to_laserscan.range_min. No extra robot-radius or
+    # footprint suppression is applied to finite scan endpoints.
+    global_path_perception_min_range: 0.15
     global_path_perception_width: 8.0
     global_path_perception_height: 8.0
+    # Consume at most one scan every 0.5 s (2 Hz). Path replanning remains
+    # independent at replan_interval=1.0 s (1 Hz).
+    global_path_perception_update_interval: 0.5
     global_path_perception_inflation_radius: 1.0
     global_path_perception_inscribed_radius: 0.45
     global_path_perception_cost_scaling_factor: 5.0
