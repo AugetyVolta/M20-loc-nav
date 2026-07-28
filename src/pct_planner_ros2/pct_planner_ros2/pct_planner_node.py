@@ -67,7 +67,7 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_path_perception_cost", -1.0)
         self.declare_parameter("global_path_perception_cost_scaling_factor", 5.0)
         self.declare_parameter("global_path_perception_height_tolerance", 0.75)
-        self.declare_parameter("global_path_perception_update_interval", 0.5)
+        self.declare_parameter("global_path_perception_update_interval", 0.2)
         self.declare_parameter("global_path_perception_persistence", 1.0)
         self.declare_parameter("global_path_perception_min_changed_cells", 3)
         self.declare_parameter("global_path_perception_max_points", 720)

@@ -144,18 +144,23 @@ local_costmap:
 
 ## Filtered scan
 
-`TraversabilityLayer` 是实时可通行过滤方案，根据当前三维点云计算的 traversability cost
-过滤原始 `/scan`，不依赖离线 tomogram。参数位于
+`TraversabilityLayer` 是状态感知的局部代价方案：平地复用标准 ObstacleLayer，楼梯根据
+当前三维点云计算 traversability cost 并过滤原始 `/scan`，不依赖离线 tomogram。参数位于
 `nav2_dwb_body_plane.yaml` 的 `local_costmap.traversability_layer`：
 
 | 参数 | M20 配置值 | 说明 |
 |---|---:|---|
-| `publish_filtered_scan` | `true` | 是否发布 cost 过滤结果 |
+| `publish_filtered_scan` | `true` | 是否发布平地透传/楼梯过滤后的 scan |
 | `filtered_scan_input_topic` | `/scan` | 输入原始 LaserScan |
 | `filtered_scan_topic` | `/traversability_filtered_scan` | 过滤后输出话题 |
 | `filtered_scan_min_cost` | `64.0` | endpoint 所在格 cost 不低于该值才保留；未知或无地面格删除 |
+| `state_aware_mode_enabled` | `true` | 根据楼梯状态在平地 ObstacleLayer 与楼梯 traversability 之间切换 |
+| `stair_state_topic` | `/pct_stair_state` | transient-local 状态话题，支持 `flat/stair_up/stair_down` |
+| `flat_obstacle.*` | 见主 YAML | 内嵌标准 Nav2 ObstacleLayer 的原始 `/scan` 参数 |
 
-scan endpoint 使用消息时间戳的 TF 转换到 local costmap 全局坐标系。TF 查询失败时发布
+平地状态下 `/traversability_filtered_scan` 原样透传输入 `/scan`，内嵌 ObstacleLayer
+直接进行 marking 和 raytrace clearing。楼梯状态下，scan endpoint 使用消息时间戳的
+TF 转换到 local costmap 全局坐标系，再按 traversability cost 过滤；TF 查询失败时发布
 未过滤 scan，避免因为坐标暂时不可用而删除真实障碍。
 
 静态 PCT tomogram 过滤已经拆到独立包 `tomogram_filter_layer`。切换时只修改同一 YAML 的
@@ -168,8 +173,16 @@ scan endpoint 使用消息时间戳的 TF 转换到 local costmap 全局坐标�
 plugins: ["traversability_layer", "inflation_layer"]
 ```
 
-本插件本身会直接向 master costmap 写代价，因此不需要再用 `ObstacleLayer` 重复消费它
-发布的 filtered scan。filtered scan 仍保留给 PCT 动态避障和 RL local path。
+模式切换发生在 costmap 更新线程，不在状态订阅回调中直接启停插件：
+
+- `flat`：内嵌 `flat_obstacle` 订阅原始 `/scan`，标准 Nav2 marking/clearing 直接写 master costmap；三维可通行分析只在后台更新，不覆盖平地障碍代价。
+- `stair_up/stair_down`：先取消 `flat_obstacle` 的 scan 订阅并清空其缓存，再由原有三维可通行分析写 master costmap。
+- 切回 `flat`：清空内嵌 costmap、重新订阅 `/scan`，随后由新的 scan 持续更新。
+
+默认未收到状态时使用 `flat`，优先保证近距离障碍安全。若
+`state_aware_mode_enabled=false`，不会创建内嵌 ObstacleLayer，插件恢复为旧版始终写
+traversability cost 的行为。静态 tomogram 备选模式仍需顶层
+`["tomogram_filter_layer", "obstacle_layer", "inflation_layer"]`。
 
 修改 YAML 后只需要重启主导航，不需要重新编译。修改 C++ 源码后执行：
 

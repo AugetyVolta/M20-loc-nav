@@ -32,8 +32,9 @@ controller_server:
       max_vel_y: 0.0
       max_vel_theta: 0.65
 
-      # 与 2D 稳定版保持同一底盘死区：非零线速度不低于 0.20，
-      # 非零角速度不低于 0.50；velocity_smoother 不再二次截断死区。
+      # 保留底盘死区：非零线速度不低于 0.20，非零角速度不低于 0.50。
+      # 角速度不能放得过激，否则 DWB 容易在本该直走时选择原地掉头。
+      # 死区主要靠 min_speed_theta 处理，velocity_smoother 不再二次截断。
       min_speed_xy: 0.20
       max_speed_xy: 0.80
       min_speed_theta: 0.50
@@ -59,11 +60,11 @@ controller_server:
 
       critics: ["ObstacleFootprint", "BaseObstacle", "PathAlign", "PathDist", "GoalDist", "RotateToGoal"]
       ObstacleFootprint.scale: 0.02
-      BaseObstacle.scale: 0.03
-      PathAlign.scale: 26.0
-      PathAlign.forward_point_distance: 0.40
-      PathDist.scale: 28.0
-      GoalDist.scale: 6.0
+      BaseObstacle.scale: 0.035
+      PathAlign.scale: 13.0
+      PathAlign.forward_point_distance: 0.60
+      PathDist.scale: 24.0
+      GoalDist.scale: 10.0
       RotateToGoal.scale: 10.0
       RotateToGoal.slowing_factor: 4.0
       RotateToGoal.lookahead_time: -1.0
@@ -87,7 +88,8 @@ local_costmap:
       footprint: "[ [0.410, 0.253], [0.410, -0.253], [-0.410, -0.253], [-0.410, 0.253] ]"
       robot_radius: 0.35
       # 二选一，只保留一条未注释的 plugins 配置：
-      # 1. 实时 traversability cost 过滤，不依赖离线 tomogram。
+      # 1. 状态感知 traversability：平地在插件内部使用原始 /scan 的 ObstacleLayer，
+      # 上下楼梯改用三维可通行代价；顶层不同时加载两个会互相覆盖的插件。
       plugins: ["traversability_layer", "inflation_layer"]
       # 2. 静态 PCT tomogram 表面过滤。启用时注释上一行并取消下一行注释。
       # plugins: ["tomogram_filter_layer", "obstacle_layer", "inflation_layer"]
@@ -100,7 +102,7 @@ local_costmap:
         enabled: true
 
         # 输入当前 M20 Fast-LIO 的 body 点云；下方参数均显式覆盖源码默认值。
-        # 话题无数据时，插件不会生成 traversability cost 和过滤后 scan。
+        # 话题无数据时不会生成楼梯 traversability cost；平地原始 scan 处理不受影响。
         pointcloud_topic: /cloud_registered_body_1
 
         # 点云坐标系覆盖。空字符串表示使用 PointCloud2 header.frame_id。
@@ -114,7 +116,7 @@ local_costmap:
 
         # 参与分析的最低点云高度，相对 base_frame，单位 m。
         # 更小会保留更低的地面/下台阶点；太小可能引入地面以下噪声。
-        min_obstacle_height: 0.0
+        min_obstacle_height: -0.5
 
         # 参与分析的最高点云高度，相对 base_frame，单位 m。
         # 当前设为 1.0m，保留机器人身体高度范围内的人员和实体障碍，
@@ -164,7 +166,7 @@ local_costmap:
         persist_cost: false
 
         # 是否把插值/填充地面直接写成低代价 1；false 时这些格保持 NO_INFORMATION。
-        # 当前 local costmap 不叠加 ObstacleLayer，实测 false 更稳，可避免把栏杆间隙、
+        # 楼梯模式不叠加 ObstacleLayer，实测 false 更稳，可避免把栏杆间隙、
         # 楼梯边缘和缺少真实观测的区域直接当作可通行地面。
         trust_interpolated_ground: false
 
@@ -189,13 +191,48 @@ local_costmap:
         # 是否发布调试点云 slope_map，用 intensity 表示 cost，方便 RViz 看可通行性结果。
         publish_slope_map: true
 
-        # 按 scan 时间戳转换 endpoint，并用实时 traversability cost 过滤原始 /scan。
-        # 只有 endpoint 落在已知且 cost>=filtered_scan_min_cost 的格子时才保留；
+        # 发布给 RL local path 的 scan。状态感知开启时，平地原样透传原始 /scan；
+        # 上下楼梯才按消息时间戳转换 endpoint，并用 traversability cost 过滤。
+        # 楼梯模式只有 endpoint 落在已知且 cost>=filtered_scan_min_cost 的格子时才保留；
         # 可通行、插值未知、无地面和范围外区域都会置为 inf。
         publish_filtered_scan: true
         filtered_scan_input_topic: /scan
         filtered_scan_topic: /traversability_filtered_scan
         filtered_scan_min_cost: 64.0
+
+        # 根据 PCT 发布的楼梯状态切换内部代价来源：
+        # flat：标准 Nav2 ObstacleLayer 直接处理原始 /scan，近距离人员不会被地面条件漏掉；
+        # stair_up/stair_down：停用并清空 ObstacleLayer，只写原有三维 traversability cost。
+        # 没收到状态时默认 flat；false 表示恢复旧版“始终使用 traversability”行为。
+        state_aware_mode_enabled: true
+        stair_state_topic: /pct_stair_state
+
+        # 平地模式内嵌的标准 Nav2 ObstacleLayer。参数命名空间必须保留
+        # traversability_layer.flat_obstacle，不能提升为顶层 obstacle_layer。
+        flat_obstacle:
+          enabled: true
+          footprint_clearing_enabled: true
+          combination_method: 1
+          observation_sources: scan
+          # /scan 已经由 pointcloud_to_laserscan 做过垂直高度裁剪；这里放宽全局 Z，
+          # 避免 odom_body.z 随楼层升高后被固定 1m 高度上限误删。
+          min_obstacle_height: -100.0
+          max_obstacle_height: 100.0
+          scan:
+            topic: /scan
+            sensor_frame: ""
+            observation_persistence: 0.0
+            expected_update_rate: 0.0
+            min_obstacle_height: -100.0
+            max_obstacle_height: 100.0
+            clearing: true
+            marking: true
+            data_type: "LaserScan"
+            inf_is_valid: true
+            raytrace_max_range: 12.0
+            raytrace_min_range: 0.0
+            obstacle_max_range: 8.0
+            obstacle_min_range: 0.0
 
         # traversability 内部二维地面网格分辨率，单位 m。
         # 0 或负数会使用 costmap resolution。越小越细，但 CPU/内存更高。
@@ -292,13 +329,15 @@ local_costmap:
         # 加载后点数过少会阻止插件启动，避免残缺地图投入过滤。
         min_tomogram_points: 1000
 
+      # 只供上面的 tomogram_filter_layer 备选模式使用。默认 traversability 模式
+      # 已经内嵌 flat_obstacle，不能把本层加入默认 plugins，否则会重复写代价。
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
         observation_sources: scan
         scan:
           topic: /traversability_filtered_scan
-          max_obstacle_height: 2.0
+          max_obstacle_height: 1.0
           clearing: True
           marking: True
           data_type: "LaserScan"
@@ -310,8 +349,8 @@ local_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 5.0
-        inflation_radius: 0.6
+        cost_scaling_factor: 10.0
+        inflation_radius: 0.8
 
       always_send_full_costmap: True
 

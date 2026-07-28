@@ -49,6 +49,8 @@ void TraversabilityLayer::onInitialize()
   declareParameter(
     "filtered_scan_topic", rclcpp::ParameterValue(std::string("/traversability_filtered_scan")));
   declareParameter("filtered_scan_min_cost", rclcpp::ParameterValue(128.0));
+  declareParameter("state_aware_mode_enabled", rclcpp::ParameterValue(true));
+  declareParameter("stair_state_topic", rclcpp::ParameterValue(std::string("/pct_stair_state")));
   declareParameter("cell_resolution", rclcpp::ParameterValue(0.0));
   declareParameter("num_threads", rclcpp::ParameterValue(0));
   declareParameter("voxel_z_resolution", rclcpp::ParameterValue(0.1));
@@ -90,6 +92,8 @@ void TraversabilityLayer::onInitialize()
   node->get_parameter(name_ + ".filtered_scan_input_topic", filtered_scan_input_topic_);
   node->get_parameter(name_ + ".filtered_scan_topic", filtered_scan_topic_);
   node->get_parameter(name_ + ".filtered_scan_min_cost", filtered_scan_min_cost_);
+  node->get_parameter(name_ + ".state_aware_mode_enabled", state_aware_mode_enabled_);
+  node->get_parameter(name_ + ".stair_state_topic", stair_state_topic_);
   node->get_parameter(name_ + ".cell_resolution", cell_resolution_);
   node->get_parameter(name_ + ".num_threads", num_threads_);
   node->get_parameter(name_ + ".voxel_z_resolution", voxel_z_resolution_);
@@ -104,6 +108,9 @@ void TraversabilityLayer::onInitialize()
   node->get_parameter(name_ + ".transform_tolerance", transform_tolerance_);
   node->get_parameter(name_ + ".ground_fill_radius", ground_fill_radius_);
   node->get_parameter(name_ + ".ground_fill_height", ground_fill_height_);
+
+  desired_stair_mode_.store(!state_aware_mode_enabled_);
+  active_stair_mode_ = !state_aware_mode_enabled_;
 
   if (num_threads_ > 0) {
     omp_set_num_threads(num_threads_);
@@ -128,7 +135,7 @@ void TraversabilityLayer::onInitialize()
     "ground_hit_thr=%d, free_space_thr=%d, free_space_win=%d, "
     "interp_radius=%d, min_interp=%d, obstacle_ratio_thr=%.2f, obstacle_hit_thr=%d, num_threads=%d, "
     "obs_persistence=%d(ticks), skip_frames=%d, persist_cost=%d, trust_interp=%d, "
-    "filtered_scan=%d input=%s output=%s min_cost=%.1f",
+    "filtered_scan=%d input=%s output=%s min_cost=%.1f, state_aware=%d state_topic=%s",
     step_height_threshold_, max_slope_traversable_ * 180.0 / M_PI,
     slope_cost_start_ * 180.0 / M_PI, pointcloud_topic_.c_str(),
     sensor_frame_.c_str(), base_frame_.c_str(),
@@ -139,16 +146,11 @@ void TraversabilityLayer::onInitialize()
     observation_persistence_int_, skip_frames_,
     static_cast<int>(persist_cost_), static_cast<int>(trust_interpolated_ground_),
     static_cast<int>(publish_filtered_scan_), filtered_scan_input_topic_.c_str(),
-    filtered_scan_topic_.c_str(), filtered_scan_min_cost_);
+    filtered_scan_topic_.c_str(), filtered_scan_min_cost_,
+    static_cast<int>(state_aware_mode_enabled_), stair_state_topic_.c_str());
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-
-  rclcpp::QoS cloud_qos(rclcpp::KeepLast(static_cast<size_t>(cloud_buffer_size_)));
-  cloud_qos.best_effort();
-  cloud_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
-    pointcloud_topic_, cloud_qos,
-    std::bind(&TraversabilityLayer::pointCloudCallback, this, std::placeholders::_1));
 
   if (publish_slope_map_) {
     slope_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
@@ -157,12 +159,16 @@ void TraversabilityLayer::onInitialize()
   if (publish_filtered_scan_) {
     filtered_scan_pub_ = node->create_publisher<sensor_msgs::msg::LaserScan>(
       filtered_scan_topic_, rclcpp::SensorDataQoS());
-    filtered_scan_sub_ = node->create_subscription<sensor_msgs::msg::LaserScan>(
-      filtered_scan_input_topic_, rclcpp::SensorDataQoS(),
-      std::bind(&TraversabilityLayer::filteredScanCallback, this, std::placeholders::_1));
   }
+  createSubscriptions();
 
   matchSize();
+
+  if (state_aware_mode_enabled_) {
+    flat_obstacle_layer_ = std::make_unique<nav2_costmap_2d::ObstacleLayer>();
+    flat_obstacle_layer_->initialize(
+      layered_costmap_, name_ + ".flat_obstacle", tf_, node_, callback_group_);
+  }
 
   current_ = true;
 }
@@ -207,6 +213,10 @@ void TraversabilityLayer::matchSize()
   // 永久 cost 记忆
   if (persist_cost_) {
     persistent_cost_map_.assign(ground_size_x_ * ground_size_y_, PersistentCostCell{});
+  }
+
+  if (flat_obstacle_layer_) {
+    flat_obstacle_layer_->matchSize();
   }
 }
 
@@ -484,6 +494,11 @@ void TraversabilityLayer::filteredScanCallback(
     return;
   }
 
+  if (state_aware_mode_enabled_ && !desired_stair_mode_.load()) {
+    filtered_scan_pub_->publish(*msg);
+    return;
+  }
+
   sensor_msgs::msg::LaserScan filtered = *msg;
   const std::string scan_frame =
     msg->header.frame_id.empty() ? base_frame_ : msg->header.frame_id;
@@ -550,6 +565,94 @@ void TraversabilityLayer::filteredScanCallback(
     rclcpp::get_logger("traversability_layer"), *clock, 2000,
     "[TraversabilityLayer] filtered scan: input=%zu kept=%d removed=%d invalid=%d frame=%s",
     msg->ranges.size(), kept, removed, invalid, scan_frame.c_str());
+}
+
+void TraversabilityLayer::stairStateCallback(const std_msgs::msg::String::SharedPtr msg)
+{
+  if (!state_aware_mode_enabled_) {
+    return;
+  }
+
+  if (msg->data == "flat") {
+    desired_stair_mode_.store(false);
+  } else if (msg->data == "stair_up" || msg->data == "stair_down") {
+    desired_stair_mode_.store(true);
+  } else {
+    auto node = node_.lock();
+    if (node) {
+      RCLCPP_WARN_THROTTLE(
+        node->get_logger(), *node->get_clock(), 2000,
+        "TraversabilityLayer ignored unknown stair state '%s'", msg->data.c_str());
+    }
+  }
+}
+
+void TraversabilityLayer::applyPendingMode()
+{
+  if (!state_aware_mode_enabled_ || !flat_obstacle_layer_) {
+    active_stair_mode_ = true;
+    return;
+  }
+
+  const bool requested_stair_mode = desired_stair_mode_.load();
+  if (requested_stair_mode != active_stair_mode_) {
+    if (flat_obstacle_active_) {
+      flat_obstacle_layer_->deactivate();
+      flat_obstacle_active_ = false;
+    }
+    flat_obstacle_layer_->reset();
+    active_stair_mode_ = requested_stair_mode;
+
+    auto node = node_.lock();
+    if (node) {
+      RCLCPP_INFO(
+        node->get_logger(), "TraversabilityLayer switched to %s mode",
+        active_stair_mode_ ? "stair traversability" : "flat obstacle");
+    }
+  }
+
+  if (!active_stair_mode_ && lifecycle_active_ && !flat_obstacle_active_) {
+    flat_obstacle_layer_->activate();
+    flat_obstacle_active_ = true;
+  } else if (active_stair_mode_ && flat_obstacle_active_) {
+    flat_obstacle_layer_->deactivate();
+    flat_obstacle_layer_->reset();
+    flat_obstacle_active_ = false;
+  }
+}
+
+void TraversabilityLayer::createSubscriptions()
+{
+  auto node = node_.lock();
+  if (!node) {
+    return;
+  }
+
+  rclcpp::SubscriptionOptions options;
+  options.callback_group = callback_group_;
+
+  rclcpp::QoS cloud_qos(rclcpp::KeepLast(static_cast<size_t>(cloud_buffer_size_)));
+  cloud_qos.best_effort();
+  cloud_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
+    pointcloud_topic_, cloud_qos,
+    std::bind(&TraversabilityLayer::pointCloudCallback, this, std::placeholders::_1),
+    options);
+
+  if (publish_filtered_scan_) {
+    filtered_scan_sub_ = node->create_subscription<sensor_msgs::msg::LaserScan>(
+      filtered_scan_input_topic_, rclcpp::SensorDataQoS(),
+      std::bind(&TraversabilityLayer::filteredScanCallback, this, std::placeholders::_1),
+      options);
+  }
+
+  if (state_aware_mode_enabled_) {
+    rclcpp::QoS state_qos(rclcpp::KeepLast(1));
+    state_qos.reliable().transient_local();
+    stair_state_sub_ = node->create_subscription<std_msgs::msg::String>(
+      stair_state_topic_, state_qos,
+      std::bind(&TraversabilityLayer::stairStateCallback, this, std::placeholders::_1),
+      options);
+  }
 }
 
 void TraversabilityLayer::shiftVoxelGrid(int shift_x, int shift_y)
@@ -1496,48 +1599,58 @@ void TraversabilityLayer::updateBounds(
     return;
   }
 
-  std::lock_guard<std::mutex> lock(mutex_);
+  applyPendingMode();
 
-  nav2_costmap_2d::Costmap2D * master_grid = layered_costmap_->getCostmap();
-  double ox = master_grid->getOriginX();
-  double oy = master_grid->getOriginY();
-  double res = master_grid->getResolution();
-  unsigned int sx = master_grid->getSizeInCellsX();
-  unsigned int sy = master_grid->getSizeInCellsY();
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
 
-  // 参考 ObstacleLayer：costmap origin 驱动的滚动
-  // 缓存不再跟随机器人，而是始终与 costmap rolling window 对齐
-  // castmap origin 变化 → 计算整 cell 偏移 → shift 缓存 → 对齐完成
-  bool rolling_window = layered_costmap_->isRolling();
-  if (rolling_window && voxel_grid_valid_) {
-    double inv_cr = 1.0 / cell_resolution_;
-    double cache_ox = ox - half_margin_ * cell_resolution_;
-    double cache_oy = oy - half_margin_ * cell_resolution_;
+    nav2_costmap_2d::Costmap2D * master_grid = layered_costmap_->getCostmap();
+    double ox = master_grid->getOriginX();
+    double oy = master_grid->getOriginY();
+    double res = master_grid->getResolution();
+    unsigned int sx = master_grid->getSizeInCellsX();
+    unsigned int sy = master_grid->getSizeInCellsY();
 
-    // trunc 截断 → 死区精确为 1 cell (0.1m)，±0.99 cell 内不触发移位
-    // (voxel_ox_ - cache_ox)：正向位移为正，负向位移为负
-    // voxel_ox_ -= shift*res：正向位移时原点减小（向左移动缓存），数据向右shift
-    int shift_x = static_cast<int>(std::trunc((voxel_ox_ - cache_ox) * inv_cr));
-    int shift_y = static_cast<int>(std::trunc((voxel_oy_ - cache_oy) * inv_cr));
+    // 参考 ObstacleLayer：costmap origin 驱动的滚动
+    // 缓存不再跟随机器人，而是始终与 costmap rolling window 对齐
+    // castmap origin 变化 → 计算整 cell 偏移 → shift 缓存 → 对齐完成
+    bool rolling_window = layered_costmap_->isRolling();
+    if (rolling_window && voxel_grid_valid_) {
+      double inv_cr = 1.0 / cell_resolution_;
+      double cache_ox = ox - half_margin_ * cell_resolution_;
+      double cache_oy = oy - half_margin_ * cell_resolution_;
 
-    if (shift_x != 0 || shift_y != 0) {
-      shiftVoxelGrid(shift_x, shift_y);
-      shiftGroundMap(shift_x, shift_y);
-      if (persist_cost_) {
-        shiftPersistentCostMap(shift_x, shift_y);
+      // trunc 截断 → 死区精确为 1 cell (0.1m)，±0.99 cell 内不触发移位
+      // (voxel_ox_ - cache_ox)：正向位移为正，负向位移为负
+      // voxel_ox_ -= shift*res：正向位移时原点减小（向左移动缓存），数据向右shift
+      int shift_x = static_cast<int>(std::trunc((voxel_ox_ - cache_ox) * inv_cr));
+      int shift_y = static_cast<int>(std::trunc((voxel_oy_ - cache_oy) * inv_cr));
+
+      if (shift_x != 0 || shift_y != 0) {
+        shiftVoxelGrid(shift_x, shift_y);
+        shiftGroundMap(shift_x, shift_y);
+        if (persist_cost_) {
+          shiftPersistentCostMap(shift_x, shift_y);
+        }
+        // 数据向 +shift 移动（高索引），原点需反向移动以保持世界坐标不变
+        voxel_ox_ -= shift_x * cell_resolution_;
+        voxel_oy_ -= shift_y * cell_resolution_;
       }
-      // 数据向 +shift 移动（高索引），原点需反向移动以保持世界坐标不变
-      voxel_ox_ -= shift_x * cell_resolution_;
-      voxel_oy_ -= shift_y * cell_resolution_;
+
+      updateOrigin(ox, oy);
     }
 
-    updateOrigin(ox, oy);
+    *min_x = std::min(*min_x, ox);
+    *min_y = std::min(*min_y, oy);
+    *max_x = std::max(*max_x, ox + sx * res);
+    *max_y = std::max(*max_y, oy + sy * res);
   }
 
-  *min_x = std::min(*min_x, ox);
-  *min_y = std::min(*min_y, oy);
-  *max_x = std::max(*max_x, ox + sx * res);
-  *max_y = std::max(*max_y, oy + sy * res);
+  if (state_aware_mode_enabled_ && !active_stair_mode_ && flat_obstacle_layer_) {
+    flat_obstacle_layer_->updateBounds(
+      robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
+    current_ = flat_obstacle_layer_->isCurrent();
+  }
 }
 
 void TraversabilityLayer::updateCosts(
@@ -1545,6 +1658,12 @@ void TraversabilityLayer::updateCosts(
   int min_i, int min_j, int max_i, int max_j)
 {
   if (!enabled_) {
+    return;
+  }
+
+  if (state_aware_mode_enabled_ && !active_stair_mode_ && flat_obstacle_layer_) {
+    flat_obstacle_layer_->updateCosts(master_grid, min_i, min_j, max_i, max_j);
+    current_ = flat_obstacle_layer_->isCurrent();
     return;
   }
 
@@ -1779,17 +1898,22 @@ void TraversabilityLayer::updateCosts(
 
 void TraversabilityLayer::reset()
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  ground_map_.assign(ground_size_x_ * ground_size_y_, GroundCell{});
-  voxel_grid_.clear();
-  voxel_grid_valid_ = false;
-  frame_counter_ = 0;
-  compute_counter_ = 0;
-  cloud_updated_ = false;
-  if (persist_cost_) {
-    persistent_cost_map_.assign(ground_size_x_ * ground_size_y_, PersistentCostCell{});
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ground_map_.assign(ground_size_x_ * ground_size_y_, GroundCell{});
+    voxel_grid_.clear();
+    voxel_grid_valid_ = false;
+    frame_counter_ = 0;
+    compute_counter_ = 0;
+    cloud_updated_ = false;
+    if (persist_cost_) {
+      persistent_cost_map_.assign(ground_size_x_ * ground_size_y_, PersistentCostCell{});
+    }
+    nav2_costmap_2d::Costmap2D::resetMaps();
   }
-  nav2_costmap_2d::Costmap2D::resetMaps();
+  if (flat_obstacle_layer_) {
+    flat_obstacle_layer_->reset();
+  }
 }
 
 void TraversabilityLayer::resetMaps()
@@ -1804,12 +1928,6 @@ void TraversabilityLayer::activate()
     return;
   }
 
-  rclcpp::QoS cloud_qos(rclcpp::KeepLast(static_cast<size_t>(cloud_buffer_size_)));
-  cloud_qos.best_effort();
-  cloud_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
-    pointcloud_topic_, cloud_qos,
-    std::bind(&TraversabilityLayer::pointCloudCallback, this, std::placeholders::_1));
-
   if (publish_slope_map_) {
     slope_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
       "slope_map", rclcpp::QoS(1));
@@ -1817,18 +1935,24 @@ void TraversabilityLayer::activate()
   if (publish_filtered_scan_) {
     filtered_scan_pub_ = node->create_publisher<sensor_msgs::msg::LaserScan>(
       filtered_scan_topic_, rclcpp::SensorDataQoS());
-    filtered_scan_sub_ = node->create_subscription<sensor_msgs::msg::LaserScan>(
-      filtered_scan_input_topic_, rclcpp::SensorDataQoS(),
-      std::bind(&TraversabilityLayer::filteredScanCallback, this, std::placeholders::_1));
   }
+  createSubscriptions();
+  lifecycle_active_ = true;
+  applyPendingMode();
 }
 
 void TraversabilityLayer::deactivate()
 {
+  lifecycle_active_ = false;
+  if (flat_obstacle_layer_ && flat_obstacle_active_) {
+    flat_obstacle_layer_->deactivate();
+    flat_obstacle_active_ = false;
+  }
   cloud_sub_.reset();
   slope_pub_.reset();
   filtered_scan_sub_.reset();
   filtered_scan_pub_.reset();
+  stair_state_sub_.reset();
 }
 
 }  // namespace traversability_layer

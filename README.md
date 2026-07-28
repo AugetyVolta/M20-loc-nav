@@ -28,7 +28,7 @@ MID360 点云/IMU
 | `/Odometry_loc` | Fast-LIO 定位原始输出 |
 | `/odom_body` | 局部控制使用的机体平面 odom |
 | `/scan` | 原始 LaserScan，用于 RViz 和过滤前后对比 |
-| `/traversability_filtered_scan` | 当前选中 costmap 过滤插件的输出，供 ObstacleLayer 和 RL local path 使用；PCT 动态层直接订阅 `/scan` |
+| `/traversability_filtered_scan` | 当前选中 costmap 插件的输出，默认供 RL local path 使用；tomogram 模式还供顶层 ObstacleLayer 使用，PCT 动态层直接订阅 `/scan` |
 | `/traversability_tomogram` | `tomogram_filter_layer` 可选发布的 transient-local 静态表面，仅供 RViz 调试 |
 | `/pct_path` | PCT planner 发布的 3D 全局路径 |
 | `/subgoal` | pure pursuit 从 `/pct_path` 选出的 `base_link` 局部目标 |
@@ -325,11 +325,7 @@ acc_cov: 0.2
 gyr_cov: 0.2
 ```
 
-`filter_size_surf=0.2` 会让当前帧点云保留更多点面约束，`filter_size_map=0.3` 保留局部地图细节但不至于太重；`acc_cov/gyr_cov=0.2` 当前实测比上一版更适合楼梯振动场景。更详细的前端差异、测试方法和保留建议见：
-
-```text
-docs/fastlio_frontend_notes.md
-```
+`filter_size_surf=0.2` 会让当前帧点云保留更多点面约束，`filter_size_map=0.3` 保留局部地图细节但不至于太重；`acc_cov/gyr_cov=0.2` 当前实测比上一版更适合楼梯振动场景。
 
 默认参数：
 
@@ -343,6 +339,7 @@ docs/fastlio_frontend_notes.md
 | `pct_always_replan` | `true` | 主导航默认按 `pct_replan_interval` 定周期更新 `/pct_path`；动态感知只更新代价层，不单独触发即时重规划 |
 | `pct_global_path_perception_enabled` | `true` | 主导航平地模式默认用原始 scan 更新 PCT 动态障碍层；楼梯模式关闭 |
 | `pct_global_path_perception_scan_topic` | `/scan` | 同一帧先 raytrace clear，再 mark 有限 endpoint |
+| `global_path_perception_update_interval` | `0.2` | PCT 动态层最多按 5Hz 吸收 `/scan`；路径仍按 `pct_replan_interval=1.0s` 更新 |
 | `pct_global_path_perception_min_range` | `0.15` | 与 `/scan.range_min` 对齐；不再按机器人半径或 footprint 额外过滤有限回波 |
 | `pct_global_path_perception_width` | `8.0` | PCT 动态感知窗口 X 向尺寸，以机器人为中心前后各约 4m |
 | `pct_global_path_perception_height` | `8.0` | PCT 动态感知窗口 Y 向尺寸，以机器人为中心左右各约 4m |
@@ -358,7 +355,7 @@ docs/fastlio_frontend_notes.md
 | `pct_local_replan_forward_distance` | `10.0` | 基础前视距离；内部额外联合优化 `1.0m` 参考重叠段并约束末端切线，A* 不限制左右范围 |
 | `scan_topic` | `/scan` | 原始 LaserScan，由 pointcloud_to_laserscan 输出，保留用于对比和调试 |
 | `rl_scan_topic` | `/traversability_filtered_scan` | RL/PRIEST local path 使用的过滤后 LaserScan |
-| `local_costmap.plugins` | `traversability_layer` | 当前默认使用实时 traversability 过滤；可在 `nav2_dwb_body_plane.yaml` 中切换为静态 tomogram 过滤 |
+| `local_costmap.plugins` | `traversability_layer` | 默认插件内部按 `/pct_stair_state` 切换平地 ObstacleLayer 与楼梯 traversability；也可切换为静态 tomogram 过滤 |
 | `output_odom_topic` | `/odom_body` | DWB、RL 和 adapter 使用的 body-plane odom |
 | `start_pure_pursuit` | `true` | 默认启动 pure pursuit |
 | `heading_change_guard_stair_only` | `true` | pure pursuit 大转角保护只在 `/pct_stair_state=stair_up/stair_down` 时生效，平地允许原地掉头 |
@@ -374,7 +371,7 @@ docs/fastlio_frontend_notes.md
 PCT 全局路径感知更新在 C++ core 中维护，不会修改或重新生成完整 tomogram；离线 3D tomogram 仍是长期地形地图。scan 过滤实现不再由 launch 参数和独立进程切换，而是由 `src/m20_fastlio_nav/config/nav2_dwb_body_plane.yaml` 的 `local_costmap.plugins` 直接选择：
 
 ```yaml
-# 当前默认：实时 traversability cost 过滤，不依赖离线 tomogram
+# 当前默认：状态感知 traversability，标准 ObstacleLayer 已内嵌
 plugins: ["traversability_layer", "inflation_layer"]
 
 # 可选：静态 PCT XYZ 表面过滤
@@ -383,7 +380,8 @@ plugins: ["traversability_layer", "inflation_layer"]
 
 只允许启用其中一个过滤插件，因为二者都会发布 `/traversability_filtered_scan`。Nav2 只实例化 `plugins` 列表中的过滤插件，另一个不会启动；旧的独立 `tomogram_scan_filter_node` 已删除。
 
-- `traversability_layer` 自己计算并写入 local costmap，所以默认列表不再重复加载 `ObstacleLayer`；它发布 filtered scan 供 RL local path 使用，PCT 动态层直接使用原始 `/scan`。
+- `traversability_layer` 内部复用标准 Nav2 `ObstacleLayer`。`/pct_stair_state=flat` 时，内嵌层直接处理原始 `/scan` 并输出致命障碍，`/traversability_filtered_scan` 原样透传，避免近距离人员因缺少地面格被过滤。状态为 `stair_up` 或 `stair_down` 时，内嵌层会停止订阅并清空，只由原有三维可通行分析写 cost，同时输出按 traversability cost 过滤的 scan。
+- 三维点云分析在平地也持续运行，因此切入楼梯状态时直接使用当前地形数据。未收到楼梯状态时默认平地；`state_aware_mode_enabled=false` 可恢复始终使用 traversability 的旧行为。
 - `tomogram_filter_layer` 只生成 filtered scan，不直接写 master costmap，所以 tomogram 列表必须同时保留 `ObstacleLayer`。
 
 tomogram 插件启动时直接读取 `nav2_dwb_body_plane.yaml` 中配置的 `.surface.pcd`，不再订阅 PCT planner。主 launch 不会自动拼接文件路径或覆盖 cost 阈值；切换 `pct_tomogram_file` 时，需要手动把 `tomogram_surface_file` 改成对应的同名 PCD，并让 `traversable_cost_max` 与 `pct_a_star_cost_threshold` 一致。当前三项对应关系是：

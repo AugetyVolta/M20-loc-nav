@@ -28,6 +28,9 @@ __pycache__/
 core
 core.*
 
+# Local engineering notes
+/docs/
+
 # Large ML checkpoints / exports. Use Git LFS or external storage if needed.
 *.pt
 *.pth

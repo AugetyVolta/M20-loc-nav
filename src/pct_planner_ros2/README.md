@@ -211,6 +211,7 @@ ros2 launch pct_planner_ros2 m20_pct_rviz.launch.py \
 ```text
 global_path_perception_width = 8.0                    # 机器人中心前后各约 4m
 global_path_perception_height = 8.0                   # 机器人中心左右各约 4m
+global_path_perception_update_interval = 0.2          # 动态层最多按 5Hz 吸收 /scan
 global_path_perception_min_range = 0.15               # 对齐 /scan.range_min；不做额外自车范围过滤
 global_path_perception_inflation_radius = 1.0        # 动态代价覆盖到障碍点外 1.0m
 global_path_perception_inscribed_radius = 0.45       # 253 硬障碍区半径
@@ -227,7 +228,7 @@ local_replan_forward_distance = 10.0                 # 基础前视；内部再�
 
 完整 M20 导航 launch 会覆盖为 `global_path_perception_width=8.0`、`global_path_perception_height=8.0`、scan topic `/scan`、`min_range=0.15`、`inflation_radius=1.0`、`inscribed_radius=0.45`、`cost_scaling_factor=5.0`、`persistence=5.0`。该窗口以机器人为中心覆盖前后、左右各约 `4m`。局部修复使用 `10.0m` 基础前视和内部 `1.0m` 衔接重叠段，A* 不限制左右搜索范围。楼梯模式关闭 PCT 动态层，因此原始 scan 中的台阶不会写入 PCT。
 
-动态层变化只更新 C++ 临时代价层，不单独立即触发重规划。动态层默认按 `global_path_perception_update_interval=0.5s`（2 Hz）吸收 `/scan`，主导航默认 `always_replan=true`，所以局部前缀按 `replan_interval=1.0s`（1 Hz）定周期刷新；最终目标未变时不会重新规划整张地图。动态观测仍由 `global_path_perception_width/height` 限制在机器人近场，但不再按参考路径走廊二次裁剪。LaserScan 默认写当前物理表面对应的等高 PCT layers。楼梯状态根据静态参考路径预判，因此动态局部规划失败也不会阻止进入楼梯模式；楼梯段仍关闭 PCT 动态避障。
+动态层变化只更新 C++ 临时代价层，不单独立即触发重规划。动态层默认按 `global_path_perception_update_interval=0.2s`（5 Hz）吸收 `/scan`，主导航默认 `always_replan=true`，所以局部前缀按 `replan_interval=1.0s`（1 Hz）定周期刷新；最终目标未变时不会重新规划整张地图。动态观测仍由 `global_path_perception_width/height` 限制在机器人近场，但不再按参考路径走廊二次裁剪。LaserScan 默认写当前物理表面对应的等高 PCT layers。楼梯状态根据静态参考路径预判，因此动态局部规划失败也不会阻止进入楼梯模式；楼梯段仍关闭 PCT 动态避障。
 
 因为全局路径感知更新改在 PCT C++/pybind core 内，修改后需要重新构建 core：
 
