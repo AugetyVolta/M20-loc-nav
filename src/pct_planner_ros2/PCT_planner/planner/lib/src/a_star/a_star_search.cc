@@ -746,10 +746,10 @@ bool Astar::IsValidNodeCoord(int layer, int y, int x) const {
 bool Astar::Search(const Eigen::Vector3i& start, const Eigen::Vector3i& goal) {
   auto t0 = std::chrono::high_resolution_clock::now();
 
-  if (!search_result_.empty()) {
-    Reset();
-    search_result_.clear();
-  }
+  // A failed search may have already modified node g/f/parent state without
+  // producing a result path. Always reset search state before any early return.
+  Reset();
+  search_result_.clear();
   
   //检测是否起始点和终点都符合要求
   if (!IsValidNodeCoord(start[0],start[2],start[1]) || !IsValidNodeCoord(goal[0],goal[2],goal[1]))

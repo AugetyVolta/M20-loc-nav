@@ -41,6 +41,7 @@ class TomogramPlanner(object):
         self.start_idx = np.zeros(3, dtype=np.int32)
         self.end_idx = np.zeros(3, dtype=np.int32)
         self.last_plan_info = {}
+        self.last_traj_layers = None
 
     def loadTomogram(self, tomo_file):
         with open(self.tomo_dir + tomo_file + '.pickle', 'rb') as handle:
@@ -156,6 +157,24 @@ class TomogramPlanner(object):
     def global_path_perception_cell_count(self):
         return int(self.planner.get_global_path_perception_cell_count())
 
+    def set_global_path_perception_enabled(self, enabled):
+        self.planner.set_global_path_perception_enabled(bool(enabled))
+
+    def has_lethal_global_path_perception(self, points_xy, layers):
+        points_xy = np.asarray(points_xy, dtype=np.float32)
+        layers = np.asarray(layers, dtype=np.int32).reshape((-1, 1))
+        if points_xy.size == 0:
+            return False
+        points_xy = points_xy.reshape((-1, 2))
+        if len(points_xy) != len(layers):
+            raise ValueError(
+                f"Dynamic collision query size mismatch: points={len(points_xy)}, "
+                f"layers={len(layers)}"
+            )
+        path_cells = self.points2rowcol(points_xy)
+        indices = np.concatenate([layers, path_cells], axis=1)
+        return bool(self.planner.has_lethal_global_path_perception(indices))
+
     def points2rowcol(self, points_xy):
         points_xy = np.asarray(points_xy, dtype=np.float32)
         if points_xy.size == 0:
@@ -259,55 +278,37 @@ class TomogramPlanner(object):
         迭代所有layer，找到与目标高度最匹配的layer（核心方法）
         :param x: 物理X坐标
         :param y: 物理Y坐标
-        :param target_height: 目标高度（如start_pos/end_pos的z值）
-        :return: 最佳匹配的layer索引、该layer下XY对应的高度、高度差值
+        :param target_height: 待匹配的地面高度
+        :return: 最佳匹配的layer索引
         """
         best_layer = None
         best_key = None
-        fallback_layer = None
-        fallback_key = None
         grid_idx = self.pos2idx(np.array([x, y])).astype(int)
 
-        # 迭代所有layer（可优化：先粗筛再细查，减少迭代次数）
         for layer_idx in range(self.n_slice):
-            # 先将物理XY坐标转换为网格索引（用于查costmap）
             height, width = self.tomogram[0][layer_idx].shape
-            # 安全地 clip 行和列索引
             row = np.clip(grid_idx[1], 0, height - 1)
             col = np.clip(grid_idx[0], 0, width - 1)
             exact_height = float(self.layer_elev_grids[layer_idx][row][col])
-            # 必须使用当前XY格子的真实高度。全图 nearest 插值会把远处楼层
-            # 拿来匹配，导致当前机器人位置被分到无效/错误楼层。
             if exact_height <= -99.0 or not np.isfinite(exact_height):
                 continue
-            # 计算高度差值（绝对值）
             diff = abs(exact_height - target_height)
-            # 然后安全访问
-            layer_cost_ = self.tomogram[0][layer_idx][row][col]
-            #去除代价不存在的层级，即没有tomogram分析点云
-            if layer_cost_==0:
+            layer_cost = float(self.tomogram[0][layer_idx][row][col])
+            if layer_cost == 0:
                 continue
 
-            blocked = layer_cost_ >= self.a_star_cost_threshold
+            blocked = layer_cost >= self.a_star_cost_threshold
             in_height_band = diff <= self.layer_match_height_tolerance
-            fallback_candidate = (
-                blocked,
-                not in_height_band,
-                layer_cost_,
-                diff,
-            )
-            if fallback_key is None or fallback_candidate < fallback_key:
-                fallback_key = fallback_candidate
-                fallback_layer = layer_idx
-
-            if blocked and not in_height_band:
-                continue
-
+            # Layer identity is primarily geometric. A blocked cell on the
+            # robot's physical floor is still a better start layer than a
+            # low-cost cell several floors away. Cost only breaks ties between
+            # candidates at the same height.
             candidate = (
-                blocked,
                 not in_height_band,
-                layer_cost_,
                 diff,
+                blocked,
+                layer_cost,
+                layer_idx,
             )
             if best_key is None or candidate < best_key:
                 best_key = candidate
@@ -315,8 +316,6 @@ class TomogramPlanner(object):
 
         if best_layer is not None:
             return best_layer
-        if fallback_layer is not None:
-            return fallback_layer
         return 0
 
     def get_layer_cost_info(self, layer_idx, x, y):
@@ -331,6 +330,16 @@ class TomogramPlanner(object):
             "cost": float(self.tomogram[0][layer_idx][row][col]),
             "height": float(self.layer_elev_grids[layer_idx][row][col]),
         }
+
+    def resolve_layer(self, x, y, target_height, layer_hint=None):
+        if layer_hint is None:
+            return self.match_best_layer(x, y, target_height)
+        layer = int(layer_hint)
+        if layer < 0 or layer >= self.n_slice:
+            raise ValueError(
+                f"Layer hint {layer} is outside valid range [0, {self.n_slice - 1}]"
+            )
+        return layer
         
     def initPlanner(self, trav, trav_gx, trav_gy, elev_g, elev_c):
         diff_t = trav[1:] - trav[:-1]
@@ -374,24 +383,28 @@ class TomogramPlanner(object):
         use_dynamic=True,
         search_bounds=None,
         goal_heading=None,
+        start_layer_hint=None,
+        end_layer_hint=None,
+        start_height_hint=None,
     ):
-        # TODO: calculate slice index. By default the start and end pos are all at slice 0
-
-        # print("pos origin start:", start_pos)
-        # print("pos origin end:", end_pos)
-
-        # 匹配起始点的最佳layer
-        start_layer = self.match_best_layer(
-            start_pos[0], start_pos[1], start_pos[2]
+        self.last_traj_layers = None
+        start_match_height = (
+            float(start_pos[2])
+            if start_height_hint is None
+            else float(start_height_hint)
         )
-        # 匹配目标点的最佳layer
-        end_layer= self.match_best_layer(
-            end_pos[0], end_pos[1], end_pos[2]
+        start_layer = self.resolve_layer(
+            start_pos[0],
+            start_pos[1],
+            start_match_height,
+            layer_hint=start_layer_hint,
         )
-        # print("start_layer:" ,start_layer)
-        # print("end_layer:" ,end_layer)
-
-
+        end_layer = self.resolve_layer(
+            end_pos[0],
+            end_pos[1],
+            end_pos[2],
+            layer_hint=end_layer_hint,
+        )
         self.start_idx[1:] = self.pos2idx(start_pos[:2])
         self.end_idx[1:] = self.pos2idx(end_pos[:2])
         self.start_idx[0] = start_layer
@@ -402,6 +415,9 @@ class TomogramPlanner(object):
             "a_star_cost_threshold": float(self.a_star_cost_threshold),
             "safe_cost_margin": float(self.safe_cost_margin),
             "step_cost_weight": float(self.step_cost_weight),
+            "start_layer_hint": None if start_layer_hint is None else int(start_layer_hint),
+            "goal_layer_hint": None if end_layer_hint is None else int(end_layer_hint),
+            "start_match_height": start_match_height,
         }
     
 
@@ -443,7 +459,7 @@ class TomogramPlanner(object):
         opt_init = optimizer.get_opt_init_value()
         init_layer = optimizer.get_opt_init_layer()
         traj_raw = optimizer.get_result_matrix()
-        layers = optimizer.get_layers()
+        layers = np.asarray(optimizer.get_layers(), dtype=np.float32).reshape((-1,))
         heights = optimizer.get_heights()
         # print("heights origin:", heights)
 
@@ -481,7 +497,7 @@ class TomogramPlanner(object):
                 self.last_plan_info["dynamic_collision_rejected"] = True
                 return None
 
-        # print(traj_raw,"traj_raw")
+        self.last_traj_layers = np.rint(layers).astype(np.int32)
         return traj_3d
     
 

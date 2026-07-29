@@ -21,9 +21,9 @@ class StairGaitManager(Node):
         self.declare_parameter("udp_port", 30000)
         self.declare_parameter("udp_msg_id", 1)
         self.declare_parameter("require_stationary", True)
-        self.declare_parameter("stationary_linear_threshold", 0.03)
-        self.declare_parameter("stationary_angular_threshold", 0.05)
-        self.declare_parameter("stationary_hold_time", 0.5)
+        self.declare_parameter("stationary_linear_threshold", 0.05)
+        self.declare_parameter("stationary_angular_threshold", 0.10)
+        self.declare_parameter("stationary_hold_time", 0.3)
         self.declare_parameter("switch_cooldown", 3.0)
         self.declare_parameter("pause_nav_cmd_enabled", True)
         self.declare_parameter("pause_nav_cmd_topic", "/stair_gait_pause_nav_cmd")
@@ -66,6 +66,8 @@ class StairGaitManager(Node):
         self.is_stationary = False
         self.last_odom_pose = None
         self.last_odom_pose_wall_time = None
+        self.last_motion_linear = float("inf")
+        self.last_motion_angular = float("inf")
         self.pause_nav_cmd_active = False
         self.pause_started_wall_time = None
         self.pause_release_wall_time = None
@@ -124,21 +126,18 @@ class StairGaitManager(Node):
 
     def _on_odom(self, msg):
         twist = msg.twist.twist
-        twist_linear = math.sqrt(
-            twist.linear.x * twist.linear.x
-            + twist.linear.y * twist.linear.y
-            + twist.linear.z * twist.linear.z
-        )
-        twist_angular = math.sqrt(
-            twist.angular.x * twist.angular.x
-            + twist.angular.y * twist.angular.y
-            + twist.angular.z * twist.angular.z
-        )
+        # Gait switching only requires the dog to stop translating and yawing
+        # on the ground. Body-height and roll/pitch vibration must not keep the
+        # stationary gate open indefinitely.
+        twist_linear = math.hypot(twist.linear.x, twist.linear.y)
+        twist_angular = abs(twist.angular.z)
         now = time.monotonic()
         self.last_odom_wall_time = now
         pose_linear, pose_angular = self._odom_pose_velocity(msg, now)
         linear = max(twist_linear, pose_linear)
         angular = max(twist_angular, pose_angular)
+        self.last_motion_linear = linear
+        self.last_motion_angular = angular
         stationary_now = (
             linear <= self.stationary_linear_threshold
             and angular <= self.stationary_angular_threshold
@@ -163,7 +162,11 @@ class StairGaitManager(Node):
         if self.require_stationary and not self._stationary_ready(now):
             self.get_logger().info(
                 f"Waiting stationary before gait switch: state={self.pending_state}, "
-                f"GaitParam={self.pending_gait_param}",
+                f"GaitParam={self.pending_gait_param}, "
+                f"linear={self.last_motion_linear:.3f}m/s "
+                f"(limit={self.stationary_linear_threshold:.3f}), "
+                f"yaw_rate={self.last_motion_angular:.3f}rad/s "
+                f"(limit={self.stationary_angular_threshold:.3f})",
                 throttle_duration_sec=2.0,
             )
             return
@@ -258,9 +261,8 @@ class StairGaitManager(Node):
 
         dx = current[0] - previous[0]
         dy = current[1] - previous[1]
-        dz = current[2] - previous[2]
         dyaw = self._wrap_angle(current[3] - previous[3])
-        linear = math.sqrt(dx * dx + dy * dy + dz * dz) / dt
+        linear = math.hypot(dx, dy) / dt
         angular = abs(dyaw) / dt
         return linear, angular
 

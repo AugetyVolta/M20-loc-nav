@@ -32,6 +32,9 @@ pct_planner_node:
     layer_match_height_tolerance: 1.2
     # Desired optimized path height above the tomogram terrain surface, in metres.
     path_ground_offset: 0.10
+    # base_link is at the body centre, while tomogram elevations describe the
+    # terrain surface. Subtract this only when matching the robot to a layer.
+    robot_ground_offset: 0.45
 
     # Optional global-path perception update. This mirrors the small set of
     # knobs used by Nav2's local costmap/inflation layer; advanced filtering
@@ -57,20 +60,24 @@ pct_planner_node:
     global_path_perception_mark_all_layers: false
 
     # Keep a static route to the final goal and select an anchor this far ahead.
-    # The implementation optimizes an additional 1.0 m reference overlap and
-    # constrains its terminal heading before joining the unchanged suffix.
+    # The implementation optimizes an additional configurable reference overlap
+    # and constrains its terminal heading before joining the unchanged suffix.
     # A* has no lateral search bounds.
     local_replan_enabled: true
     local_replan_forward_distance: 10.0
+    # Optimize this additional static-reference distance beyond the nominal
+    # local window before joining the untouched suffix, reducing join corners.
+    local_replan_join_extension: 2.0
 
-    # Stair mode uses the 3D PCT path slope ahead of the robot to suppress
-    # dynamic global-path perception on stairs. Local DWB/costmap avoidance is
-    # not disabled.
+    # Stair state, gait switching and dynamic-perception protection inspect the
+    # first 5 m of the static reference path. Local DWB/costmap avoidance
+    # remains enabled.
     stair_mode_enabled: true
     stair_state_topic: "/pct_stair_state"
     stair_disable_global_path_perception: true
-    stair_lookahead: 2.5
-    stair_min_path_length: 0.8
+    stair_lookahead: 5.0
+    stair_dynamic_guard_lookahead: 5.0
+    stair_min_path_length: 0.6
     stair_enter_slope: 0.18
     stair_enter_dz: 0.35
     stair_up_enter_slope: 0.14

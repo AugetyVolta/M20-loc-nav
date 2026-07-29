@@ -56,6 +56,7 @@ def generate_launch_description():
             DeclareLaunchArgument("step_cost_weight", default_value="1.0"),
             DeclareLaunchArgument("layer_match_height_tolerance", default_value="1.2"),
             DeclareLaunchArgument("path_ground_offset", default_value="0.10"),
+            DeclareLaunchArgument("robot_ground_offset", default_value="0.45"),
             DeclareLaunchArgument("global_path_perception_enabled", default_value="false"),
             DeclareLaunchArgument("global_path_perception_scan_topic", default_value="/scan"),
             DeclareLaunchArgument("global_path_perception_min_range", default_value="0.15"),
@@ -64,9 +65,12 @@ def generate_launch_description():
             DeclareLaunchArgument("global_path_perception_inflation_radius", default_value="1.0"),
             DeclareLaunchArgument("global_path_perception_cost_scaling_factor", default_value="5.0"),
             DeclareLaunchArgument("global_path_perception_persistence", default_value="1.0"),
+            DeclareLaunchArgument("local_replan_forward_distance", default_value="10.0"),
+            DeclareLaunchArgument("local_replan_join_extension", default_value="2.0"),
             DeclareLaunchArgument("stair_mode_enabled", default_value="true"),
             DeclareLaunchArgument("stair_disable_global_path_perception", default_value="true"),
-            DeclareLaunchArgument("stair_lookahead", default_value="2.5"),
+            DeclareLaunchArgument("stair_lookahead", default_value="5.0"),
+            DeclareLaunchArgument("stair_dynamic_guard_lookahead", default_value="5.0"),
             DeclareLaunchArgument("stair_enter_slope", default_value="0.18"),
             DeclareLaunchArgument("stair_enter_dz", default_value="0.35"),
             DeclareLaunchArgument("stair_up_enter_slope", default_value="0.14"),
@@ -115,6 +119,10 @@ def generate_launch_description():
                             LaunchConfiguration("path_ground_offset"),
                             value_type=float,
                         ),
+                        "robot_ground_offset": ParameterValue(
+                            LaunchConfiguration("robot_ground_offset"),
+                            value_type=float,
+                        ),
                         "global_path_perception_enabled": ParameterValue(
                             LaunchConfiguration("global_path_perception_enabled"),
                             value_type=bool,
@@ -144,6 +152,14 @@ def generate_launch_description():
                             LaunchConfiguration("global_path_perception_persistence"),
                             value_type=float,
                         ),
+                        "local_replan_forward_distance": ParameterValue(
+                            LaunchConfiguration("local_replan_forward_distance"),
+                            value_type=float,
+                        ),
+                        "local_replan_join_extension": ParameterValue(
+                            LaunchConfiguration("local_replan_join_extension"),
+                            value_type=float,
+                        ),
                         "stair_mode_enabled": ParameterValue(
                             LaunchConfiguration("stair_mode_enabled"),
                             value_type=bool,
@@ -154,6 +170,10 @@ def generate_launch_description():
                         ),
                         "stair_lookahead": ParameterValue(
                             LaunchConfiguration("stair_lookahead"),
+                            value_type=float,
+                        ),
+                        "stair_dynamic_guard_lookahead": ParameterValue(
+                            LaunchConfiguration("stair_dynamic_guard_lookahead"),
                             value_type=float,
                         ),
                         "stair_enter_slope": ParameterValue(

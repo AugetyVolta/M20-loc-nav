@@ -53,6 +53,7 @@ def generate_launch_description():
     pct_safe_cost_margin = LaunchConfiguration("pct_safe_cost_margin")
     pct_step_cost_weight = LaunchConfiguration("pct_step_cost_weight")
     pct_layer_match_height_tolerance = LaunchConfiguration("pct_layer_match_height_tolerance")
+    pct_robot_ground_offset = LaunchConfiguration("pct_robot_ground_offset")
     pct_use_interactive_markers = LaunchConfiguration("pct_use_interactive_markers")
     pct_global_path_perception_enabled = LaunchConfiguration("pct_global_path_perception_enabled")
     pct_global_path_perception_scan_topic = LaunchConfiguration("pct_global_path_perception_scan_topic")
@@ -78,9 +79,15 @@ def generate_launch_description():
     pct_local_replan_forward_distance = LaunchConfiguration(
         "pct_local_replan_forward_distance"
     )
+    pct_local_replan_join_extension = LaunchConfiguration(
+        "pct_local_replan_join_extension"
+    )
     pct_stair_mode_enabled = LaunchConfiguration("pct_stair_mode_enabled")
     pct_stair_disable_global_path_perception = LaunchConfiguration("pct_stair_disable_global_path_perception")
     pct_stair_lookahead = LaunchConfiguration("pct_stair_lookahead")
+    pct_stair_dynamic_guard_lookahead = LaunchConfiguration(
+        "pct_stair_dynamic_guard_lookahead"
+    )
     pct_stair_enter_slope = LaunchConfiguration("pct_stair_enter_slope")
     pct_stair_enter_dz = LaunchConfiguration("pct_stair_enter_dz")
     pct_stair_up_enter_slope = LaunchConfiguration("pct_stair_up_enter_slope")
@@ -256,6 +263,10 @@ def generate_launch_description():
                                     pct_layer_match_height_tolerance,
                                     value_type=float,
                                 ),
+                                "robot_ground_offset": ParameterValue(
+                                    pct_robot_ground_offset,
+                                    value_type=float,
+                                ),
                                 "use_interactive_markers": ParameterValue(
                                     pct_use_interactive_markers,
                                     value_type=bool,
@@ -313,6 +324,10 @@ def generate_launch_description():
                                     pct_local_replan_forward_distance,
                                     value_type=float,
                                 ),
+                                "local_replan_join_extension": ParameterValue(
+                                    pct_local_replan_join_extension,
+                                    value_type=float,
+                                ),
                                 "stair_mode_enabled": ParameterValue(
                                     pct_stair_mode_enabled,
                                     value_type=bool,
@@ -323,6 +338,10 @@ def generate_launch_description():
                                 ),
                                 "stair_lookahead": ParameterValue(
                                     pct_stair_lookahead,
+                                    value_type=float,
+                                ),
+                                "stair_dynamic_guard_lookahead": ParameterValue(
+                                    pct_stair_dynamic_guard_lookahead,
                                     value_type=float,
                                 ),
                                 "stair_enter_slope": ParameterValue(
@@ -509,6 +528,7 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_safe_cost_margin", default_value="15.0"),
             DeclareLaunchArgument("pct_step_cost_weight", default_value="1.0"),
             DeclareLaunchArgument("pct_layer_match_height_tolerance", default_value="1.2"),
+            DeclareLaunchArgument("pct_robot_ground_offset", default_value="0.45"),
             DeclareLaunchArgument("pct_use_interactive_markers", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_enabled", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_scan_topic", default_value="/scan"),
@@ -524,9 +544,11 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_global_path_perception_raytrace_max_rays", default_value="360"),
             DeclareLaunchArgument("pct_local_replan_enabled", default_value="true"),
             DeclareLaunchArgument("pct_local_replan_forward_distance", default_value="10.0"),
+            DeclareLaunchArgument("pct_local_replan_join_extension", default_value="2.0"),
             DeclareLaunchArgument("pct_stair_mode_enabled", default_value="true"),
             DeclareLaunchArgument("pct_stair_disable_global_path_perception", default_value="true"),
-            DeclareLaunchArgument("pct_stair_lookahead", default_value="3.0"),
+            DeclareLaunchArgument("pct_stair_lookahead", default_value="5.0"),
+            DeclareLaunchArgument("pct_stair_dynamic_guard_lookahead", default_value="5.0"),
             DeclareLaunchArgument("pct_stair_enter_slope", default_value="0.18"),
             DeclareLaunchArgument("pct_stair_enter_dz", default_value="0.35"),
             DeclareLaunchArgument("pct_stair_up_enter_slope", default_value="0.14"),
@@ -540,9 +562,9 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_stair_gait_udp_ip", default_value="10.21.31.103"),
             DeclareLaunchArgument("pct_stair_gait_udp_port", default_value="30000"),
             DeclareLaunchArgument("pct_stair_gait_require_stationary", default_value="true"),
-            DeclareLaunchArgument("pct_stair_gait_stationary_linear_threshold", default_value="0.03"),
-            DeclareLaunchArgument("pct_stair_gait_stationary_angular_threshold", default_value="0.05"),
-            DeclareLaunchArgument("pct_stair_gait_stationary_hold_time", default_value="0.5"),
+            DeclareLaunchArgument("pct_stair_gait_stationary_linear_threshold", default_value="0.05"),
+            DeclareLaunchArgument("pct_stair_gait_stationary_angular_threshold", default_value="0.10"),
+            DeclareLaunchArgument("pct_stair_gait_stationary_hold_time", default_value="0.3"),
             DeclareLaunchArgument("pct_stair_gait_switch_cooldown", default_value="3.0"),
             DeclareLaunchArgument("pct_stair_gait_pause_nav_cmd_enabled", default_value="true"),
             DeclareLaunchArgument("pct_stair_gait_pause_nav_cmd_topic", default_value="/stair_gait_pause_nav_cmd"),
