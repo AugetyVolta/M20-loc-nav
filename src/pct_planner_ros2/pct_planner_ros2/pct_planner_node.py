@@ -82,7 +82,7 @@ class PctPlannerNode(Node):
         self.declare_parameter("stair_mode_enabled", True)
         self.declare_parameter("stair_state_topic", "/pct_stair_state")
         self.declare_parameter("stair_disable_global_path_perception", True)
-        self.declare_parameter("stair_lookahead", 5.0)
+        self.declare_parameter("stair_lookahead", 3.0)
         self.declare_parameter("stair_dynamic_guard_lookahead", 5.0)
         self.declare_parameter("stair_min_path_length", 0.6)
         self.declare_parameter("stair_enter_slope", 0.18)
@@ -408,10 +408,14 @@ class PctPlannerNode(Node):
             return
         if not self._update_start_from_tf():
             return
+        # Stair state must keep advancing even when dynamic planning fails or
+        # always_replan is disabled. The static reference is also the source of
+        # the stair fallback, so refresh this context before the replan gate.
+        reference_nearest = self._prepare_static_reference_context()
         self._expire_global_path_perception_if_stale()
         if not self.always_replan and not self._position_changed():
             return
-        self._plan_and_publish()
+        self._plan_and_publish(reference_nearest)
 
     def _update_start_from_tf(self):
         if self.start_source != "tf":
@@ -538,8 +542,14 @@ class PctPlannerNode(Node):
             return None
         nearest = self._nearest_reference_index(self.reference_path)
         reference_ahead = self.reference_path[nearest:]
-        self._update_stair_dynamic_guard_from_path(reference_ahead)
-        self._update_stair_state_from_path(reference_ahead)
+        self._update_stair_dynamic_guard_from_path(
+            reference_ahead,
+            start_from_first=True,
+        )
+        self._update_stair_state_from_path(
+            reference_ahead,
+            start_from_first=True,
+        )
         return nearest
 
     def _static_reference_fallback(self, nearest):
@@ -584,8 +594,7 @@ class PctPlannerNode(Node):
         )
         return preferred_anchor
 
-    def _plan_forward_window(self):
-        nearest = self._prepare_static_reference_context()
+    def _plan_forward_window(self, nearest):
         if nearest is None:
             return None
         join_distance = (
@@ -636,14 +645,14 @@ class PctPlannerNode(Node):
         )
         return combined
 
-    def _plan_and_publish(self):
+    def _plan_and_publish(self, reference_nearest):
         self.planning = True
         start_time = time.perf_counter()
         try:
             if self.local_replan_enabled:
-                traj_3d = self._plan_forward_window()
+                traj_3d = self._plan_forward_window(reference_nearest)
             else:
-                nearest = self._prepare_static_reference_context()
+                nearest = reference_nearest
                 traj_3d = self.planner.plan(
                     self.start_pos,
                     self.goal_pos,
@@ -1317,7 +1326,7 @@ class PctPlannerNode(Node):
                 return current_state, candidate["slope"], candidate["dz"]
         return None
 
-    def _update_stair_dynamic_guard_from_path(self, traj_np):
+    def _update_stair_dynamic_guard_from_path(self, traj_np, start_from_first=False):
         previous_active = self.stair_dynamic_guard_active
         next_active = False
         desired_state = "flat"
@@ -1326,6 +1335,7 @@ class PctPlannerNode(Node):
             stats = self._stair_slope_stats(
                 traj_np,
                 lookahead=self.stair_dynamic_guard_lookahead,
+                start_from_first=start_from_first,
             )
             if stats is not None:
                 desired_state, _, _ = self._stair_direction_from_stats(stats)
@@ -1351,10 +1361,14 @@ class PctPlannerNode(Node):
             f"lookahead={self.stair_dynamic_guard_lookahead:.2f}m"
         )
 
-    def _update_stair_state_from_path(self, traj_np):
+    def _update_stair_state_from_path(self, traj_np, start_from_first=False):
         if not self.stair_mode_enabled:
             return
-        stats = self._stair_slope_stats(traj_np, lookahead=self.stair_lookahead)
+        stats = self._stair_slope_stats(
+            traj_np,
+            lookahead=self.stair_lookahead,
+            start_from_first=start_from_first,
+        )
         if stats is None:
             self._maybe_exit_stair_without_stats()
             return
@@ -1439,7 +1453,7 @@ class PctPlannerNode(Node):
             f"up_start={up['start']:.2f}m, down_start={down['start']:.2f}m"
         )
 
-    def _stair_slope_stats(self, traj_np, lookahead=None):
+    def _stair_slope_stats(self, traj_np, lookahead=None, start_from_first=False):
         path = np.asarray(traj_np, dtype=np.float32)
         if path.ndim != 2 or path.shape[0] < 2 or path.shape[1] < 3:
             return None
@@ -1455,7 +1469,11 @@ class PctPlannerNode(Node):
         if not np.any(valid_seg):
             return None
 
-        closest_idx = int(np.argmin(np.linalg.norm(path[:, :2] - self.start_pos[:2], axis=1)))
+        closest_idx = 0
+        if not start_from_first:
+            closest_idx = int(
+                np.argmin(np.linalg.norm(path[:, :2] - self.start_pos[:2], axis=1))
+            )
         if closest_idx >= path.shape[0] - 1:
             closest_idx = max(0, path.shape[0] - 2)
 

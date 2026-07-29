@@ -547,7 +547,7 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_local_replan_join_extension", default_value="2.0"),
             DeclareLaunchArgument("pct_stair_mode_enabled", default_value="true"),
             DeclareLaunchArgument("pct_stair_disable_global_path_perception", default_value="true"),
-            DeclareLaunchArgument("pct_stair_lookahead", default_value="5.0"),
+            DeclareLaunchArgument("pct_stair_lookahead", default_value="3.0"),
             DeclareLaunchArgument("pct_stair_dynamic_guard_lookahead", default_value="5.0"),
             DeclareLaunchArgument("pct_stair_enter_slope", default_value="0.18"),
             DeclareLaunchArgument("pct_stair_enter_dz", default_value="0.35"),

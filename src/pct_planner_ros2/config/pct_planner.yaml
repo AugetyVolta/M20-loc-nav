@@ -69,13 +69,14 @@ pct_planner_node:
     # local window before joining the untouched suffix, reducing join corners.
     local_replan_join_extension: 2.0
 
-    # Stair state, gait switching and dynamic-perception protection inspect the
-    # first 5 m of the static reference path. Local DWB/costmap avoidance
-    # remains enabled.
+    # Stair decisions use the remaining static reference path from the point
+    # nearest to the robot. The 5 m guard immediately disables PCT dynamic
+    # perception; the debounced 3 m state drives gait and costmap switching.
+    # Local DWB/costmap avoidance remains enabled.
     stair_mode_enabled: true
     stair_state_topic: "/pct_stair_state"
     stair_disable_global_path_perception: true
-    stair_lookahead: 5.0
+    stair_lookahead: 3.0
     stair_dynamic_guard_lookahead: 5.0
     stair_min_path_length: 0.6
     stair_enter_slope: 0.18

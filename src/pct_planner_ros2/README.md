@@ -228,7 +228,25 @@ local_replan_forward_distance = 10.0                 # 基础前视；内部再�
 
 完整 M20 导航 launch 会覆盖为 `global_path_perception_width=8.0`、`global_path_perception_height=8.0`、scan topic `/scan`、`min_range=0.15`、`inflation_radius=1.0`、`inscribed_radius=0.45`、`cost_scaling_factor=5.0`、`persistence=5.0`。该窗口以机器人为中心覆盖前后、左右各约 `4m`。局部修复使用 `10.0m` 基础前视和内部 `1.0m` 衔接重叠段，A* 不限制左右搜索范围。楼梯模式关闭 PCT 动态层，因此原始 scan 中的台阶不会写入 PCT。
 
-动态层变化只更新 C++ 临时代价层，不单独立即触发重规划。动态层默认按 `global_path_perception_update_interval=0.2s`（5 Hz）吸收 `/scan`，主导航默认 `always_replan=true`，所以局部前缀按 `replan_interval=1.0s`（1 Hz）定周期刷新；最终目标未变时不会重新规划整张地图。动态观测仍由 `global_path_perception_width/height` 限制在机器人近场，但不再按参考路径走廊二次裁剪。LaserScan 默认写当前物理表面对应的等高 PCT layers。楼梯状态根据静态参考路径预判，因此动态局部规划失败也不会阻止进入楼梯模式；楼梯段仍关闭 PCT 动态避障。
+动态层变化只更新 C++ 临时代价层，不单独立即触发重规划。动态层默认按 `global_path_perception_update_interval=0.2s`（5 Hz）吸收 `/scan`，主导航默认 `always_replan=true`，所以局部前缀按 `replan_interval=1.0s`（1 Hz）定周期刷新；最终目标未变时不会重新规划整张地图。动态观测仍由 `global_path_perception_width/height` 限制在机器人近场，但不再按参考路径走廊二次裁剪。LaserScan 默认写当前物理表面对应的等高 PCT layers。楼梯状态独立于本周期动态规划结果刷新：每个定时周期先在静态参考路径上匹配当前位置最近的剩余路径点，再从该点沿路径向前统计楼梯前视距离。即使动态局部修补失败，楼梯 guard 仍可清空并关闭 PCT 动态层，状态保持时间也能继续累计；确认前方为楼梯后则发布剩余静态参考路径作为 fallback。该机制仍要求此前已成功生成与当前目标对应的静态参考路径，不会在无参考路径时根据起终点直线猜测楼梯。
+
+### 楼梯状态与规划失败降级
+
+楼梯判断只使用不含动态障碍的静态参考路径，不使用每周期变化的动态修补路径。每个规划定时周期先在尚未走完的参考路径中匹配距离机器人最近的路径点，再严格从这个点沿路径向前累计距离；不会在截取后的路径中仅按 XY 再匹配一次。这样可避免楼梯折返或上下层 XY 接近时跳到其他路径段，并且楼梯状态更新不再依赖本周期是否成功发布动态路径。
+
+当前 M20 参数将“提前保护”和“正式状态”分开：
+
+```text
+stair_dynamic_guard_lookahead = 5.0   # 立即保护，不等待状态防抖
+stair_lookahead = 3.0                 # 正式 stair_up/stair_down 判断范围
+stair_enter_hold_time = 0.5           # 正式进入状态前的连续确认时间
+stair_min_state_duration = 5.0        # 进入后最短保持时间
+stair_exit_hold_time = 2.0            # 确认平地后的连续退出时间
+```
+
+静态路径前方 `5m` 出现楼梯证据时，guard 会立即清空并关闭 PCT 动态感知，避免动态 scan 在楼梯入口阻塞全局规划。进入 `3m` 正式判断范围并满足 `0.5s` 防抖后，节点发布 `/pct_stair_state`，由步态管理器和状态感知的 local costmap 使用。动态局部修补失败时，guard 和正式状态仍会继续更新；如果 guard 已确认前方是楼梯，则发布从当前最近参考点开始的剩余静态路径作为 fallback。平地动态规划失败时不会使用该 fallback，避免绕过真实动态障碍。
+
+该降级机制以已经成功生成、且目标仍一致的静态参考路径为前提。若首次静态规划本身失败，没有可靠路径可以推断楼梯方向，也不会用起点到终点的空间直线猜测楼梯状态。
 
 因为全局路径感知更新改在 PCT C++/pybind core 内，修改后需要重新构建 core：
 
