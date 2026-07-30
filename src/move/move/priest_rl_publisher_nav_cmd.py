@@ -223,7 +223,7 @@ class RLLocalPlannerNodeROS2(Node):
         self.get_logger().debug(f"[priest config] {self.priest_cfg}")
 
         self.cfg = PlannerConfig(
-            num_points=int(declare_get("num_points", 100).integer_value),
+            num_points=int(declare_get("num_points", 50).integer_value),
             r_max=float(declare_get("r_max", 4.0).double_value),
             theta_min=float(declare_get("theta_range_min", -np.pi / 2).double_value),
             theta_max=float(declare_get("theta_range_max",  np.pi / 2).double_value),

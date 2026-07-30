@@ -28,6 +28,8 @@ def yaw_to_quat(yaw: float):
 
 
 def clamp_abs(value: float, limit: float) -> float:
+    if not math.isfinite(value):
+        return 0.0
     if limit <= 0.0 or not math.isfinite(limit):
         return value
     return max(-limit, min(limit, value))
@@ -131,6 +133,7 @@ class PriestMppiAdapterNavCmd(Node):
         self.latest_cmd_vel = Twist()
         self.latest_cmd_time = None
         self._cmd_timeout_active = False
+        self._invalid_cmd_active = False
 
         self._last_feedback_log = 0.0
         self._active_goal_handle = None
@@ -213,9 +216,19 @@ class PriestMppiAdapterNavCmd(Node):
         self.mppi_path_pub.publish(empty)
 
     def _on_cmd_vel(self, msg: Twist):
+        cmd_values = (msg.linear.x, msg.linear.y, msg.angular.z)
+        if not all(math.isfinite(value) for value in cmd_values):
+            self.latest_cmd_vel = Twist()
+            self.latest_cmd_time = self.get_clock().now()
+            if not self._invalid_cmd_active:
+                self._invalid_cmd_active = True
+                self.get_logger().error("Invalid NaN/Inf in /cmd_vel; publish zero NAV_CMD")
+            return
+
         self.latest_cmd_vel = msg
         self.latest_cmd_time = self.get_clock().now()
         self._cmd_timeout_active = False
+        self._invalid_cmd_active = False
 
     def _set_localization_ready(self, ready: bool, reason: str = ""):
         if self.localization_ready == ready:
