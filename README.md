@@ -1,8 +1,8 @@
 # M20 MID360 3D 导航
 
-当前主线分支：`feature/3d-body-plane-nav`
+当前 3D 导航维护分支：`feature/3d-body-plane-nav`
 
-当前方案使用仓库内置的 PCT planner 输出 3D 全局路径，本仓库负责 Fast-LIO/Open3D 定位、PCT 全局规划、机体平面局部控制和底盘输出。Jie/OctoMap 全局规划方案已单独归档到分支 `archive/jie-octomap-global-planner`，归档提交为 `2907d0b`。
+当前方案使用仓库内置的 PCT planner 输出 3D 全局路径，本仓库负责 Fast-LIO/Open3D 定位、PCT 全局规划、地形状态识别、机体平面局部控制和底盘输出。
 
 ## 总体链路
 
@@ -71,8 +71,6 @@ PCT planner 代码在本仓库内：
 src/pct_planner_ros2
 src/pct_planner_ros2/PCT_planner
 ```
-
-Jie/OctoMap planner 不在当前主线链路里，只保留在归档分支。
 
 ## 统一加载环境
 
@@ -577,17 +575,3 @@ ros2 topic echo /NAV_CMD --once
 如果 `/subgoal` 有输出但 `/local_path` 没有，优先检查 `/navigation_scan`、
 `/navigation_mode.scan_profile`、RL checkpoint 和 Python 环境。
 如果 `/local_path` 有输出但机器人不动，检查 DWB lifecycle、`/cmd_vel` 和 `/NAV_CMD`。
-
-## Jie/OctoMap 归档
-
-Jie/OctoMap 方案没有放在当前主线分支里。需要查看当时的 OctoMap 编辑 GUI、Jie planner launch 和相关命令时：
-
-```bash
-git switch archive/jie-octomap-global-planner
-```
-
-回到当前 PCT 主线：
-
-```bash
-git switch feature/3d-body-plane-nav
-```
