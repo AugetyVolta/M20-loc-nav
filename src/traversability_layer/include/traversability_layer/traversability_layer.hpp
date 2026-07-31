@@ -8,9 +8,9 @@
 #include <cstdint>
 
 #include "rclcpp/rclcpp.hpp"
+#include "m20_navigation_msgs/msg/navigation_mode.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
-#include "std_msgs/msg/string.hpp"
 #include "nav2_costmap_2d/layer.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
 #include "nav2_costmap_2d/costmap_layer.hpp"
@@ -88,7 +88,8 @@ public:
 private:
   void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
   void filteredScanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
-  void stairStateCallback(const std_msgs::msg::String::SharedPtr msg);
+  void navigationModeCallback(
+    const m20_navigation_msgs::msg::NavigationMode::SharedPtr msg);
   void applyPendingMode();
   void createSubscriptions();
   void updateVoxelGrid(
@@ -123,7 +124,7 @@ private:
   std::mutex mutex_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr filtered_scan_sub_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr stair_state_sub_;
+  rclcpp::Subscription<m20_navigation_msgs::msg::NavigationMode>::SharedPtr mode_sub_;
   std::unique_ptr<nav2_costmap_2d::ObstacleLayer> flat_obstacle_layer_;
 
   std::string pointcloud_topic_;
@@ -131,7 +132,7 @@ private:
   std::string base_frame_;
   std::string filtered_scan_input_topic_;
   std::string filtered_scan_topic_;
-  std::string stair_state_topic_;
+  std::string navigation_mode_topic_;
   double max_obstacle_height_;
   double min_obstacle_height_;
   double max_slope_traversable_;
@@ -220,8 +221,8 @@ private:
   double base_global_y_ = 0.0;
   double base_global_z_ = 0.0;
   bool cloud_updated_ = false;
-  std::atomic<bool> desired_stair_mode_{false};
-  bool active_stair_mode_ = false;
+  std::atomic<bool> desired_traversability_profile_{false};
+  bool active_traversability_profile_ = false;
   bool flat_obstacle_active_ = false;
   bool lifecycle_active_ = false;
 

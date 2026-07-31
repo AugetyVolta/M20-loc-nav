@@ -8,13 +8,13 @@ import rclpy
 import tf2_ros
 from geometry_msgs.msg import Point, PointStamped, PoseStamped
 from interactive_markers.interactive_marker_server import InteractiveMarkerServer
+from m20_navigation_msgs.msg import NavigationMode, TerrainState
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
-from std_msgs.msg import String
 from visualization_msgs.msg import InteractiveMarker, InteractiveMarkerControl, Marker
 
 from .pct_paths import (
@@ -34,6 +34,8 @@ class PctPlannerNode(Node):
         self.declare_parameter("tomogram_file", "building2_9")
         self.declare_parameter("frame_id", "map")
         self.declare_parameter("path_topic", "/pct_path")
+        self.declare_parameter("reference_path_topic", "/pct/reference_path")
+        self.declare_parameter("navigation_mode_topic", "/navigation_mode")
         self.declare_parameter("start_source", "fixed")
         self.declare_parameter("odom_topic", "/odom_body")
         self.declare_parameter("global_frame", "map")
@@ -79,23 +81,8 @@ class PctPlannerNode(Node):
         self.declare_parameter("local_replan_enabled", True)
         self.declare_parameter("local_replan_forward_distance", 6.0)
         self.declare_parameter("local_replan_join_extension", 2.0)
-        self.declare_parameter("stair_mode_enabled", True)
-        self.declare_parameter("stair_state_topic", "/pct_stair_state")
-        self.declare_parameter("stair_disable_global_path_perception", True)
-        self.declare_parameter("stair_lookahead", 3.0)
-        self.declare_parameter("stair_dynamic_guard_lookahead", 5.0)
-        self.declare_parameter("stair_min_path_length", 0.6)
-        self.declare_parameter("stair_enter_slope", 0.18)
-        self.declare_parameter("stair_enter_dz", 0.35)
-        self.declare_parameter("stair_up_enter_slope", 0.14)
-        self.declare_parameter("stair_up_enter_dz", 0.28)
-        self.declare_parameter("stair_down_enter_slope", 0.18)
-        self.declare_parameter("stair_down_enter_dz", 0.35)
-        self.declare_parameter("stair_exit_slope", 0.05)
-        self.declare_parameter("stair_exit_dz", 0.10)
-        self.declare_parameter("stair_enter_hold_time", 0.5)
-        self.declare_parameter("stair_exit_hold_time", 2.0)
-        self.declare_parameter("stair_min_state_duration", 5.0)
+        self.declare_parameter("reference_rebuild_distance", 2.0)
+        self.declare_parameter("reference_rebuild_backtrack_distance", 0.6)
 
         self.pct_root = self.get_parameter("pct_root").value
         self.tomogram_file = tomogram_stem(self.get_parameter("tomogram_file").value)
@@ -168,27 +155,14 @@ class PctPlannerNode(Node):
             0.0,
             float(self.get_parameter("local_replan_join_extension").value),
         )
-        self.stair_mode_enabled = bool(self.get_parameter("stair_mode_enabled").value)
-        self.stair_disable_global_path_perception = bool(
-            self.get_parameter("stair_disable_global_path_perception").value
+        self.reference_rebuild_distance = max(
+            0.1,
+            float(self.get_parameter("reference_rebuild_distance").value),
         )
-        self.stair_lookahead = max(0.1, float(self.get_parameter("stair_lookahead").value))
-        self.stair_dynamic_guard_lookahead = max(
-            self.stair_lookahead,
-            float(self.get_parameter("stair_dynamic_guard_lookahead").value),
+        self.reference_rebuild_backtrack_distance = max(
+            0.0,
+            float(self.get_parameter("reference_rebuild_backtrack_distance").value),
         )
-        self.stair_min_path_length = max(0.05, float(self.get_parameter("stair_min_path_length").value))
-        self.stair_enter_slope = max(0.0, float(self.get_parameter("stair_enter_slope").value))
-        self.stair_enter_dz = max(0.0, float(self.get_parameter("stair_enter_dz").value))
-        self.stair_up_enter_slope = max(0.0, float(self.get_parameter("stair_up_enter_slope").value))
-        self.stair_up_enter_dz = max(0.0, float(self.get_parameter("stair_up_enter_dz").value))
-        self.stair_down_enter_slope = max(0.0, float(self.get_parameter("stair_down_enter_slope").value))
-        self.stair_down_enter_dz = max(0.0, float(self.get_parameter("stair_down_enter_dz").value))
-        self.stair_exit_slope = max(0.0, float(self.get_parameter("stair_exit_slope").value))
-        self.stair_exit_dz = max(0.0, float(self.get_parameter("stair_exit_dz").value))
-        self.stair_enter_hold_time = max(0.0, float(self.get_parameter("stair_enter_hold_time").value))
-        self.stair_exit_hold_time = max(0.0, float(self.get_parameter("stair_exit_hold_time").value))
-        self.stair_min_state_duration = max(0.0, float(self.get_parameter("stair_min_state_duration").value))
 
         self.start_pos = np.array(
             vector3(self.get_parameter("initial_start").value, [-5.5, 6.0, 0.5]),
@@ -205,14 +179,11 @@ class PctPlannerNode(Node):
         self.last_perception_update_wall_time = 0.0
         self.reference_path = None
         self.reference_layers = None
+        self.reference_arc = None
         self.reference_goal = None
         self.reference_progress_index = 0
-        self.stair_state = "flat"
-        self.stair_dynamic_guard_active = False
-        self._stair_state_since = time.monotonic()
-        self._stair_enter_candidate = None
-        self._stair_enter_since = None
-        self._stair_exit_since = None
+        self.pct_dynamic_enabled = True
+        self.terrain_current = TerrainState.UNKNOWN
 
         path_qos = QoSProfile(
             depth=1,
@@ -220,9 +191,15 @@ class PctPlannerNode(Node):
             reliability=ReliabilityPolicy.RELIABLE,
         )
         self.path_pub = self.create_publisher(Path, self.get_parameter("path_topic").value, path_qos)
-        self.stair_state_pub = self.create_publisher(
-            String,
-            str(self.get_parameter("stair_state_topic").value),
+        self.reference_path_pub = self.create_publisher(
+            Path,
+            str(self.get_parameter("reference_path_topic").value),
+            path_qos,
+        )
+        self.create_subscription(
+            NavigationMode,
+            str(self.get_parameter("navigation_mode_topic").value),
+            self._on_navigation_mode,
             path_qos,
         )
         self.tf_buffer = tf2_ros.Buffer(node=self)
@@ -291,19 +268,11 @@ class PctPlannerNode(Node):
             f"global_frame={self.global_frame}, robot_frame={self.robot_frame}, "
             f"odom_topic={self.get_parameter('odom_topic').value}"
         )
-        if self.stair_mode_enabled:
-            self.get_logger().info(
-                "PCT stair mode enabled: "
-                f"lookahead={self.stair_lookahead:.2f}m, "
-                f"dynamic_guard={self.stair_dynamic_guard_lookahead:.2f}m, "
-                f"up_enter={self.stair_up_enter_slope:.3f}/{self.stair_up_enter_dz:.2f}m, "
-                f"down_enter={self.stair_down_enter_slope:.3f}/{self.stair_down_enter_dz:.2f}m, "
-                f"disable_dynamic={int(self.stair_disable_global_path_perception)}, "
-                f"enter_hold={self.stair_enter_hold_time:.2f}s, "
-                f"exit_hold={self.stair_exit_hold_time:.2f}s, "
-                f"min_state={self.stair_min_state_duration:.2f}s"
-            )
-        self._publish_stair_state()
+        self.get_logger().info(
+            "PCT terrain policy is external: "
+            f"reference_path={self.get_parameter('reference_path_topic').value}, "
+            f"navigation_mode={self.get_parameter('navigation_mode_topic').value}"
+        )
         self.timer = self.create_timer(replan_interval, self._timer_cb)
 
     def destroy_node(self):
@@ -408,9 +377,7 @@ class PctPlannerNode(Node):
             return
         if not self._update_start_from_tf():
             return
-        # Stair state must keep advancing even when dynamic planning fails or
-        # always_replan is disabled. The static reference is also the source of
-        # the stair fallback, so refresh this context before the replan gate.
+        # The static route is maintained independently of dynamic local repairs.
         reference_nearest = self._prepare_static_reference_context()
         self._expire_global_path_perception_if_stale()
         if not self.always_replan and not self._position_changed():
@@ -469,6 +436,25 @@ class PctPlannerNode(Node):
         self.reference_progress_index = max(self.reference_progress_index, nearest)
         return nearest
 
+    @staticmethod
+    def _reference_arc_lengths(reference_path):
+        reference_path = np.asarray(reference_path, dtype=np.float32)
+        arc = np.zeros((len(reference_path),), dtype=np.float32)
+        if len(reference_path) > 1:
+            arc[1:] = np.cumsum(
+                np.linalg.norm(np.diff(reference_path[:, :3], axis=0), axis=1)
+            )
+        return arc
+
+    def _global_nearest_reference_index(self):
+        reference_path = np.asarray(self.reference_path, dtype=np.float32)
+        distances = np.linalg.norm(
+            reference_path[:, :3] - self.start_pos[:3],
+            axis=1,
+        )
+        nearest = int(np.argmin(distances))
+        return nearest, float(distances[nearest])
+
     def _reference_anchor_index(self, reference_path, nearest_index, forward_distance=None):
         reference_path = np.asarray(reference_path, dtype=np.float32)
         if nearest_index >= len(reference_path) - 1:
@@ -498,17 +484,46 @@ class PctPlannerNode(Node):
                 return math.atan2(float(delta[1]), float(delta[0]))
         return None
 
-    def _reference_path_needs_rebuild(self):
+    def _reference_path_rebuild_reason(self):
         if (
             self.reference_path is None
             or self.reference_layers is None
+            or self.reference_arc is None
             or self.reference_goal is None
         ):
-            return True
-        return self._position_differs(self.goal_pos, self.reference_goal)
+            return "reference_missing"
+        if self._position_differs(self.goal_pos, self.reference_goal):
+            return "goal_changed"
+
+        nearest, nearest_distance = self._global_nearest_reference_index()
+        if nearest_distance > self.reference_rebuild_distance:
+            return f"route_departure:{nearest_distance:.2f}m"
+
+        progress = min(
+            max(0, self.reference_progress_index),
+            len(self.reference_path) - 1,
+        )
+        if nearest >= progress or self.reference_rebuild_backtrack_distance <= 0.0:
+            return None
+
+        backtrack_distance = float(
+            self.reference_arc[progress] - self.reference_arc[nearest]
+        )
+        progress_distance = float(
+            np.linalg.norm(
+                self.reference_path[progress, :3] - self.start_pos[:3]
+            )
+        )
+        if (
+            backtrack_distance > self.reference_rebuild_backtrack_distance
+            and progress_distance > self.reference_rebuild_backtrack_distance
+        ):
+            return f"route_backtrack:{backtrack_distance:.2f}m"
+        return None
 
     def _ensure_reference_path(self):
-        if not self._reference_path_needs_rebuild():
+        rebuild_reason = self._reference_path_rebuild_reason()
+        if rebuild_reason is None:
             return True
         reference = self.planner.plan(
             self.start_pos,
@@ -518,11 +533,26 @@ class PctPlannerNode(Node):
             start_height_hint=self._start_ground_height_hint(),
         )
         if reference is None:
+            if rebuild_reason.startswith("route_backtrack:"):
+                nearest, nearest_distance = self._global_nearest_reference_index()
+                if nearest_distance <= self.reference_rebuild_distance:
+                    previous_progress = self.reference_progress_index
+                    self.reference_progress_index = nearest
+                    self.get_logger().warn(
+                        "Static PCT rebuild failed while moving backwards; "
+                        f"reacquired the existing route at index {previous_progress}->{nearest}, "
+                        f"distance={nearest_distance:.2f}m"
+                    )
+                    return True
+            self._clear_reference_path(
+                f"static PCT planning failed ({rebuild_reason})"
+            )
             return False
         reference_path = np.asarray(reference, dtype=np.float32)
         reference_layers = getattr(self.planner, "last_traj_layers", None)
         if reference_layers is None:
             self.get_logger().error("PCT reference path did not provide layer metadata")
+            self._clear_reference_path("reference layer metadata is missing")
             return False
         reference_layers = np.asarray(reference_layers, dtype=np.int32).reshape((-1,))
         if len(reference_layers) != len(reference_path):
@@ -530,26 +560,33 @@ class PctPlannerNode(Node):
                 f"PCT reference layer count mismatch: path={len(reference_path)}, "
                 f"layers={len(reference_layers)}"
             )
+            self._clear_reference_path("reference layer metadata length mismatch")
             return False
         self.reference_path = reference_path
         self.reference_layers = reference_layers
+        self.reference_arc = self._reference_arc_lengths(reference_path)
         self.reference_goal = self.goal_pos.copy()
         self.reference_progress_index = 0
+        self.reference_path_pub.publish(self._traj_to_path(reference_path))
+        self.get_logger().info(
+            f"Published static PCT reference path with {len(reference_path)} poses "
+            f"after {rebuild_reason}"
+        )
         return True
+
+    def _clear_reference_path(self, reason):
+        self.reference_path = None
+        self.reference_layers = None
+        self.reference_arc = None
+        self.reference_goal = None
+        self.reference_progress_index = 0
+        self.reference_path_pub.publish(self._traj_to_path([]))
+        self.get_logger().warn(f"Cleared static PCT reference path: {reason}")
 
     def _prepare_static_reference_context(self):
         if not self._ensure_reference_path():
             return None
         nearest = self._nearest_reference_index(self.reference_path)
-        reference_ahead = self.reference_path[nearest:]
-        self._update_stair_dynamic_guard_from_path(
-            reference_ahead,
-            start_from_first=True,
-        )
-        self._update_stair_state_from_path(
-            reference_ahead,
-            start_from_first=True,
-        )
         return nearest
 
     def _static_reference_fallback(self, nearest):
@@ -620,9 +657,10 @@ class PctPlannerNode(Node):
             goal_heading=goal_heading,
             start_layer_hint=int(self.reference_layers[nearest]),
             end_layer_hint=int(self.reference_layers[anchor]),
+            start_height_hint=self._start_ground_height_hint(),
         )
         if local_path is None:
-            if self.stair_dynamic_guard_active:
+            if self._terrain_guard_active():
                 self.get_logger().warn(
                     "Local PCT repair failed with a stair ahead; publishing the "
                     "remaining static reference path"
@@ -662,7 +700,7 @@ class PctPlannerNode(Node):
                 if (
                     traj_3d is None
                     and nearest is not None
-                    and self.stair_dynamic_guard_active
+                    and self._terrain_guard_active()
                 ):
                     self.get_logger().warn(
                         "Full PCT planning failed with a stair ahead; publishing "
@@ -682,10 +720,15 @@ class PctPlannerNode(Node):
             traj_np = np.asarray(traj_3d, dtype=np.float32)
             dt_ms = (time.perf_counter() - start_time) * 1000.0
             traj_first = traj_np[0, :3].tolist() if traj_np.ndim == 2 and traj_np.shape[0] > 0 else []
+            plan_info = getattr(self.planner, "last_plan_info", {})
+            geometry = plan_info.get("path_geometry", {})
             self.get_logger().info(
                 f"Published /pct_path with {len(traj_3d)} poses in {dt_ms:.1f} ms, "
                 f"start={self.start_pos.tolist()}, traj_first={traj_first}, "
-                f"local_window={int(self.local_replan_enabled)}"
+                f"local_window={int(self.local_replan_enabled)}, "
+                f"max_xy_step={geometry.get('max_xy_step', 0.0):.3f}m, "
+                f"max_turn={geometry.get('max_turn_deg', 0.0):.1f}deg, "
+                f"a_star_fallback={int(plan_info.get('used_a_star_fallback', False))}"
             )
         except Exception as exc:
             self.get_logger().error(f"PCT planning failed: {exc}")
@@ -797,16 +840,26 @@ class PctPlannerNode(Node):
     def _global_path_perception_active(self):
         if not self.global_path_perception_enabled:
             return False
-        if (
-            self.stair_mode_enabled
-            and self.stair_disable_global_path_perception
-            and (
-                self.stair_state != "flat"
-                or self.stair_dynamic_guard_active
+        return self.pct_dynamic_enabled
+
+    def _terrain_guard_active(self):
+        return (
+            self.terrain_current in (TerrainState.STAIR_UP, TerrainState.STAIR_DOWN)
+            or not self.pct_dynamic_enabled
+        )
+
+    def _on_navigation_mode(self, msg):
+        previous_dynamic = self.pct_dynamic_enabled
+        self.pct_dynamic_enabled = bool(msg.pct_dynamic_enabled)
+        self.terrain_current = int(msg.current_terrain)
+        if previous_dynamic and not self.pct_dynamic_enabled:
+            self._clear_global_path_perception("external navigation mode")
+        if previous_dynamic != self.pct_dynamic_enabled:
+            self.get_logger().info(
+                "PCT dynamic perception switched by navigation mode: "
+                f"{int(previous_dynamic)} -> {int(self.pct_dynamic_enabled)}, "
+                f"current={self.terrain_current}, upcoming={msg.upcoming_terrain}"
             )
-        ):
-            return False
-        return True
 
     def _global_path_perception_scan_max_range(self, msg):
         range_max = self.global_path_perception_window_range
@@ -969,7 +1022,6 @@ class PctPlannerNode(Node):
     def _transform_points_to_map(self, points, source_frame):
         if points.size == 0:
             return points.reshape(0, 3).astype(np.float32, copy=False)
-        target_frame = self.global_frame or self.frame_id
         transform = self._lookup_transform_to_map(source_frame)
         if transform is None:
             return None
@@ -1281,309 +1333,6 @@ class PctPlannerNode(Node):
                 throttle_duration_sec=1.0,
             )
 
-    def _stair_direction_from_stats(self, stats):
-        slope = stats["overall_slope"]
-        dz = stats["overall_dz"]
-        path_len = stats["lookahead_length"]
-        up = stats["up"]
-        down = stats["down"]
-        desired_state = "flat"
-        if path_len >= self.stair_min_path_length:
-            up_ok = up["slope"] >= self.stair_up_enter_slope and up["dz"] >= self.stair_up_enter_dz
-            down_ok = (
-                down["slope"] <= -self.stair_down_enter_slope
-                and down["dz"] <= -self.stair_down_enter_dz
-            )
-            if up_ok and down_ok:
-                desired_state = "stair_up" if up["score"] >= down["score"] else "stair_down"
-                selected = up if desired_state == "stair_up" else down
-                slope = selected["slope"]
-                dz = selected["dz"]
-            elif up_ok:
-                desired_state = "stair_up"
-                slope = up["slope"]
-                dz = up["dz"]
-            elif down_ok:
-                desired_state = "stair_down"
-                slope = down["slope"]
-                dz = down["dz"]
-        return desired_state, slope, dz
-
-    def _stair_continuation_from_stats(self, stats, current_state):
-        if current_state == "stair_up":
-            candidate = stats["up"]
-            if (
-                candidate["slope"] >= self.stair_exit_slope
-                and candidate["dz"] >= self.stair_exit_dz
-            ):
-                return current_state, candidate["slope"], candidate["dz"]
-        elif current_state == "stair_down":
-            candidate = stats["down"]
-            if (
-                candidate["slope"] <= -self.stair_exit_slope
-                and candidate["dz"] <= -self.stair_exit_dz
-            ):
-                return current_state, candidate["slope"], candidate["dz"]
-        return None
-
-    def _update_stair_dynamic_guard_from_path(self, traj_np, start_from_first=False):
-        previous_active = self.stair_dynamic_guard_active
-        next_active = False
-        desired_state = "flat"
-        stats = None
-        if self.stair_mode_enabled and self.stair_disable_global_path_perception:
-            stats = self._stair_slope_stats(
-                traj_np,
-                lookahead=self.stair_dynamic_guard_lookahead,
-                start_from_first=start_from_first,
-            )
-            if stats is not None:
-                desired_state, _, _ = self._stair_direction_from_stats(stats)
-                if desired_state == "flat":
-                    continuation = self._stair_continuation_from_stats(
-                        stats,
-                        self.stair_state,
-                    )
-                    if continuation is not None:
-                        desired_state = continuation[0]
-                next_active = desired_state != "flat"
-
-        self.stair_dynamic_guard_active = next_active
-        if next_active == previous_active:
-            return
-        if next_active:
-            self._clear_global_path_perception("stair dynamic guard")
-        path_len = 0.0 if stats is None else stats["lookahead_length"]
-        self.get_logger().info(
-            "PCT stair dynamic guard: "
-            f"{int(previous_active)} -> {int(next_active)}, "
-            f"detected={desired_state}, path_len={path_len:.2f}m, "
-            f"lookahead={self.stair_dynamic_guard_lookahead:.2f}m"
-        )
-
-    def _update_stair_state_from_path(self, traj_np, start_from_first=False):
-        if not self.stair_mode_enabled:
-            return
-        stats = self._stair_slope_stats(
-            traj_np,
-            lookahead=self.stair_lookahead,
-            start_from_first=start_from_first,
-        )
-        if stats is None:
-            self._maybe_exit_stair_without_stats()
-            return
-
-        desired_state, slope, dz = self._stair_direction_from_stats(stats)
-        continuation = None
-        if desired_state == "flat":
-            continuation = self._stair_continuation_from_stats(
-                stats,
-                self.stair_state,
-            )
-            if continuation is not None:
-                desired_state, slope, dz = continuation
-        path_len = stats["lookahead_length"]
-        up = stats["up"]
-        down = stats["down"]
-
-        previous_state = self.stair_state
-        next_state = previous_state
-        now = time.monotonic()
-        state_age = now - self._stair_state_since
-
-        if previous_state == "flat":
-            if desired_state != "flat":
-                if self._stair_enter_candidate != desired_state:
-                    self._stair_enter_candidate = desired_state
-                    self._stair_enter_since = now
-                elif now - self._stair_enter_since >= self.stair_enter_hold_time:
-                    next_state = desired_state
-                    self._stair_enter_candidate = None
-                    self._stair_enter_since = None
-                self._stair_exit_since = None
-            else:
-                self._stair_enter_candidate = None
-                self._stair_enter_since = None
-        elif desired_state == previous_state:
-            self._stair_exit_since = None
-            self._stair_enter_candidate = None
-            self._stair_enter_since = None
-            if continuation is not None:
-                candidate = up if previous_state == "stair_up" else down
-                self.get_logger().info(
-                    f"PCT stair platform continuation: state={previous_state}, "
-                    f"slope={candidate['slope']:.3f}, dz={candidate['dz']:.3f}m, "
-                    f"start={candidate['start']:.2f}m",
-                    throttle_duration_sec=2.0,
-                )
-        elif desired_state in ("stair_up", "stair_down"):
-            if state_age >= self.stair_min_state_duration:
-                if self._stair_enter_candidate != desired_state:
-                    self._stair_enter_candidate = desired_state
-                    self._stair_enter_since = now
-                elif now - self._stair_enter_since >= self.stair_enter_hold_time:
-                    next_state = desired_state
-                    self._stair_enter_candidate = None
-                    self._stair_enter_since = None
-            self._stair_exit_since = None
-        else:
-            flat_enough = abs(slope) <= self.stair_exit_slope and abs(dz) <= self.stair_exit_dz
-            self._stair_enter_candidate = None
-            self._stair_enter_since = None
-            if flat_enough and state_age >= self.stair_min_state_duration:
-                if self._stair_exit_since is None:
-                    self._stair_exit_since = now
-                if now - self._stair_exit_since >= self.stair_exit_hold_time:
-                    next_state = "flat"
-                    self._stair_exit_since = None
-            else:
-                self._stair_exit_since = None
-
-        if next_state == previous_state:
-            return
-
-        self.stair_state = next_state
-        self._stair_state_since = now
-        if self.stair_disable_global_path_perception and next_state != "flat":
-            self._clear_global_path_perception("stair mode")
-        self._publish_stair_state()
-        self.get_logger().info(
-            f"PCT stair state: {previous_state} -> {next_state}, "
-            f"slope={slope:.3f}, dz={dz:.3f}m, path_len={path_len:.2f}m, "
-            f"up_start={up['start']:.2f}m, down_start={down['start']:.2f}m"
-        )
-
-    def _stair_slope_stats(self, traj_np, lookahead=None, start_from_first=False):
-        path = np.asarray(traj_np, dtype=np.float32)
-        if path.ndim != 2 or path.shape[0] < 2 or path.shape[1] < 3:
-            return None
-        path = path[:, :3]
-        finite = np.all(np.isfinite(path), axis=1)
-        path = path[finite]
-        if path.shape[0] < 2:
-            return None
-
-        deltas_xy = np.diff(path[:, :2], axis=0)
-        seg_len = np.linalg.norm(deltas_xy, axis=1)
-        valid_seg = seg_len > 1.0e-4
-        if not np.any(valid_seg):
-            return None
-
-        closest_idx = 0
-        if not start_from_first:
-            closest_idx = int(
-                np.argmin(np.linalg.norm(path[:, :2] - self.start_pos[:2], axis=1))
-            )
-        if closest_idx >= path.shape[0] - 1:
-            closest_idx = max(0, path.shape[0] - 2)
-
-        ahead = [path[closest_idx]]
-        length = 0.0
-        idx = closest_idx
-        if lookahead is None:
-            lookahead = self.stair_lookahead
-        lookahead = max(0.1, float(lookahead))
-        while idx < path.shape[0] - 1 and length < lookahead:
-            step = float(np.linalg.norm(path[idx + 1, :2] - path[idx, :2]))
-            if step > 1.0e-4:
-                length += step
-                ahead.append(path[idx + 1])
-            idx += 1
-
-        if len(ahead) < 2 or length < self.stair_min_path_length:
-            return None
-
-        ahead_np = np.asarray(ahead, dtype=np.float32)
-        s = np.zeros((ahead_np.shape[0],), dtype=np.float32)
-        s[1:] = np.cumsum(np.linalg.norm(np.diff(ahead_np[:, :2], axis=0), axis=1))
-        z = ahead_np[:, 2]
-        if float(s[-1]) <= 1.0e-4:
-            return None
-
-        overall_slope = float((z[-1] - z[0]) / s[-1])
-        overall_dz = float(z[-1] - z[0])
-        if ahead_np.shape[0] >= 3:
-            overall_slope = float(np.polyfit(s.astype(np.float64), z.astype(np.float64), 1)[0])
-
-        up = {
-            "slope": -float("inf"),
-            "dz": 0.0,
-            "length": 0.0,
-            "start": float("inf"),
-            "score": 0.0,
-        }
-        down = {
-            "slope": float("inf"),
-            "dz": 0.0,
-            "length": 0.0,
-            "start": float("inf"),
-            "score": 0.0,
-        }
-        for i in range(ahead_np.shape[0] - 1):
-            for j in range(i + 1, ahead_np.shape[0]):
-                span = float(s[j] - s[i])
-                if span < self.stair_min_path_length:
-                    continue
-                interval_dz = float(z[j] - z[i])
-                interval_slope = interval_dz / span
-                if interval_dz > 0.0:
-                    score = interval_slope * interval_dz
-                else:
-                    score = 0.0
-                if score > up["score"]:
-                    up = {
-                        "slope": interval_slope,
-                        "dz": interval_dz,
-                        "length": span,
-                        "start": float(s[i]),
-                        "score": score,
-                    }
-                if interval_dz < 0.0:
-                    score = -interval_slope * -interval_dz
-                else:
-                    score = 0.0
-                if score > down["score"]:
-                    down = {
-                        "slope": interval_slope,
-                        "dz": interval_dz,
-                        "length": span,
-                        "start": float(s[i]),
-                        "score": score,
-                    }
-        if not math.isfinite(up["slope"]):
-            up["slope"] = 0.0
-            up["start"] = float("inf")
-        if not math.isfinite(down["slope"]):
-            down["slope"] = 0.0
-            down["start"] = float("inf")
-        return {
-            "overall_slope": overall_slope,
-            "overall_dz": overall_dz,
-            "lookahead_length": float(s[-1]),
-            "up": up,
-            "down": down,
-        }
-
-    def _maybe_exit_stair_without_stats(self):
-        if self.stair_state == "flat":
-            return
-        now = time.monotonic()
-        if now - self._stair_state_since < self.stair_min_state_duration:
-            return
-        if self._stair_exit_since is None:
-            self._stair_exit_since = now
-            return
-        if now - self._stair_exit_since < self.stair_exit_hold_time:
-            return
-        previous_state = self.stair_state
-        self.stair_state = "flat"
-        self._stair_state_since = now
-        self._stair_enter_candidate = None
-        self._stair_enter_since = None
-        self._stair_exit_since = None
-        self._publish_stair_state()
-        self.get_logger().info(f"PCT stair state: {previous_state} -> flat, reason=short_path")
-
     def _clear_global_path_perception(self, reason):
         if not self.global_path_perception_enabled:
             return
@@ -1597,11 +1346,6 @@ class PctPlannerNode(Node):
                 )
         except Exception as exc:
             self.get_logger().warn(f"Failed to clear PCT global path perception for {reason}: {exc}")
-
-    def _publish_stair_state(self):
-        msg = String()
-        msg.data = self.stair_state
-        self.stair_state_pub.publish(msg)
 
     def _on_goal_pose(self, msg):
         position = msg.pose.position

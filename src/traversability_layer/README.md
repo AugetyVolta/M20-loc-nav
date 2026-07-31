@@ -145,23 +145,25 @@ local_costmap:
 ## Filtered scan
 
 `TraversabilityLayer` 是状态感知的局部代价方案：平地复用标准 ObstacleLayer，楼梯根据
-当前三维点云计算 traversability cost 并过滤原始 `/scan`，不依赖离线 tomogram。参数位于
+当前三维点云计算 traversability cost。它始终生成语义固定的过滤 scan，不依赖离线
+tomogram，也不自行判断楼梯。参数位于
 `nav2_dwb_body_plane.yaml` 的 `local_costmap.traversability_layer`：
 
 | 参数 | M20 配置值 | 说明 |
 |---|---:|---|
-| `publish_filtered_scan` | `true` | 是否发布平地透传/楼梯过滤后的 scan |
+| `publish_filtered_scan` | `true` | 是否发布始终按 traversability cost 过滤的 scan |
 | `filtered_scan_input_topic` | `/scan` | 输入原始 LaserScan |
 | `filtered_scan_topic` | `/traversability_filtered_scan` | 过滤后输出话题 |
 | `filtered_scan_min_cost` | `64.0` | endpoint 所在格 cost 不低于该值才保留；未知或无地面格删除 |
-| `state_aware_mode_enabled` | `true` | 根据楼梯状态在平地 ObstacleLayer 与楼梯 traversability 之间切换 |
-| `stair_state_topic` | `/pct_stair_state` | transient-local 状态话题，支持 `flat/stair_up/stair_down` |
+| `state_aware_mode_enabled` | `true` | 根据统一策略在平地 ObstacleLayer 与楼梯 traversability 之间切换 |
+| `navigation_mode_topic` | `/navigation_mode` | transient-local 类型化策略话题，读取 `costmap_profile` |
 | `flat_obstacle.*` | 见主 YAML | 内嵌标准 Nav2 ObstacleLayer 的原始 `/scan` 参数 |
 
-平地状态下 `/traversability_filtered_scan` 原样透传输入 `/scan`，内嵌 ObstacleLayer
-直接进行 marking 和 raytrace clearing。楼梯状态下，scan endpoint 使用消息时间戳的
-TF 转换到 local costmap 全局坐标系，再按 traversability cost 过滤；TF 查询失败时发布
-未过滤 scan，避免因为坐标暂时不可用而删除真实障碍。
+无论 costmap 当前采用哪种 profile，scan endpoint 都使用消息时间戳的 TF 转换到 local
+costmap 全局坐标系，再按 traversability cost 过滤。TF 查询失败时发布未过滤 scan，避免
+因为坐标暂时不可用而删除真实障碍。RL 不直接订阅这个话题，而是订阅
+`/navigation_scan`：独立 `navigation_scan_mux` 在平地选择原始 `/scan`，接近或进入楼梯
+后选择 `/traversability_filtered_scan`。
 
 静态 PCT tomogram 过滤已经拆到独立包 `tomogram_filter_layer`。切换时只修改同一 YAML 的
 `local_costmap.plugins`，不要同时加载两个过滤插件，否则它们会同时发布
@@ -173,13 +175,14 @@ TF 转换到 local costmap 全局坐标系，再按 traversability cost 过滤�
 plugins: ["traversability_layer", "inflation_layer"]
 ```
 
-模式切换发生在 costmap 更新线程，不在状态订阅回调中直接启停插件：
+模式切换发生在 costmap 更新线程，不在策略订阅回调中直接启停插件：
 
-- `flat`：内嵌 `flat_obstacle` 订阅原始 `/scan`，标准 Nav2 marking/clearing 直接写 master costmap；三维可通行分析只在后台更新，不覆盖平地障碍代价。
-- `stair_up/stair_down`：先取消 `flat_obstacle` 的 scan 订阅并清空其缓存，再由原有三维可通行分析写 master costmap。
-- 切回 `flat`：清空内嵌 costmap、重新订阅 `/scan`，随后由新的 scan 持续更新。
+- `PROFILE_FLAT`：内嵌 `flat_obstacle` 订阅原始 `/scan`，标准 Nav2 marking/clearing 直接写 master costmap；三维可通行分析只在后台更新，不覆盖平地障碍代价。
+- `PROFILE_STAIR`：先取消 `flat_obstacle` 的 scan 订阅并清空其缓存，再由原有三维可通行分析写 master costmap。
+- 切回 `PROFILE_FLAT`：清空内嵌 costmap、重新订阅 `/scan`，随后由新的 scan 持续更新。
 
-默认未收到状态时使用 `flat`，优先保证近距离障碍安全。若
+默认未收到策略时使用平地 profile，优先保证近距离障碍安全；策略消息短暂中断时由
+`navigation_mode_manager` 保持最后一次有效决策。若
 `state_aware_mode_enabled=false`，不会创建内嵌 ObstacleLayer，插件恢复为旧版始终写
 traversability cost 的行为。静态 tomogram 备选模式仍需顶层
 `["tomogram_filter_layer", "obstacle_layer", "inflation_layer"]`。
@@ -187,33 +190,26 @@ traversability cost 的行为。静态 tomogram 备选模式仍需顶层
 修改 YAML 后只需要重启主导航，不需要重新编译。修改 C++ 源码后执行：
 
 ```bash
-colcon build --symlink-install --packages-select traversability_layer tomogram_filter_layer m20_fastlio_nav
+colcon build --symlink-install --packages-up-to \
+  traversability_layer tomogram_filter_layer m20_fastlio_nav
 ```
 
 ## 编译
 
 ```bash
-cd ~/dog_slam/LIO-SAM_MID360_ROS2_PKG/ros2
+cd /mnt/nvme/workspace/fast_lio_ws
 source /opt/ros/humble/setup.bash
-colcon build --packages-select traversability_layer
+colcon build --symlink-install --packages-up-to traversability_layer
 ```
-
-## 备份
-
-原始2.5D实现已备份为：
-- `src/traversability_layer.cpp.bk`
-- `include/traversability_layer/traversability_layer.hpp.bk`
 
 ## 项目位置
 
-```
-LIO-SAM_MID360_ROS2_PKG/ros2/src/traversability_layer/
+```text
+fast_lio_ws/src/traversability_layer/
 ├── include/traversability_layer/
-│   ├── traversability_layer.hpp      # 头文件
-│   └── traversability_layer.hpp.bk   # 原始2.5D版本备份
+│   └── traversability_layer.hpp      # 头文件
 ├── src/
-│   ├── traversability_layer.cpp      # 3D实现
-│   └── traversability_layer.cpp.bk   # 原始2.5D版本备份
+│   └── traversability_layer.cpp      # 3D实现
 ├── traversability_layer_plugin.xml   # 插件描述
 ├── CMakeLists.txt
 └── package.xml

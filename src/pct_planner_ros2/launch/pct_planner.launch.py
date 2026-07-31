@@ -50,6 +50,8 @@ def generate_launch_description():
             DeclareLaunchArgument("odom_topic", default_value="/odom_body"),
             DeclareLaunchArgument("global_frame", default_value="map"),
             DeclareLaunchArgument("robot_frame", default_value="base_link"),
+            DeclareLaunchArgument("reference_path_topic", default_value="/pct/reference_path"),
+            DeclareLaunchArgument("navigation_mode_topic", default_value="/navigation_mode"),
             DeclareLaunchArgument("use_interactive_markers", default_value="true"),
             DeclareLaunchArgument("a_star_cost_threshold", default_value="45.0"),
             DeclareLaunchArgument("safe_cost_margin", default_value="15.0"),
@@ -67,19 +69,6 @@ def generate_launch_description():
             DeclareLaunchArgument("global_path_perception_persistence", default_value="1.0"),
             DeclareLaunchArgument("local_replan_forward_distance", default_value="10.0"),
             DeclareLaunchArgument("local_replan_join_extension", default_value="2.0"),
-            DeclareLaunchArgument("stair_mode_enabled", default_value="true"),
-            DeclareLaunchArgument("stair_disable_global_path_perception", default_value="true"),
-            DeclareLaunchArgument("stair_lookahead", default_value="3.0"),
-            DeclareLaunchArgument("stair_dynamic_guard_lookahead", default_value="5.0"),
-            DeclareLaunchArgument("stair_enter_slope", default_value="0.18"),
-            DeclareLaunchArgument("stair_enter_dz", default_value="0.35"),
-            DeclareLaunchArgument("stair_up_enter_slope", default_value="0.14"),
-            DeclareLaunchArgument("stair_up_enter_dz", default_value="0.28"),
-            DeclareLaunchArgument("stair_down_enter_slope", default_value="0.18"),
-            DeclareLaunchArgument("stair_down_enter_dz", default_value="0.35"),
-            DeclareLaunchArgument("stair_enter_hold_time", default_value="0.5"),
-            DeclareLaunchArgument("stair_exit_hold_time", default_value="2.0"),
-            DeclareLaunchArgument("stair_min_state_duration", default_value="5.0"),
             SetEnvironmentVariable("PCT_PLANNER_ROOT", pct_root),
             SetEnvironmentVariable("PYTHONPATH", python_paths),
             SetEnvironmentVariable("LD_LIBRARY_PATH", library_paths),
@@ -99,6 +88,8 @@ def generate_launch_description():
                         "odom_topic": LaunchConfiguration("odom_topic"),
                         "global_frame": LaunchConfiguration("global_frame"),
                         "robot_frame": LaunchConfiguration("robot_frame"),
+                        "reference_path_topic": LaunchConfiguration("reference_path_topic"),
+                        "navigation_mode_topic": LaunchConfiguration("navigation_mode_topic"),
                         "a_star_cost_threshold": ParameterValue(
                             LaunchConfiguration("a_star_cost_threshold"),
                             value_type=float,
@@ -158,58 +149,6 @@ def generate_launch_description():
                         ),
                         "local_replan_join_extension": ParameterValue(
                             LaunchConfiguration("local_replan_join_extension"),
-                            value_type=float,
-                        ),
-                        "stair_mode_enabled": ParameterValue(
-                            LaunchConfiguration("stair_mode_enabled"),
-                            value_type=bool,
-                        ),
-                        "stair_disable_global_path_perception": ParameterValue(
-                            LaunchConfiguration("stair_disable_global_path_perception"),
-                            value_type=bool,
-                        ),
-                        "stair_lookahead": ParameterValue(
-                            LaunchConfiguration("stair_lookahead"),
-                            value_type=float,
-                        ),
-                        "stair_dynamic_guard_lookahead": ParameterValue(
-                            LaunchConfiguration("stair_dynamic_guard_lookahead"),
-                            value_type=float,
-                        ),
-                        "stair_enter_slope": ParameterValue(
-                            LaunchConfiguration("stair_enter_slope"),
-                            value_type=float,
-                        ),
-                        "stair_enter_dz": ParameterValue(
-                            LaunchConfiguration("stair_enter_dz"),
-                            value_type=float,
-                        ),
-                        "stair_up_enter_slope": ParameterValue(
-                            LaunchConfiguration("stair_up_enter_slope"),
-                            value_type=float,
-                        ),
-                        "stair_up_enter_dz": ParameterValue(
-                            LaunchConfiguration("stair_up_enter_dz"),
-                            value_type=float,
-                        ),
-                        "stair_down_enter_slope": ParameterValue(
-                            LaunchConfiguration("stair_down_enter_slope"),
-                            value_type=float,
-                        ),
-                        "stair_down_enter_dz": ParameterValue(
-                            LaunchConfiguration("stair_down_enter_dz"),
-                            value_type=float,
-                        ),
-                        "stair_enter_hold_time": ParameterValue(
-                            LaunchConfiguration("stair_enter_hold_time"),
-                            value_type=float,
-                        ),
-                        "stair_exit_hold_time": ParameterValue(
-                            LaunchConfiguration("stair_exit_hold_time"),
-                            value_type=float,
-                        ),
-                        "stair_min_state_duration": ParameterValue(
-                            LaunchConfiguration("stair_min_state_duration"),
                             value_type=float,
                         ),
                         "use_interactive_markers": ParameterValue(

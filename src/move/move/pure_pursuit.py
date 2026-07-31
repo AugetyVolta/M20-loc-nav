@@ -42,8 +42,9 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy, QoS
 from rclpy.time import Time
 
 from geometry_msgs.msg import PoseStamped
+from m20_navigation_msgs.msg import NavigationMode
 from nav_msgs.msg import Path
-from std_msgs.msg import Header, String
+from std_msgs.msg import Header
 
 from tf2_ros import Buffer, TransformListener
 
@@ -77,7 +78,7 @@ class PurePursuitNode(Node):
         self.declare_parameter('use_arc_length_lookahead', True)
         self.declare_parameter('heading_change_guard_enabled', True)
         self.declare_parameter('heading_change_guard_stair_only', False)
-        self.declare_parameter('stair_state_topic', '/pct_stair_state')
+        self.declare_parameter('navigation_mode_topic', '/navigation_mode')
         self.declare_parameter('max_heading_change_deg', 35.0)
         self.declare_parameter('turn_guard_min_lookahead', 0.6)
         self.declare_parameter('turn_guard_pre_distance', 0.7)
@@ -97,7 +98,7 @@ class PurePursuitNode(Node):
         self.use_arc_length_lookahead = bool(self.get_parameter('use_arc_length_lookahead').value)
         self.heading_change_guard_enabled = bool(self.get_parameter('heading_change_guard_enabled').value)
         self.heading_change_guard_stair_only = bool(self.get_parameter('heading_change_guard_stair_only').value)
-        self.stair_state_topic = str(self.get_parameter('stair_state_topic').value)
+        self.navigation_mode_topic = str(self.get_parameter('navigation_mode_topic').value)
         self.max_heading_change_deg = float(self.get_parameter('max_heading_change_deg').value)
         self.turn_guard_min_lookahead = float(self.get_parameter('turn_guard_min_lookahead').value)
         self.turn_guard_pre_distance = float(self.get_parameter('turn_guard_pre_distance').value)
@@ -108,7 +109,7 @@ class PurePursuitNode(Node):
 
         # ---------------- Data & Lock ----------------
         self.path = None
-        self.stair_state = 'flat'
+        self.navigation_heading_guard = False
         self.lock = threading.Lock()
         self.timer = None
         self._waiting_for_path_logged = False
@@ -140,8 +141,11 @@ class PurePursuitNode(Node):
         self.path_sub_latched = self.create_subscription(
             Path, 'plan', self.path_callback, latched_path_qos
         )
-        self.stair_state_sub = self.create_subscription(
-            String, self.stair_state_topic, self.stair_state_callback, latched_path_qos
+        self.navigation_mode_sub = self.create_subscription(
+            NavigationMode,
+            self.navigation_mode_topic,
+            self.navigation_mode_callback,
+            latched_path_qos,
         )
         self.cnn_goal_pub = self.create_publisher(PoseStamped, 'subgoal', pub_qos)
         self.final_goal_pub = self.create_publisher(PoseStamped, 'final_goal', pub_qos)
@@ -165,18 +169,15 @@ class PurePursuitNode(Node):
         if self.timer is None:
             self.start()
 
-    def stair_state_callback(self, msg: String):
-        state = str(msg.data).strip()
-        if not state:
-            state = 'flat'
-        self.stair_state = state
+    def navigation_mode_callback(self, msg: NavigationMode):
+        self.navigation_heading_guard = bool(msg.heading_guard_enabled)
 
     def _heading_change_guard_active(self) -> bool:
         if not self.heading_change_guard_enabled:
             return False
         if not self.heading_change_guard_stair_only:
             return True
-        return self.stair_state in ('stair_up', 'stair_down')
+        return self.navigation_heading_guard
 
     # --------------- Timer ---------------
     def start(self):

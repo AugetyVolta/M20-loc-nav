@@ -3,11 +3,12 @@ import math
 import socket
 import time
 
+from m20_navigation_msgs.msg import NavigationMode
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool
 
 
 class StairGaitManager(Node):
@@ -15,7 +16,7 @@ class StairGaitManager(Node):
         super().__init__("stair_gait_manager")
 
         self.declare_parameter("enabled", True)
-        self.declare_parameter("stair_state_topic", "/pct_stair_state")
+        self.declare_parameter("navigation_mode_topic", "/navigation_mode")
         self.declare_parameter("odom_topic", "/odom_body")
         self.declare_parameter("udp_ip", "10.21.31.103")
         self.declare_parameter("udp_port", 30000)
@@ -72,7 +73,7 @@ class StairGaitManager(Node):
         self.pause_started_wall_time = None
         self.pause_release_wall_time = None
 
-        stair_state_qos = QoSProfile(
+        mode_qos = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -83,10 +84,10 @@ class StairGaitManager(Node):
             reliability=ReliabilityPolicy.RELIABLE,
         )
         self.create_subscription(
-            String,
-            str(self.get_parameter("stair_state_topic").value),
-            self._on_stair_state,
-            stair_state_qos,
+            NavigationMode,
+            str(self.get_parameter("navigation_mode_topic").value),
+            self._on_navigation_mode,
+            mode_qos,
         )
         self.create_subscription(
             Odometry,
@@ -105,10 +106,10 @@ class StairGaitManager(Node):
             f"pause_nav_cmd={int(self.pause_nav_cmd_enabled)}"
         )
 
-    def _on_stair_state(self, msg):
-        state = str(msg.data).strip()
-        if state not in ("flat", "stair_up", "stair_down"):
-            self.get_logger().warn(f"Ignore unknown stair state: {state}")
+    def _on_navigation_mode(self, msg):
+        state = self._terrain_name(msg.gait_terrain)
+        if state is None:
+            self.get_logger().warn(f"Ignore unknown gait terrain: {msg.gait_terrain}")
             return
         if state == self.current_state:
             return
@@ -123,6 +124,14 @@ class StairGaitManager(Node):
         self.pending_state = state
         self._set_pause_nav_cmd(True, "gait switch pending")
         self.get_logger().info(f"Queue gait switch: state={state}, GaitParam={gait_param}")
+
+    @staticmethod
+    def _terrain_name(mode):
+        return {
+            NavigationMode.TERRAIN_FLAT: "flat",
+            NavigationMode.TERRAIN_STAIR_UP: "stair_up",
+            NavigationMode.TERRAIN_STAIR_DOWN: "stair_down",
+        }.get(mode)
 
     def _on_odom(self, msg):
         twist = msg.twist.twist

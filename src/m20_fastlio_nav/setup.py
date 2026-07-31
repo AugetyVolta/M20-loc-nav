@@ -20,12 +20,16 @@ setup(
     maintainer_email="orin@example.com",
     description="Fast-LIO2 and Open3D localization integration for the M20 Nav2 stack.",
     license="BSD-3-Clause",
+    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
             "fastlio_odom_bridge = m20_fastlio_nav.fastlio_odom_bridge:main",
             "initialpose_3d_marker = m20_fastlio_nav.initialpose_3d_marker:main",
             "prepare_3d_nav_map = m20_fastlio_nav.prepare_3d_nav_map:main",
             "stair_gait_manager = m20_fastlio_nav.stair_gait_manager:main",
+            "terrain_state_estimator = m20_fastlio_nav.terrain_state_estimator:main",
+            "navigation_mode_manager = m20_fastlio_nav.navigation_mode_manager:main",
+            "navigation_scan_mux = m20_fastlio_nav.navigation_scan_mux:main",
         ],
     },
 )

@@ -10,8 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(m20_navigation_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(tf2 REQUIRED)
@@ -43,8 +43,8 @@ target_link_libraries(${PROJECT_NAME}
 
 ament_target_dependencies(${PROJECT_NAME}
   rclcpp
+  m20_navigation_msgs
   sensor_msgs
-  std_msgs
   geometry_msgs
   nav2_costmap_2d
   tf2

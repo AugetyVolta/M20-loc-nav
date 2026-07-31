@@ -191,21 +191,22 @@ local_costmap:
         # 是否发布调试点云 slope_map，用 intensity 表示 cost，方便 RViz 看可通行性结果。
         publish_slope_map: true
 
-        # 发布给 RL local path 的 scan。状态感知开启时，平地原样透传原始 /scan；
-        # 上下楼梯才按消息时间戳转换 endpoint，并用 traversability cost 过滤。
-        # 楼梯模式只有 endpoint 落在已知且 cost>=filtered_scan_min_cost 的格子时才保留；
+        # 始终发布语义固定的 traversability 过滤结果，不再在平地透传原始 /scan。
+        # navigation_scan_mux 会根据 NavigationMode 为 RL 选择原始或过滤 scan。
+        # endpoint 落在已知且 cost>=filtered_scan_min_cost 的格子时才保留；
         # 可通行、插值未知、无地面和范围外区域都会置为 inf。
         publish_filtered_scan: true
         filtered_scan_input_topic: /scan
         filtered_scan_topic: /traversability_filtered_scan
         filtered_scan_min_cost: 64.0
 
-        # 根据 PCT 发布的楼梯状态切换内部代价来源：
-        # flat：标准 Nav2 ObstacleLayer 直接处理原始 /scan，近距离人员不会被地面条件漏掉；
-        # stair_up/stair_down：停用并清空 ObstacleLayer，只写原有三维 traversability cost。
-        # 没收到状态时默认 flat；false 表示恢复旧版“始终使用 traversability”行为。
+        # 根据统一 NavigationMode 的 costmap_profile 切换内部代价来源：
+        # PROFILE_FLAT：标准 Nav2 ObstacleLayer 直接处理原始 /scan；
+        # PROFILE_STAIR：停用并清空 ObstacleLayer，只写三维 traversability cost。
+        # 模式由独立 terrain_state_estimator/navigation_mode_manager 生成，不再依赖
+        # PCT 动态规划是否成功；false 表示始终使用 traversability。
         state_aware_mode_enabled: true
-        stair_state_topic: /pct_stair_state
+        navigation_mode_topic: /navigation_mode
 
         # 平地模式内嵌的标准 Nav2 ObstacleLayer。参数命名空间必须保留
         # traversability_layer.flat_obstacle，不能提升为顶层 obstacle_layer。

@@ -4,6 +4,11 @@ pct_planner_node:
     tomogram_file: "m20_3d_map"
     frame_id: "map"
     path_topic: "/pct_path"
+    # Static route is published separately and never contains dynamic obstacles.
+    # Terrain classification consumes this latched path.
+    reference_path_topic: "/pct/reference_path"
+    # Dynamic perception policy is supplied by the integration-level mode manager.
+    navigation_mode_topic: "/navigation_mode"
 
     # Use "tf" so the global path starts from the current map->base_link pose.
     # Override to "fixed" only for offline/debug visualization without TF.
@@ -68,25 +73,9 @@ pct_planner_node:
     # Optimize this additional static-reference distance beyond the nominal
     # local window before joining the untouched suffix, reducing join corners.
     local_replan_join_extension: 2.0
-
-    # Stair decisions use the remaining static reference path from the point
-    # nearest to the robot. The 5 m guard immediately disables PCT dynamic
-    # perception; the debounced 3 m state drives gait and costmap switching.
-    # Local DWB/costmap avoidance remains enabled.
-    stair_mode_enabled: true
-    stair_state_topic: "/pct_stair_state"
-    stair_disable_global_path_perception: true
-    stair_lookahead: 3.0
-    stair_dynamic_guard_lookahead: 5.0
-    stair_min_path_length: 0.6
-    stair_enter_slope: 0.18
-    stair_enter_dz: 0.35
-    stair_up_enter_slope: 0.14
-    stair_up_enter_dz: 0.28
-    stair_down_enter_slope: 0.18
-    stair_down_enter_dz: 0.35
-    stair_exit_slope: 0.05
-    stair_exit_dz: 0.10
-    stair_enter_hold_time: 0.5
-    stair_exit_hold_time: 2.0
-    stair_min_state_duration: 5.0
+    # Rebuild the static route from the current base_link pose when the robot
+    # leaves the old route by more than this 3D distance.
+    reference_rebuild_distance: 2.0
+    # Rebuild after the robot moves this far backwards along the accepted route.
+    # Set to 0.0 to disable backwards-progress detection.
+    reference_rebuild_backtrack_distance: 0.6

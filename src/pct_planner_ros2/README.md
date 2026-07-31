@@ -70,7 +70,7 @@ PCT C++/pybind 动态库路径
 ```bash
 cd /mnt/nvme/workspace/fast_lio_ws
 source ./source_m20_nav.sh
-colcon build --packages-select pct_planner_ros2
+colcon build --packages-up-to pct_planner_ros2
 source ./source_m20_nav.sh
 ```
 
@@ -154,6 +154,15 @@ traversable_cost_max: 45.0  # 与 pct_a_star_cost_threshold 保持一致
 
 `path_ground_offset` 是优化路径相对 tomogram 地形表面的目标高度，单位为米。当前值
 `0.10` 让路径贴近楼梯和平面；坐标转换不会再额外叠加旧版固定的 `0.5m` 高度。
+高度平滑被限制在该目标高度下方 `0.05m`、上方 `0.20m` 的走廊内，不能再为了平滑跨层
+漂到空中。局部规划匹配起点楼层时使用 `base_link.z - robot_ground_offset`；参考路径给出的
+layer 只作为 hint，当前 XY 没有有效地面或高度不匹配时会重新匹配，不再从
+`height=-100` 的无效层开始搜索。
+
+GPMP 输出发布前还会检查有限值、地图范围、相邻 XY/Z 跳变、单点反折和贴地误差。普通
+平地及短楼梯段继续使用平滑结果；如果 GPMP 数值发散，本次已经成功的 3D A* 路径会作为
+贴地降级结果发布，而不是把飞出地图或局部回折的轨迹交给 DWB。规划日志中的
+`max_xy_step`、`max_turn` 和 `a_star_fallback` 可用于确认是否触发了该保护。
 
 当前推荐直接启动：
 
@@ -196,7 +205,7 @@ tomogram_visual_cost_max = 45.0
 
 `global_path_perception_min_range=0.15` 与当前 `pointcloud_to_laserscan.range_min` 对齐，只负责过滤雷达无法可靠测量的近距数据，不是机器人碰撞半径。PCT 不再额外剔除机器人 footprint 或某个自清除半径内的有限回波；`global_path_perception_inscribed_radius=0.45` 只负责在每个有效障碍点周围建立 A* 不可进入的圆形硬核心。不要再把 `min_range` 调到 `0.45`，否则障碍突然靠近狗头时会形成真实的感知盲区。
 
-规划器保留一条不含动态障碍的静态参考路径。定周期更新时，以 `local_replan_forward_distance` 选择基础局部段，并额外带入 `1.0m` 静态参考重叠段共同优化。优化器使用重叠段末端的参考切线作为终点方向，并把终点位置精确放回参考路径后再拼接静态后缀，从而避免接缝尖角。A* 左右搜索范围不受参考路径走廊限制；动态观测也不会按参考路径走廊二次裁剪。
+规划器保留一条不含动态障碍的静态参考路径。定周期更新时，以 `local_replan_forward_distance` 选择基础局部段，并额外带入 `local_replan_join_extension` 指定的静态参考重叠段共同优化。优化器使用重叠段末端的参考切线作为终点方向，并把终点位置精确放回参考路径后再拼接静态后缀，从而避免接缝尖角。A* 左右搜索范围不受参考路径走廊限制；动态观测也不会按参考路径走廊二次裁剪。
 
 单独调试时启用：
 
@@ -223,36 +232,64 @@ global_path_perception_raytrace_max_rays = 360       # 每次最多处理的清�
 global_path_perception_height_tolerance = 0.75       # 同一物理表面的重叠 layer 高度容差
 global_path_perception_mark_all_layers = false       # 不跨不同楼层写入动态障碍
 local_replan_enabled = true                          # 修复当前位置到前方局部段并平滑衔接
-local_replan_forward_distance = 10.0                 # 基础前视；内部再优化 1.0m 重叠段
+local_replan_forward_distance = 10.0                 # 基础前视
+local_replan_join_extension = 2.0                    # 额外参与优化的参考重叠段
 ```
 
-完整 M20 导航 launch 会覆盖为 `global_path_perception_width=8.0`、`global_path_perception_height=8.0`、scan topic `/scan`、`min_range=0.15`、`inflation_radius=1.0`、`inscribed_radius=0.45`、`cost_scaling_factor=5.0`、`persistence=5.0`。该窗口以机器人为中心覆盖前后、左右各约 `4m`。局部修复使用 `10.0m` 基础前视和内部 `1.0m` 衔接重叠段，A* 不限制左右搜索范围。楼梯模式关闭 PCT 动态层，因此原始 scan 中的台阶不会写入 PCT。
+完整 M20 导航 launch 会覆盖为 `global_path_perception_width=8.0`、`global_path_perception_height=8.0`、scan topic `/scan`、`min_range=0.15`、`inflation_radius=1.0`、`inscribed_radius=0.45`、`cost_scaling_factor=5.0`、`persistence=5.0`。该窗口以机器人为中心覆盖前后、左右各约 `4m`。局部修复使用 `10.0m` 基础前视和内部 `2.0m` 衔接重叠段，A* 不限制左右搜索范围。PCT 不再判断楼梯；统一 `/navigation_mode` 会在静态路径前方 `5m` 出现楼梯时关闭动态层，因此原始 scan 中的台阶不会写入 PCT。
 
-动态层变化只更新 C++ 临时代价层，不单独立即触发重规划。动态层默认按 `global_path_perception_update_interval=0.2s`（5 Hz）吸收 `/scan`，主导航默认 `always_replan=true`，所以局部前缀按 `replan_interval=1.0s`（1 Hz）定周期刷新；最终目标未变时不会重新规划整张地图。动态观测仍由 `global_path_perception_width/height` 限制在机器人近场，但不再按参考路径走廊二次裁剪。LaserScan 默认写当前物理表面对应的等高 PCT layers。楼梯状态独立于本周期动态规划结果刷新：每个定时周期先在静态参考路径上匹配当前位置最近的剩余路径点，再从该点沿路径向前统计楼梯前视距离。即使动态局部修补失败，楼梯 guard 仍可清空并关闭 PCT 动态层，状态保持时间也能继续累计；确认前方为楼梯后则发布剩余静态参考路径作为 fallback。该机制仍要求此前已成功生成与当前目标对应的静态参考路径，不会在无参考路径时根据起终点直线猜测楼梯。
+动态层变化只更新 C++ 临时代价层，不单独立即触发重规划。动态层默认按 `global_path_perception_update_interval=0.2s`（5 Hz）吸收 `/scan`，主导航默认 `always_replan=true`，所以局部前缀按 `replan_interval=1.0s`（1 Hz）定周期刷新；最终目标未变时不会重新规划整张地图。动态观测仍由 `global_path_perception_width/height` 限制在机器人近场，但不再按参考路径走廊二次裁剪。LaserScan 默认写当前物理表面对应的等高 PCT layers。
 
-### 楼梯状态与规划失败降级
+### 静态参考路径、地形状态与降级
 
-楼梯判断只使用不含动态障碍的静态参考路径，不使用每周期变化的动态修补路径。每个规划定时周期先在尚未走完的参考路径中匹配距离机器人最近的路径点，再严格从这个点沿路径向前累计距离；不会在截取后的路径中仅按 XY 再匹配一次。这样可避免楼梯折返或上下层 XY 接近时跳到其他路径段，并且楼梯状态更新不再依赖本周期是否成功发布动态路径。
+PCT 只负责两类规划结果：
 
-当前 M20 参数将“提前保护”和“正式状态”分开：
+- `/pct/reference_path`：不含动态障碍，使用 transient-local QoS。目标变化、机器人在三维空间
+  离开旧路线超过 `reference_rebuild_distance`，或沿旧路线倒退超过
+  `reference_rebuild_backtrack_distance` 时，会从当前 `base_link` 到原目标重新生成并重置
+  路径进度。
+- `/pct_path`：从机器人当前位置到静态参考后缀的动态局部修补结果，按规划周期更新。
+
+PCT 节点不再包含楼梯斜率阈值、状态防抖、costmap 或步态切换逻辑。独立
+`terrain_state_estimator` 将机器人投影到 `/pct/reference_path`，在最多 `1.5m` 的局部
+窗口内搜索上下楼证据，并把间隔不超过 `3.0m` 的同方向楼梯段连同中间平台合并为一个
+稳定区域。它发布 `/terrain/state`，内容包括当前地形、前方地形、入口/出口沿路径距离和
+route id。
+
+正常行进时路线投影保持单调，避免路径交叉位置误跳到已经经过的路段。如果机器人倒退、
+bag 回放重置位置或控制回到旧路段，局部单调投影超过
+`terrain_projection_max_distance=2.0m` 后，地形估计器会在整条静态参考路径上重新捕获
+最近点。PCT 同时独立检查旧路线：离路超过 `2.0m` 或沿路线倒退超过 `0.6m` 时，静态
+重规划不使用动态障碍，因此不会形成
+`UNKNOWN -> 动态层保持开启 -> 楼梯入口被阻塞 -> 无新路径` 的循环。
+
+`navigation_mode_manager` 再把同一个地形事实翻译成不同执行距离：
 
 ```text
-stair_dynamic_guard_lookahead = 5.0   # 立即保护，不等待状态防抖
-stair_lookahead = 3.0                 # 正式 stair_up/stair_down 判断范围
-stair_enter_hold_time = 0.5           # 正式进入状态前的连续确认时间
-stair_min_state_duration = 5.0        # 进入后最短保持时间
-stair_exit_hold_time = 2.0            # 确认平地后的连续退出时间
+5.0m  关闭 PCT 动态感知
+3.0m  请求切换步态
+3.0m  开启 pure pursuit 楼梯转角保护
+4.0m  local costmap 切到 traversability
+4.0m  RL scan 切到 traversability filtered scan
 ```
 
-静态路径前方 `5m` 出现楼梯证据时，guard 会立即清空并关闭 PCT 动态感知，避免动态 scan 在楼梯入口阻塞全局规划。进入 `3m` 正式判断范围并满足 `0.5s` 防抖后，节点发布 `/pct_stair_state`，由步态管理器和状态感知的 local costmap 使用。动态局部修补失败时，guard 和正式状态仍会继续更新；如果 guard 已确认前方是楼梯，则发布从当前最近参考点开始的剩余静态路径作为 fallback。平地动态规划失败时不会使用该 fallback，避免绕过真实动态障碍。
+各消费者只读取 `/navigation_mode` 中属于自己的字段，不再分别订阅并解释字符串状态。
+地形消息短暂中断时保持最后一次有效策略，不会自动切回平地。
+静态路径成功后仍可能出现 `TerrainState.UNKNOWN`：状态估计还需要
+`map -> base_link` TF，并且机器人到整条静态路径的最近三维距离不能超过
+`terrain_projection_max_distance=2.0m`。排查时查看 `/terrain/state.reason`，不要只看
+`current_mode`。
 
-该降级机制以已经成功生成、且目标仍一致的静态参考路径为前提。若首次静态规划本身失败，没有可靠路径可以推断楼梯方向，也不会用起点到终点的空间直线猜测楼梯状态。
+动态局部修补失败时，只有 `/navigation_mode` 已经关闭 PCT 动态感知或机器人当前处于楼梯
+区域，才允许发布从当前位置最近参考点开始的静态后缀。平地动态规划失败时不会使用该
+fallback，避免忽略真实动态障碍。若首次静态规划本身失败，则没有可靠参考路径，也不会用
+起点到终点的直线猜测地形。
 
 因为全局路径感知更新改在 PCT C++/pybind core 内，修改后需要重新构建 core：
 
 ```bash
 ./src/pct_planner_ros2/scripts/build_pct_core.sh
-colcon build --packages-select pct_planner_ros2
+colcon build --packages-up-to pct_planner_ros2
 ```
 
 RViz 中使用 `Interact` 工具拖动：

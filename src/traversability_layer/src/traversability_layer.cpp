@@ -50,7 +50,8 @@ void TraversabilityLayer::onInitialize()
     "filtered_scan_topic", rclcpp::ParameterValue(std::string("/traversability_filtered_scan")));
   declareParameter("filtered_scan_min_cost", rclcpp::ParameterValue(128.0));
   declareParameter("state_aware_mode_enabled", rclcpp::ParameterValue(true));
-  declareParameter("stair_state_topic", rclcpp::ParameterValue(std::string("/pct_stair_state")));
+  declareParameter(
+    "navigation_mode_topic", rclcpp::ParameterValue(std::string("/navigation_mode")));
   declareParameter("cell_resolution", rclcpp::ParameterValue(0.0));
   declareParameter("num_threads", rclcpp::ParameterValue(0));
   declareParameter("voxel_z_resolution", rclcpp::ParameterValue(0.1));
@@ -93,7 +94,7 @@ void TraversabilityLayer::onInitialize()
   node->get_parameter(name_ + ".filtered_scan_topic", filtered_scan_topic_);
   node->get_parameter(name_ + ".filtered_scan_min_cost", filtered_scan_min_cost_);
   node->get_parameter(name_ + ".state_aware_mode_enabled", state_aware_mode_enabled_);
-  node->get_parameter(name_ + ".stair_state_topic", stair_state_topic_);
+  node->get_parameter(name_ + ".navigation_mode_topic", navigation_mode_topic_);
   node->get_parameter(name_ + ".cell_resolution", cell_resolution_);
   node->get_parameter(name_ + ".num_threads", num_threads_);
   node->get_parameter(name_ + ".voxel_z_resolution", voxel_z_resolution_);
@@ -109,8 +110,8 @@ void TraversabilityLayer::onInitialize()
   node->get_parameter(name_ + ".ground_fill_radius", ground_fill_radius_);
   node->get_parameter(name_ + ".ground_fill_height", ground_fill_height_);
 
-  desired_stair_mode_.store(!state_aware_mode_enabled_);
-  active_stair_mode_ = !state_aware_mode_enabled_;
+  desired_traversability_profile_.store(!state_aware_mode_enabled_);
+  active_traversability_profile_ = !state_aware_mode_enabled_;
 
   if (num_threads_ > 0) {
     omp_set_num_threads(num_threads_);
@@ -135,7 +136,7 @@ void TraversabilityLayer::onInitialize()
     "ground_hit_thr=%d, free_space_thr=%d, free_space_win=%d, "
     "interp_radius=%d, min_interp=%d, obstacle_ratio_thr=%.2f, obstacle_hit_thr=%d, num_threads=%d, "
     "obs_persistence=%d(ticks), skip_frames=%d, persist_cost=%d, trust_interp=%d, "
-    "filtered_scan=%d input=%s output=%s min_cost=%.1f, state_aware=%d state_topic=%s",
+    "filtered_scan=%d input=%s output=%s min_cost=%.1f, state_aware=%d mode_topic=%s",
     step_height_threshold_, max_slope_traversable_ * 180.0 / M_PI,
     slope_cost_start_ * 180.0 / M_PI, pointcloud_topic_.c_str(),
     sensor_frame_.c_str(), base_frame_.c_str(),
@@ -147,7 +148,7 @@ void TraversabilityLayer::onInitialize()
     static_cast<int>(persist_cost_), static_cast<int>(trust_interpolated_ground_),
     static_cast<int>(publish_filtered_scan_), filtered_scan_input_topic_.c_str(),
     filtered_scan_topic_.c_str(), filtered_scan_min_cost_,
-    static_cast<int>(state_aware_mode_enabled_), stair_state_topic_.c_str());
+    static_cast<int>(state_aware_mode_enabled_), navigation_mode_topic_.c_str());
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -494,11 +495,6 @@ void TraversabilityLayer::filteredScanCallback(
     return;
   }
 
-  if (state_aware_mode_enabled_ && !desired_stair_mode_.load()) {
-    filtered_scan_pub_->publish(*msg);
-    return;
-  }
-
   sensor_msgs::msg::LaserScan filtered = *msg;
   const std::string scan_frame =
     msg->header.frame_id.empty() ? base_frame_ : msg->header.frame_id;
@@ -567,22 +563,29 @@ void TraversabilityLayer::filteredScanCallback(
     msg->ranges.size(), kept, removed, invalid, scan_frame.c_str());
 }
 
-void TraversabilityLayer::stairStateCallback(const std_msgs::msg::String::SharedPtr msg)
+void TraversabilityLayer::navigationModeCallback(
+  const m20_navigation_msgs::msg::NavigationMode::SharedPtr msg)
 {
   if (!state_aware_mode_enabled_) {
     return;
   }
 
-  if (msg->data == "flat") {
-    desired_stair_mode_.store(false);
-  } else if (msg->data == "stair_up" || msg->data == "stair_down") {
-    desired_stair_mode_.store(true);
+  if (msg->costmap_profile ==
+    m20_navigation_msgs::msg::NavigationMode::PROFILE_FLAT)
+  {
+    desired_traversability_profile_.store(false);
+  } else if (
+    msg->costmap_profile ==
+    m20_navigation_msgs::msg::NavigationMode::PROFILE_STAIR)
+  {
+    desired_traversability_profile_.store(true);
   } else {
     auto node = node_.lock();
     if (node) {
       RCLCPP_WARN_THROTTLE(
         node->get_logger(), *node->get_clock(), 2000,
-        "TraversabilityLayer ignored unknown stair state '%s'", msg->data.c_str());
+        "TraversabilityLayer ignored unknown costmap profile '%u'",
+        static_cast<unsigned int>(msg->costmap_profile));
     }
   }
 }
@@ -590,31 +593,35 @@ void TraversabilityLayer::stairStateCallback(const std_msgs::msg::String::Shared
 void TraversabilityLayer::applyPendingMode()
 {
   if (!state_aware_mode_enabled_ || !flat_obstacle_layer_) {
-    active_stair_mode_ = true;
+    active_traversability_profile_ = true;
     return;
   }
 
-  const bool requested_stair_mode = desired_stair_mode_.load();
-  if (requested_stair_mode != active_stair_mode_) {
+  const bool requested_traversability_profile =
+    desired_traversability_profile_.load();
+  if (requested_traversability_profile != active_traversability_profile_) {
     if (flat_obstacle_active_) {
       flat_obstacle_layer_->deactivate();
       flat_obstacle_active_ = false;
     }
     flat_obstacle_layer_->reset();
-    active_stair_mode_ = requested_stair_mode;
+    active_traversability_profile_ = requested_traversability_profile;
 
     auto node = node_.lock();
     if (node) {
       RCLCPP_INFO(
         node->get_logger(), "TraversabilityLayer switched to %s mode",
-        active_stair_mode_ ? "stair traversability" : "flat obstacle");
+        active_traversability_profile_ ? "stair traversability" : "flat obstacle");
     }
   }
 
-  if (!active_stair_mode_ && lifecycle_active_ && !flat_obstacle_active_) {
+  if (
+    !active_traversability_profile_ && lifecycle_active_ &&
+    !flat_obstacle_active_)
+  {
     flat_obstacle_layer_->activate();
     flat_obstacle_active_ = true;
-  } else if (active_stair_mode_ && flat_obstacle_active_) {
+  } else if (active_traversability_profile_ && flat_obstacle_active_) {
     flat_obstacle_layer_->deactivate();
     flat_obstacle_layer_->reset();
     flat_obstacle_active_ = false;
@@ -646,11 +653,11 @@ void TraversabilityLayer::createSubscriptions()
   }
 
   if (state_aware_mode_enabled_) {
-    rclcpp::QoS state_qos(rclcpp::KeepLast(1));
-    state_qos.reliable().transient_local();
-    stair_state_sub_ = node->create_subscription<std_msgs::msg::String>(
-      stair_state_topic_, state_qos,
-      std::bind(&TraversabilityLayer::stairStateCallback, this, std::placeholders::_1),
+    rclcpp::QoS mode_qos(rclcpp::KeepLast(1));
+    mode_qos.reliable().transient_local();
+    mode_sub_ = node->create_subscription<m20_navigation_msgs::msg::NavigationMode>(
+      navigation_mode_topic_, mode_qos,
+      std::bind(&TraversabilityLayer::navigationModeCallback, this, std::placeholders::_1),
       options);
   }
 }
@@ -1646,7 +1653,10 @@ void TraversabilityLayer::updateBounds(
     *max_y = std::max(*max_y, oy + sy * res);
   }
 
-  if (state_aware_mode_enabled_ && !active_stair_mode_ && flat_obstacle_layer_) {
+  if (
+    state_aware_mode_enabled_ && !active_traversability_profile_ &&
+    flat_obstacle_layer_)
+  {
     flat_obstacle_layer_->updateBounds(
       robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
     current_ = flat_obstacle_layer_->isCurrent();
@@ -1661,7 +1671,10 @@ void TraversabilityLayer::updateCosts(
     return;
   }
 
-  if (state_aware_mode_enabled_ && !active_stair_mode_ && flat_obstacle_layer_) {
+  if (
+    state_aware_mode_enabled_ && !active_traversability_profile_ &&
+    flat_obstacle_layer_)
+  {
     flat_obstacle_layer_->updateCosts(master_grid, min_i, min_j, max_i, max_j);
     current_ = flat_obstacle_layer_->isCurrent();
     return;
@@ -1952,7 +1965,7 @@ void TraversabilityLayer::deactivate()
   slope_pub_.reset();
   filtered_scan_sub_.reset();
   filtered_scan_pub_.reset();
-  stair_state_sub_.reset();
+  mode_sub_.reset();
 }
 
 }  // namespace traversability_layer

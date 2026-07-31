@@ -10,6 +10,7 @@
 
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>interactive_markers</exec_depend>
+  <exec_depend>m20_navigation_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>ament_index_python</exec_depend>

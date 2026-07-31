@@ -1,5 +1,6 @@
 #include "trajectory_optimization/height_smoother/height_smoother.h"
 
+#include <algorithm>
 #include <iostream>
 
 #include "common/smoothing/osqp_spline1d_solver.h"
@@ -19,8 +20,14 @@ Eigen::VectorXd HeightSmoother::Smooth(const Eigen::VectorXd& coarse_height,
   }
 
   for (int i = 0; i < coarse_height.size(); ++i) {
-    lbs.emplace_back(-1.0);
-    ubs.emplace_back(std::max(-1.0, upper_bound(i) - 0.3));
+    // Smooth the terrain profile without allowing the trajectory to cut below
+    // the surface or float far above it. coarse_height already includes the
+    // configured path-to-ground offset.
+    const double lower = coarse_height(i) - 0.05;
+    const double terrain_upper = coarse_height(i) + 0.20;
+    const double ceiling_upper = upper_bound(i) - 0.3;
+    lbs.emplace_back(lower);
+    ubs.emplace_back(std::max(lower, std::min(terrain_upper, ceiling_upper)));
     refs.emplace_back(coarse_height(i));
     ts.emplace_back(i * dt);
   }

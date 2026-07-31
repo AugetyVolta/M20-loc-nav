@@ -283,12 +283,11 @@ class TomogramPlanner(object):
         """
         best_layer = None
         best_key = None
-        grid_idx = self.pos2idx(np.array([x, y])).astype(int)
+        row, col, in_bounds = self._grid_cell(x, y)
+        if not in_bounds:
+            return None
 
         for layer_idx in range(self.n_slice):
-            height, width = self.tomogram[0][layer_idx].shape
-            row = np.clip(grid_idx[1], 0, height - 1)
-            col = np.clip(grid_idx[0], 0, width - 1)
             exact_height = float(self.layer_elev_grids[layer_idx][row][col])
             if exact_height <= -99.0 or not np.isfinite(exact_height):
                 continue
@@ -314,21 +313,35 @@ class TomogramPlanner(object):
                 best_key = candidate
                 best_layer = layer_idx
 
-        if best_layer is not None:
-            return best_layer
-        return 0
+        return best_layer
+
+    def _grid_cell(self, x, y):
+        grid_idx = self.pos2idx(np.array([x, y])).astype(int)
+        row = int(grid_idx[1])
+        col = int(grid_idx[0])
+        height, width = self.tomogram[0][0].shape
+        return row, col, 0 <= row < height and 0 <= col < width
 
     def get_layer_cost_info(self, layer_idx, x, y):
-        grid_idx = self.pos2idx(np.array([x, y])).astype(int)
-        dim_x, dim_y = self.tomogram[0][layer_idx].shape
-        row = int(np.clip(grid_idx[1], 0, dim_x - 1))
-        col = int(np.clip(grid_idx[0], 0, dim_y - 1))
+        layer = int(layer_idx)
+        row, col, in_bounds = self._grid_cell(x, y)
+        valid_layer = 0 <= layer < self.n_slice
+        if not in_bounds or not valid_layer:
+            return {
+                "layer": layer,
+                "row": row,
+                "col": col,
+                "in_bounds": False,
+                "cost": float("inf"),
+                "height": -100.0,
+            }
         return {
-            "layer": int(layer_idx),
+            "layer": layer,
             "row": row,
             "col": col,
-            "cost": float(self.tomogram[0][layer_idx][row][col]),
-            "height": float(self.layer_elev_grids[layer_idx][row][col]),
+            "in_bounds": True,
+            "cost": float(self.tomogram[0][layer][row][col]),
+            "height": float(self.layer_elev_grids[layer][row][col]),
         }
 
     def resolve_layer(self, x, y, target_height, layer_hint=None):
@@ -339,7 +352,132 @@ class TomogramPlanner(object):
             raise ValueError(
                 f"Layer hint {layer} is outside valid range [0, {self.n_slice - 1}]"
             )
-        return layer
+        info = self.get_layer_cost_info(layer, x, y)
+        exact_height = info["height"]
+        if (
+            info["in_bounds"]
+            and np.isfinite(exact_height)
+            and exact_height > -99.0
+            and abs(exact_height - target_height) <= self.layer_match_height_tolerance
+        ):
+            return layer
+        return self.match_best_layer(x, y, target_height)
+
+    def _astar_trajectory(self, path):
+        path = np.asarray(path, dtype=np.float32)
+        if path.ndim != 2 or path.shape[0] < 2 or path.shape[1] < 3:
+            return None, None
+
+        layers = np.rint(path[:, 0]).astype(np.int32)
+        rows = np.rint(path[:, 1]).astype(np.int32)
+        cols = np.rint(path[:, 2]).astype(np.int32)
+        height, width = self.tomogram[0][0].shape
+        valid = (
+            (layers >= 0)
+            & (layers < self.n_slice)
+            & (rows >= 0)
+            & (rows < height)
+            & (cols >= 0)
+            & (cols < width)
+        )
+        if not np.all(valid):
+            return None, None
+
+        ground = self.layer_elev_grids[layers, rows, cols]
+        if np.any(~np.isfinite(ground)) or np.any(ground <= -99.0):
+            return None, None
+
+        traj_grid = np.stack(
+            [
+                cols.astype(np.float32),
+                rows.astype(np.float32),
+                (ground + self.path_ground_offset) / self.resolution,
+            ],
+            axis=1,
+        )
+        return (
+            transTrajGrid2Map(
+                self.map_dim,
+                self.center,
+                self.resolution,
+                traj_grid,
+            ),
+            layers,
+        )
+
+    def _path_geometry(self, traj_3d, layers, expected_surface=None):
+        traj = np.asarray(traj_3d, dtype=np.float32)
+        layers = np.asarray(layers, dtype=np.int32).reshape((-1,))
+        metrics = {
+            "max_xy_step": 0.0,
+            "max_z_step": 0.0,
+            "max_turn_deg": 0.0,
+            "max_surface_error": 0.0,
+        }
+        if (
+            traj.ndim != 2
+            or traj.shape[0] < 2
+            or traj.shape[1] < 3
+            or len(layers) != len(traj)
+        ):
+            return metrics, "invalid_shape"
+        if not np.all(np.isfinite(traj[:, :3])):
+            return metrics, "non_finite_point"
+
+        deltas = np.diff(traj[:, :3], axis=0)
+        xy_steps = np.linalg.norm(deltas[:, :2], axis=1)
+        metrics["max_xy_step"] = float(np.max(xy_steps))
+        metrics["max_z_step"] = float(np.max(np.abs(deltas[:, 2])))
+
+        valid_segments = xy_steps > 0.05
+        if np.count_nonzero(valid_segments) >= 2:
+            unit = np.zeros_like(deltas[:, :2])
+            unit[valid_segments] = (
+                deltas[valid_segments, :2] / xy_steps[valid_segments, None]
+            )
+            adjacent = valid_segments[:-1] & valid_segments[1:]
+            if np.any(adjacent):
+                dots = np.sum(unit[:-1] * unit[1:], axis=1)
+                turns = np.degrees(np.arccos(np.clip(dots[adjacent], -1.0, 1.0)))
+                metrics["max_turn_deg"] = float(np.max(turns))
+
+        surface_errors = []
+        if expected_surface is not None:
+            expected_surface = np.asarray(expected_surface, dtype=np.float32).reshape((-1,))
+            if (
+                len(expected_surface) != len(traj)
+                or np.any(~np.isfinite(expected_surface))
+                or np.any(expected_surface <= -99.0)
+            ):
+                return metrics, "invalid_surface"
+            surface_errors = np.abs(traj[:, 2] - expected_surface).tolist()
+        else:
+            for waypoint, layer in zip(traj, layers):
+                info = self.get_layer_cost_info(
+                    int(layer),
+                    float(waypoint[0]),
+                    float(waypoint[1]),
+                )
+                ground = info["height"]
+                if (
+                    not info["in_bounds"]
+                    or not np.isfinite(ground)
+                    or ground <= -99.0
+                ):
+                    return metrics, "invalid_surface"
+                expected_height = ground + self.path_ground_offset
+                surface_errors.append(abs(float(waypoint[2]) - expected_height))
+        metrics["max_surface_error"] = float(max(surface_errors))
+
+        if metrics["max_xy_step"] > max(0.75, 4.0 * self.resolution):
+            return metrics, "xy_step"
+        if metrics["max_z_step"] > 0.50:
+            return metrics, "z_step"
+        if metrics["max_turn_deg"] > 150.0:
+            return metrics, "path_reversal"
+        if metrics["max_surface_error"] > 0.25:
+            return metrics, "surface_error"
+        return metrics, None
         
     def initPlanner(self, trav, trav_gx, trav_gy, elev_g, elev_c):
         diff_t = trav[1:] - trav[:-1]
@@ -393,6 +531,14 @@ class TomogramPlanner(object):
             if start_height_hint is None
             else float(start_height_hint)
         )
+        self.last_plan_info = {
+            "a_star_cost_threshold": float(self.a_star_cost_threshold),
+            "safe_cost_margin": float(self.safe_cost_margin),
+            "step_cost_weight": float(self.step_cost_weight),
+            "start_layer_hint": None if start_layer_hint is None else int(start_layer_hint),
+            "goal_layer_hint": None if end_layer_hint is None else int(end_layer_hint),
+            "start_match_height": start_match_height,
+        }
         start_layer = self.resolve_layer(
             start_pos[0],
             start_pos[1],
@@ -405,20 +551,23 @@ class TomogramPlanner(object):
             end_pos[2],
             layer_hint=end_layer_hint,
         )
+        if start_layer is None or end_layer is None:
+            self.last_plan_info["failure_reason"] = (
+                "start_layer_unavailable"
+                if start_layer is None
+                else "goal_layer_unavailable"
+            )
+            return None
         self.start_idx[1:] = self.pos2idx(start_pos[:2])
         self.end_idx[1:] = self.pos2idx(end_pos[:2])
         self.start_idx[0] = start_layer
         self.end_idx[0] = end_layer
-        self.last_plan_info = {
+        self.last_plan_info.update({
             "start": self.get_layer_cost_info(start_layer, start_pos[0], start_pos[1]),
             "goal": self.get_layer_cost_info(end_layer, end_pos[0], end_pos[1]),
-            "a_star_cost_threshold": float(self.a_star_cost_threshold),
-            "safe_cost_margin": float(self.safe_cost_margin),
-            "step_cost_weight": float(self.step_cost_weight),
-            "start_layer_hint": None if start_layer_hint is None else int(start_layer_hint),
-            "goal_layer_hint": None if end_layer_hint is None else int(end_layer_hint),
-            "start_match_height": start_match_height,
-        }
+            "resolved_start_layer": int(start_layer),
+            "resolved_goal_layer": int(end_layer),
+        })
     
 
         self.planner.set_global_path_perception_enabled(bool(use_dynamic))
@@ -446,7 +595,7 @@ class TomogramPlanner(object):
         if not plan_success:
             return None
         path_finder: a_star.Astar = self.planner.get_path_finder()
-        path = path_finder.get_result_matrix()
+        path = np.asarray(path_finder.get_result_matrix(), dtype=np.float32)
         if len(path) == 0:
             return None
 
@@ -467,10 +616,65 @@ class TomogramPlanner(object):
         opt_init = np.concatenate([opt_init.transpose(1, 0), init_layer.reshape(-1, 1)], axis=-1)
         traj = np.concatenate([traj_raw, layers.reshape(-1, 1)], axis=-1)
         y_idx = (traj.shape[-1] - 1) // 2
+        layer_indices = np.rint(layers).astype(np.int32)
+        surface_rows = np.trunc(traj[:, y_idx]).astype(np.int32)
+        surface_cols = np.trunc(traj[:, 0]).astype(np.int32)
+        surface_height, surface_width = self.tomogram[0][0].shape
+        valid_surface = (
+            (layer_indices >= 0)
+            & (layer_indices < self.n_slice)
+            & (surface_rows >= 0)
+            & (surface_rows < surface_height)
+            & (surface_cols >= 0)
+            & (surface_cols < surface_width)
+        )
+        expected_surface = None
+        if np.all(valid_surface):
+            expected_surface = (
+                self.layer_elev_grids[
+                    layer_indices,
+                    surface_rows,
+                    surface_cols,
+                ]
+                + self.path_ground_offset
+            )
         traj_3d = np.stack([traj[:, 0], traj[:, y_idx], heights / self.resolution], axis=1)
         traj_3d = transTrajGrid2Map(self.map_dim, self.center, self.resolution, traj_3d)
         if goal_heading is not None and len(traj_3d) > 0:
             traj_3d[-1, :3] = np.asarray(end_pos[:3], dtype=traj_3d.dtype)
+
+        layers = layer_indices
+        geometry, geometry_issue = self._path_geometry(
+            traj_3d,
+            layers,
+            expected_surface=expected_surface,
+        )
+        self.last_plan_info["path_geometry"] = geometry
+        if geometry_issue is not None:
+            fallback, fallback_layers = self._astar_trajectory(path)
+            if fallback is None:
+                self.last_plan_info["failure_reason"] = (
+                    f"optimized_path_{geometry_issue}_and_a_star_fallback_unavailable"
+                )
+                return None
+            if goal_heading is not None:
+                fallback[-1, :3] = np.asarray(end_pos[:3], dtype=fallback.dtype)
+            fallback_geometry, fallback_issue = self._path_geometry(
+                fallback,
+                fallback_layers,
+            )
+            if fallback_issue is not None:
+                self.last_plan_info["failure_reason"] = (
+                    f"a_star_fallback_{fallback_issue}"
+                )
+                self.last_plan_info["fallback_path_geometry"] = fallback_geometry
+                return None
+            self.last_plan_info["optimized_path_rejected"] = geometry_issue
+            self.last_plan_info["optimized_path_geometry"] = geometry
+            self.last_plan_info["used_a_star_fallback"] = True
+            self.last_plan_info["path_geometry"] = fallback_geometry
+            traj_3d = fallback
+            layers = fallback_layers
 
         if use_dynamic and len(traj_3d) > 0:
             sampled_points = [traj_3d[0]]
@@ -497,7 +701,7 @@ class TomogramPlanner(object):
                 self.last_plan_info["dynamic_collision_rejected"] = True
                 return None
 
-        self.last_traj_layers = np.rint(layers).astype(np.int32)
+        self.last_traj_layers = np.asarray(layers, dtype=np.int32)
         return traj_3d
     
 
