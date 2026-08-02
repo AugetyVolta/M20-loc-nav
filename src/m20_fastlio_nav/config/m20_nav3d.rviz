@@ -336,7 +336,7 @@ Visualization Manager:
       Enabled: true
       Name: Controller
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
+      Enabled: true
       Name: Waypoints
       Namespaces:
         {}
@@ -346,16 +346,25 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /waypoints
-      Value: false
+      Value: true
     - Class: rviz_default_plugins/InteractiveMarkers
       Enable Transparency: true
       Enabled: true
+      Interactive Markers Namespace: /waypoint_editor
+      Name: PCT Waypoint Queue
+      Show Axes: true
+      Show Descriptions: true
+      Show Visual Aids: true
+      Value: true
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Enable Transparency: true
+      Enabled: false
       Interactive Markers Namespace: /basic_controls
       Name: PCT Goal Editor
       Show Axes: false
       Show Descriptions: true
       Show Visual Aids: false
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/InteractiveMarkers
       Enable Transparency: true
       Enabled: true
@@ -454,9 +463,9 @@ Visualization Manager:
     Frame Rate: 30
   Name: root
   Tools:
-    - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Interact
       Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/FocusCamera
     - Class: rviz_default_plugins/Measure

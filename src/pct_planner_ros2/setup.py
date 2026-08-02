@@ -14,6 +14,7 @@ def collect_pct_core_data_files():
             os.path.join(root, name)
             for name in files
             if not name.endswith((".pyc", ".pyo"))
+            and os.path.isfile(os.path.join(root, name))
         ]
         if selected:
             data_files.append((os.path.join("share", package_name, root), selected))

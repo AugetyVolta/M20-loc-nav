@@ -29,6 +29,7 @@ def generate_launch_description():
     start_pure_pursuit = LaunchConfiguration("start_pure_pursuit")
     start_rl_local_path = LaunchConfiguration("start_rl_local_path")
     start_adapter = LaunchConfiguration("start_adapter")
+    start_pct_waypoints = LaunchConfiguration("start_pct_waypoints")
     scan_topic = LaunchConfiguration("scan_topic")
     rl_scan_topic = LaunchConfiguration("rl_scan_topic")
     body_scan_min_height = LaunchConfiguration("body_scan_min_height")
@@ -55,6 +56,11 @@ def generate_launch_description():
     pct_layer_match_height_tolerance = LaunchConfiguration("pct_layer_match_height_tolerance")
     pct_robot_ground_offset = LaunchConfiguration("pct_robot_ground_offset")
     pct_use_interactive_markers = LaunchConfiguration("pct_use_interactive_markers")
+    pct_clicked_point_topic = LaunchConfiguration("pct_clicked_point_topic")
+    pct_waypoint_replan_period = LaunchConfiguration("pct_waypoint_replan_period")
+    pct_waypoint_goal_tolerance = LaunchConfiguration("pct_waypoint_goal_tolerance")
+    pct_waypoint_edit_radius = LaunchConfiguration("pct_waypoint_edit_radius")
+    pct_waypoint_marker_z_offset = LaunchConfiguration("pct_waypoint_marker_z_offset")
     pct_global_path_perception_enabled = LaunchConfiguration("pct_global_path_perception_enabled")
     pct_global_path_perception_scan_topic = LaunchConfiguration("pct_global_path_perception_scan_topic")
     pct_global_path_perception_min_range = LaunchConfiguration(
@@ -219,6 +225,13 @@ def generate_launch_description():
             "robot_frame": "base_link",
             "odom_frame": "odom_body",
             "path_target_frame": "odom_body",
+            "clicked_point_topic": "/clicked_point",
+            "waypoint_goal_topic": "/goal_pose",
+            "waypoint_robot_ground_offset": pct_robot_ground_offset,
+            "waypoint_replan_period": pct_waypoint_replan_period,
+            "waypoint_goal_tolerance": pct_waypoint_goal_tolerance,
+            "waypoint_edit_radius": pct_waypoint_edit_radius,
+            "waypoint_marker_z_offset": pct_waypoint_marker_z_offset,
             "odom_topic": output_odom_topic,
             "scan_topic": rl_scan_topic,
             "global_plan_use_3d": "true",
@@ -234,6 +247,53 @@ def generate_launch_description():
             "turn_guard_min_lookahead": turn_guard_min_lookahead,
             "turn_guard_pre_distance": turn_guard_pre_distance,
         }.items(),
+    )
+
+    waypoint_editor = Node(
+        condition=IfCondition(start_pct_waypoints),
+        package="move",
+        executable="global_path_seq_publisher",
+        name="global_path_sequence_publisher",
+        output="screen",
+        respawn=True,
+        respawn_delay=2.0,
+        parameters=[
+            {
+                "use_sim_time": ParameterValue(use_sim_time, value_type=bool),
+                "use_static_goals": False,
+                "clicked_point_topic": "/clicked_point",
+                "delete_clicked_point_topic": "/waypoint_sequence/delete_nearest",
+                "replace_clicked_point_topic": "/waypoint_sequence/replace_nearest",
+                "status_topic": "/waypoint_sequence/status",
+                "waypoints_topic": "/waypoints",
+                "waypoints_pose_topic": "/waypoints_pose_array",
+                "global_frame": "map",
+                "robot_frame": "base_link",
+                "replan_period": ParameterValue(
+                    pct_waypoint_replan_period,
+                    value_type=float,
+                ),
+                "goal_tolerance": ParameterValue(
+                    pct_waypoint_goal_tolerance,
+                    value_type=float,
+                ),
+                "edit_radius": ParameterValue(
+                    pct_waypoint_edit_radius,
+                    value_type=float,
+                ),
+                "enable_interactive_markers": True,
+                "interactive_marker_namespace": "waypoint_editor",
+                "goal_topic": "/goal_pose",
+                "robot_ground_offset": ParameterValue(
+                    pct_robot_ground_offset,
+                    value_type=float,
+                ),
+                "marker_z_offset": ParameterValue(
+                    pct_waypoint_marker_z_offset,
+                    value_type=float,
+                ),
+            }
+        ],
     )
 
     nav2_group = GroupAction(
@@ -254,6 +314,8 @@ def generate_launch_description():
                         executable="pct_planner_node",
                         name="pct_planner_node",
                         output="screen",
+                        respawn=True,
+                        respawn_delay=2.0,
                         parameters=[
                             pct_config_file,
                             {
@@ -268,6 +330,9 @@ def generate_launch_description():
                                 "odom_topic": output_odom_topic,
                                 "global_frame": "map",
                                 "robot_frame": "base_link",
+                                "goal_pose_topic": "/goal_pose",
+                                "clicked_point_topic": pct_clicked_point_topic,
+                                "wait_for_goal": True,
                                 "replan_interval": ParameterValue(pct_replan_interval, value_type=float),
                                 "always_replan": ParameterValue(pct_always_replan, value_type=bool),
                                 "a_star_cost_threshold": ParameterValue(
@@ -565,6 +630,7 @@ def generate_launch_description():
             DeclareLaunchArgument("start_pure_pursuit", default_value="true"),
             DeclareLaunchArgument("start_rl_local_path", default_value="true"),
             DeclareLaunchArgument("start_adapter", default_value="true"),
+            DeclareLaunchArgument("start_pct_waypoints", default_value="true"),
             DeclareLaunchArgument("global_path_topic", default_value="/pct_path"),
             # Raw scan generated from Fast-LIO cloud, retained for RViz and A/B comparison.
             DeclareLaunchArgument("scan_topic", default_value="/scan"),
@@ -594,7 +660,16 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_step_cost_weight", default_value="1.0"),
             DeclareLaunchArgument("pct_layer_match_height_tolerance", default_value="1.2"),
             DeclareLaunchArgument("pct_robot_ground_offset", default_value="0.45"),
-            DeclareLaunchArgument("pct_use_interactive_markers", default_value="true"),
+            DeclareLaunchArgument("pct_use_interactive_markers", default_value="false"),
+            DeclareLaunchArgument(
+                "pct_clicked_point_topic",
+                default_value="/pct_direct_clicked_point",
+                description="Direct PCT click input; kept separate from the waypoint queue.",
+            ),
+            DeclareLaunchArgument("pct_waypoint_replan_period", default_value="0.2"),
+            DeclareLaunchArgument("pct_waypoint_goal_tolerance", default_value="1.0"),
+            DeclareLaunchArgument("pct_waypoint_edit_radius", default_value="1.0"),
+            DeclareLaunchArgument("pct_waypoint_marker_z_offset", default_value="0.2"),
             DeclareLaunchArgument("pct_global_path_perception_enabled", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_scan_topic", default_value="/scan"),
             DeclareLaunchArgument("pct_global_path_perception_min_range", default_value="0.15"),
@@ -663,6 +738,7 @@ def generate_launch_description():
                     [EnvironmentVariable("HOME"), "venv", "m20_nav", "bin", "python"]
                 ),
             ),
+            waypoint_editor,
             localization,
             nav2_group,
             terrain_mode_group,

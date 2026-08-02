@@ -13,6 +13,7 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -43,6 +44,9 @@ def generate_launch_description():
     waypoint_edit_radius = LaunchConfiguration("waypoint_edit_radius")
     waypoint_enable_interactive_markers = LaunchConfiguration("waypoint_enable_interactive_markers")
     waypoint_interactive_marker_ns = LaunchConfiguration("waypoint_interactive_marker_ns")
+    waypoint_goal_topic = LaunchConfiguration("waypoint_goal_topic")
+    waypoint_robot_ground_offset = LaunchConfiguration("waypoint_robot_ground_offset")
+    waypoint_marker_z_offset = LaunchConfiguration("waypoint_marker_z_offset")
 
     global_frame = LaunchConfiguration("global_frame")
     robot_frame = LaunchConfiguration("robot_frame")
@@ -98,9 +102,6 @@ def generate_launch_description():
                 "delete_clicked_point_topic": waypoint_delete_topic,
                 "replace_clicked_point_topic": waypoint_replace_topic,
                 "status_topic": waypoint_status_topic,
-                "path_topic": global_path_topic,
-                "publish_pure_pursuit_plan": True,
-                "pure_pursuit_plan_topic": pure_pursuit_plan_topic,
                 "waypoints_topic": waypoints_topic,
                 "waypoints_pose_topic": waypoints_pose_topic,
                 "global_frame": global_frame,
@@ -110,6 +111,11 @@ def generate_launch_description():
                 "edit_radius": waypoint_edit_radius,
                 "enable_interactive_markers": waypoint_enable_interactive_markers,
                 "interactive_marker_namespace": waypoint_interactive_marker_ns,
+                "goal_topic": waypoint_goal_topic,
+                "robot_ground_offset": ParameterValue(
+                    waypoint_robot_ground_offset, value_type=float
+                ),
+                "marker_z_offset": ParameterValue(waypoint_marker_z_offset, value_type=float),
             }
         ],
     )
@@ -273,11 +279,14 @@ def generate_launch_description():
             DeclareLaunchArgument("waypoint_status_topic", default_value="/waypoint_sequence/status"),
             DeclareLaunchArgument("waypoints_topic", default_value="waypoints"),
             DeclareLaunchArgument("waypoints_pose_topic", default_value="waypoints_pose_array"),
-            DeclareLaunchArgument("waypoint_replan_period", default_value="2.0"),
-            DeclareLaunchArgument("waypoint_goal_tolerance", default_value="1.5"),
+            DeclareLaunchArgument("waypoint_replan_period", default_value="0.2"),
+            DeclareLaunchArgument("waypoint_goal_tolerance", default_value="1.0"),
             DeclareLaunchArgument("waypoint_edit_radius", default_value="1.5"),
             DeclareLaunchArgument("waypoint_enable_interactive_markers", default_value="true"),
             DeclareLaunchArgument("waypoint_interactive_marker_ns", default_value="waypoint_editor"),
+            DeclareLaunchArgument("waypoint_goal_topic", default_value="/goal_pose"),
+            DeclareLaunchArgument("waypoint_robot_ground_offset", default_value="0.0"),
+            DeclareLaunchArgument("waypoint_marker_z_offset", default_value="0.0"),
             DeclareLaunchArgument("global_frame", default_value="map"),
             DeclareLaunchArgument("robot_frame", default_value="base_link"),
             DeclareLaunchArgument("odom_frame", default_value="odom_body"),

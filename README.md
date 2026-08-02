@@ -340,7 +340,11 @@ gyr_cov: 0.2
 | `fastlio_frontend` | `fast_lio` | Fast-LIO 前端包名；可切到 `fast_lio_map` 做 A/B 测试 |
 | `global_path_topic` | `/pct_path` | pure pursuit 和 RL local path 使用的全局路径 |
 | `start_pct_planner` | `true` | 默认随主导航启动 PCT planner |
+| `start_pct_waypoints` | `true` | 启动三维路径点队列；RViz `/clicked_point` 会依次追加目标，而不是直接覆盖当前终点 |
 | `pct_start_source` | `tf` | PCT 起点默认来自 TF `map -> base_link`，会随机器人位置更新 |
+| `pct_waypoint_goal_tolerance` | `1.0` | `base_link` 投影到地面后与当前三维路径点的到达距离；进入该范围后切换到下一点 |
+| `pct_waypoint_replan_period` | `0.2` | 每 0.2 秒检查是否到达当前路径点；切换后立即发布下一个 `/goal_pose`，不改变 PCT 全局路径的重规划周期 |
+| `pct_waypoint_marker_z_offset` | `0.2` | 只抬高 RViz 路径点球体，发布给 PCT 的实际目标高度不变 |
 | `pct_replan_interval` | `1.0` | 每 1 秒检查是否需要重规划 |
 | `pct_always_replan` | `true` | 主导航默认按 `pct_replan_interval` 定周期更新 `/pct_path`；动态感知只更新代价层，不单独触发即时重规划 |
 | `pct_global_path_perception_enabled` | `true` | PCT 动态感知总开关；实际启停由 `/navigation_mode.pct_dynamic_enabled` 控制 |
@@ -489,31 +493,59 @@ pure pursuit 的前视距离在 `src/move/move/pure_pursuit.py` 中默认是 `1.
 
 adapter 向 Nav2 发送 `FollowPath` 使用异步 action。若发送期间收到更新的 `/local_path`，已经被 controller 接受的旧 goal 不会立即取消；它会持续到下一次发送周期由新路径接管，避免中间插入零速度。只有 local path 被清空或超过 `adapter_path_timeout` 才会取消当前 goal。
 
-## 发布终点
+## 发布多个三维路径点
 
-主导航默认已经启动 PCT planner，不需要再单独启动 `m20_pct_rviz.launch.py`。PCT 起点默认来自 TF `map -> base_link`，所以全局路径会从机器人真实 `base_link` 位置开始；默认每 `1.0s` 从最新机器人位置重新规划并更新 `/pct_path`。
+主导航默认同时启动 PCT planner 和三维路径点队列，不需要再单独启动 `m20_pct_rviz.launch.py`。路径点编辑器在主 launch 启动后立即运行，不再等待 11 秒后的 external navigation；因此可以在定位和 PCT 尚未就绪时先添加目标，队列会保留当前点并定期重发 `/goal_pose`。主 launch 尚未启动时没有节点订阅 `/clicked_point`，此时点击仍不会被保存。PCT 起点来自 TF `map -> base_link`，全局路径会从机器人当前位置开始；首次收到路径点前 PCT 不会使用 YAML 中的占位终点规划。
 
-RViz 里推荐两种方式：
+在 RViz 选择 `Publish Point`，按行驶顺序连续点击多个位置。每次点击都会把完整 `x/y/z` 追加到队列，只有当前路径点发布到 `/goal_pose`；PCT 到达当前点后自动切换下一点并重新生成 `/pct_path`。
 
 ```text
-Publish Point 工具：在地图上点一下，发布到 /clicked_point，作为 PCT 终点。
-Interact 工具：拖动 PCT Goal Editor 里的 end_pos marker。
+深蓝色球：当前目标，样式与原 PCT end_pos 目标球一致
+浅蓝色球：等待执行的后续目标
+绿色球：已经通过的目标
 ```
 
-`Waypoint Editors` 是旧的手工 waypoint 序列工具，对当前 PCT 全局规划链路没有作用，主 RViz 默认已经关闭。
+RViz 的默认工具是 `Interact`。使用 `Publish Point` 单击添加目标后会回到交互模式；也可以手动选择工具栏的 `Interact`。左键拖动蓝色球体可在 XY 平面修改位置，X/Y/Z 轴可做单轴调整，松开后立即重发当前 `/goal_pose`；右键同一个蓝色球体可选择 `Delete this waypoint` 或 `Clear all waypoints`。即使目标不可达、PCT 没有生成路径，目标球和编辑控件也会保留。`/waypoints` 只显示路径点编号，不绘制点间连线或直线距离；完整 PoseArray 发布到 `/waypoints_pose_array`，状态发布到 `/waypoint_sequence/status`。
 
-命令行发布终点：
+清空或撤销最后一个路径点：
+
+```bash
+ros2 topic pub --once /waypoint_sequence/clear std_msgs/msg/Empty '{}'
+ros2 topic pub --once /waypoint_sequence/undo std_msgs/msg/Empty '{}'
+```
+
+默认三维到达阈值是 `1.0m`。计算距离时会从 `base_link.z` 减去 `pct_robot_ground_offset=0.45m`，再与点击位置的地面高度比较，避免上下楼时只按平面距离过早切换。
+
+Building 8 已保存一组从 RViz 读取的三维初始位姿和三个有序目标点。导航启动后可直接恢复，不需要重新拖动 marker；该命令会先清空当前 waypoint 队列：
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws
+./scripts/publish_building8_route.sh
+```
+
+关闭路径点队列进行单终点调试时，可以直接发布：
 
 ```bash
 ros2 topic pub --once /pct_goal_point geometry_msgs/msg/PointStamped \
 "{header: {frame_id: map}, point: {x: 5.0, y: 0.0, z: 0.5}}"
 ```
 
-如果用 RViz 的 `Nav2 Goal` 工具，也可以发到 `/goal_pose`；PCT planner 会读取 pose 的位置作为终点：
+也可以发布 `/goal_pose`：
 
 ```bash
 ros2 topic pub --once /goal_pose geometry_msgs/msg/PoseStamped \
 "{header: {frame_id: map}, pose: {position: {x: 5.0, y: 0.0, z: 0.5}, orientation: {w: 1.0}}}"
+```
+
+临时恢复旧的单终点点击方式时，先关闭队列，否则队列会定期重新发布它的当前点：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  start_pct_waypoints:=false \
+  pct_clicked_point_topic:=/clicked_point \
+  pct_use_interactive_markers:=true \
+  map_pcd:="${M20_MAP_PCD}" \
+  rviz:=true
 ```
 
 检查是否出全局路径：

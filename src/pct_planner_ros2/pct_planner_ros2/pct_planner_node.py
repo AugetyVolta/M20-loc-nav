@@ -15,6 +15,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profi
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
+from std_msgs.msg import Empty
 from visualization_msgs.msg import InteractiveMarker, InteractiveMarkerControl, Marker
 
 from .pct_paths import (
@@ -41,6 +42,7 @@ class PctPlannerNode(Node):
         self.declare_parameter("global_frame", "map")
         self.declare_parameter("robot_frame", "base_link")
         self.declare_parameter("goal_pose_topic", "/goal_pose")
+        self.declare_parameter("cancel_goal_topic", "/pct/cancel_goal")
         self.declare_parameter("clicked_point_topic", "/clicked_point")
         self.declare_parameter("start_point_topic", "/pct_start_point")
         self.declare_parameter("goal_point_topic", "/pct_goal_point")
@@ -52,6 +54,7 @@ class PctPlannerNode(Node):
         self.declare_parameter("replan_interval", 1.0)
         self.declare_parameter("auto_plan", True)
         self.declare_parameter("always_replan", True)
+        self.declare_parameter("wait_for_goal", False)
         self.declare_parameter("a_star_cost_threshold", 20.0)
         self.declare_parameter("safe_cost_margin", 15.0)
         self.declare_parameter("step_cost_weight", 1.0)
@@ -97,6 +100,7 @@ class PctPlannerNode(Node):
         self.marker_z_offset = float(self.get_parameter("marker_z_offset").value)
         self.auto_plan = bool(self.get_parameter("auto_plan").value)
         self.always_replan = bool(self.get_parameter("always_replan").value)
+        self.goal_received = not bool(self.get_parameter("wait_for_goal").value)
         self.global_path_perception_enabled = bool(self.get_parameter("global_path_perception_enabled").value)
         self.global_path_perception_min_range = float(self.get_parameter("global_path_perception_min_range").value)
         self.global_path_perception_width = max(0.0, float(self.get_parameter("global_path_perception_width").value))
@@ -203,7 +207,10 @@ class PctPlannerNode(Node):
             path_qos,
         )
         self.tf_buffer = tf2_ros.Buffer(node=self)
-        self.tf_listener_node = rclpy.create_node(f"{self.get_name()}_tf_listener")
+        self.tf_listener_node = rclpy.create_node(
+            f"{self.get_name()}_tf_listener",
+            use_global_arguments=False,
+        )
         self.tf_listener = tf2_ros.TransformListener(
             self.tf_buffer,
             self.tf_listener_node,
@@ -225,6 +232,12 @@ class PctPlannerNode(Node):
             PoseStamped,
             self.get_parameter("goal_pose_topic").value,
             self._on_goal_pose,
+            10,
+        )
+        self.create_subscription(
+            Empty,
+            self.get_parameter("cancel_goal_topic").value,
+            self._on_cancel_goal,
             10,
         )
         self.create_subscription(
@@ -374,6 +387,8 @@ class PctPlannerNode(Node):
 
     def _timer_cb(self):
         if not self.auto_plan or self.planning:
+            return
+        if not self.goal_received:
             return
         if not self._update_start_from_tf():
             return
@@ -1350,7 +1365,25 @@ class PctPlannerNode(Node):
     def _on_goal_pose(self, msg):
         position = msg.pose.position
         self.goal_pos = np.array([position.x, position.y, position.z], dtype=np.float32)
+        self.goal_received = True
         self._sync_marker_pose("end_pos", self.goal_pos)
+
+    def _on_cancel_goal(self, _msg):
+        self.goal_received = False
+        self.last_planned_start = None
+        self.last_planned_goal = None
+        self.reference_path = None
+        self.reference_layers = None
+        self.reference_arc = None
+        self.reference_goal = None
+        self.reference_progress_index = 0
+
+        empty = Path()
+        empty.header.frame_id = self.frame_id
+        empty.header.stamp = self.get_clock().now().to_msg()
+        self.path_pub.publish(empty)
+        self.reference_path_pub.publish(empty)
+        self.get_logger().info("Cancelled active PCT goal and cleared published paths")
 
     def _on_clicked_point(self, msg):
         point = msg.point
@@ -1370,6 +1403,7 @@ class PctPlannerNode(Node):
 
     def _set_goal_point(self, point):
         self.goal_pos = np.array([point.x, point.y, point.z], dtype=np.float32)
+        self.goal_received = True
         self._sync_marker_pose("end_pos", self.goal_pos)
 
     def _init_interactive_markers(self):
@@ -1399,6 +1433,7 @@ class PctPlannerNode(Node):
             self.start_pos = actual
         elif feedback.marker_name == "end_pos":
             self.goal_pos = actual
+            self.goal_received = True
 
     def _make_box(self):
         marker = Marker()
