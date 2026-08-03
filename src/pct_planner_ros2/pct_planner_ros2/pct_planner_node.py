@@ -1364,7 +1364,11 @@ class PctPlannerNode(Node):
 
     def _on_goal_pose(self, msg):
         position = msg.pose.position
-        self.goal_pos = np.array([position.x, position.y, position.z], dtype=np.float32)
+        goal_pos = np.array([position.x, position.y, position.z], dtype=np.float32)
+        goal_changed = not self.goal_received or self._position_differs(goal_pos, self.goal_pos)
+        if goal_changed:
+            self._publish_empty_paths()
+        self.goal_pos = goal_pos
         self.goal_received = True
         self._sync_marker_pose("end_pos", self.goal_pos)
 
@@ -1378,12 +1382,15 @@ class PctPlannerNode(Node):
         self.reference_goal = None
         self.reference_progress_index = 0
 
+        self._publish_empty_paths()
+        self.get_logger().info("Cancelled active PCT goal and cleared published paths")
+
+    def _publish_empty_paths(self):
         empty = Path()
         empty.header.frame_id = self.frame_id
         empty.header.stamp = self.get_clock().now().to_msg()
         self.path_pub.publish(empty)
         self.reference_path_pub.publish(empty)
-        self.get_logger().info("Cancelled active PCT goal and cleared published paths")
 
     def _on_clicked_point(self, msg):
         point = msg.point

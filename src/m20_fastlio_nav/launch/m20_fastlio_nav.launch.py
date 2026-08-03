@@ -641,7 +641,7 @@ def generate_launch_description():
             DeclareLaunchArgument("heading_change_guard_stair_only", default_value="true"),
             DeclareLaunchArgument("max_heading_change_deg", default_value="35.0"),
             DeclareLaunchArgument("turn_guard_min_lookahead", default_value="0.6"),
-            DeclareLaunchArgument("turn_guard_pre_distance", default_value="0.7"),
+            DeclareLaunchArgument("turn_guard_pre_distance", default_value="0.6"),
             DeclareLaunchArgument("adapter_path_timeout", default_value="1.2"),
             DeclareLaunchArgument("body_scan_min_height", default_value="-0.1"),
             DeclareLaunchArgument("body_scan_max_height", default_value="0.8"),

@@ -269,6 +269,10 @@ class GlobalPathSequencePublisher(Node):
             self._mark_interactive_markers_dirty()
             self._publish_current_goal()
             self._publish_visualization()
+            self._publish_status(
+                f"reached waypoint {self.current_index}/{len(self.waypoints)}; "
+                "stopped old path and requested the next plan"
+            )
             return True
 
         if self.loop:
@@ -276,13 +280,14 @@ class GlobalPathSequencePublisher(Node):
             self._mark_interactive_markers_dirty()
             self._publish_current_goal()
             self._publish_visualization()
+            self._publish_status("loop restarted; stopped old path and requested waypoint 1")
             return True
 
-        # Leave the final PCT path active so DWB can converge to the exact goal.
+        self._cancel_goal()
         self.sequence_done = True
         self._mark_interactive_markers_dirty()
         self._publish_visualization()
-        self._publish_status("sequence completed; final PCT path remains active")
+        self._publish_status("sequence completed; paths cleared and navigation stopped")
         return True
 
     def _on_clicked_point(self, msg: PointStamped):

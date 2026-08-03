@@ -265,7 +265,7 @@ source ./source_m20_nav.sh
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   start_livox:=false \
   map_pcd:="${M20_MAP_PCD}" \
-  rviz:=true
+  rviz:=true turn_guard_pre_distance:=0.6
 ```
 
 上下楼梯步态切换默认开启。需要临时关闭时，加：

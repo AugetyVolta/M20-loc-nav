@@ -1,4 +1,5 @@
 import numpy as np
+from geometry_msgs.msg import PoseStamped
 
 from pct_planner_ros2.pct_planner_node import PctPlannerNode
 
@@ -41,3 +42,40 @@ def test_reference_path_rebuilds_when_robot_leaves_route():
     reason = node._reference_path_rebuild_reason()
 
     assert reason.startswith("route_departure:")
+
+
+def test_changed_goal_clears_old_paths_before_replanning():
+    cleared = []
+    synced = []
+    node = PctPlannerNode.__new__(PctPlannerNode)
+    node.goal_received = True
+    node.goal_pos = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    node._publish_empty_paths = lambda: cleared.append(True)
+    node._sync_marker_pose = lambda name, position: synced.append((name, position.copy()))
+    goal = PoseStamped()
+    goal.pose.position.x = 4.0
+    goal.pose.position.y = 5.0
+    goal.pose.position.z = 6.0
+
+    node._on_goal_pose(goal)
+
+    assert cleared == [True]
+    np.testing.assert_allclose(node.goal_pos, [4.0, 5.0, 6.0])
+    assert synced[0][0] == "end_pos"
+
+
+def test_repeated_goal_does_not_interrupt_active_path():
+    cleared = []
+    node = PctPlannerNode.__new__(PctPlannerNode)
+    node.goal_received = True
+    node.goal_pos = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    node._publish_empty_paths = lambda: cleared.append(True)
+    node._sync_marker_pose = lambda _name, _position: None
+    goal = PoseStamped()
+    goal.pose.position.x = 1.0
+    goal.pose.position.y = 2.0
+    goal.pose.position.z = 3.0
+
+    node._on_goal_pose(goal)
+
+    assert cleared == []

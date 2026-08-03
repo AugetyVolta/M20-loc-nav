@@ -230,9 +230,16 @@ class PriestMppiAdapterNavCmd(Node):
         self.mppi_path_pub.publish(empty)
 
     def _on_cmd_vel(self, msg: Twist):
+        if not self._follow_path_active():
+            self.latest_cmd_vel = Twist()
+            self.latest_cmd_time = None
+            return
         self.latest_cmd_vel = msg
         self.latest_cmd_time = self.get_clock().now()
         self._cmd_timeout_active = False
+
+    def _follow_path_active(self):
+        return self.latest_path is not None and self._active_goal_handle is not None
 
     def _on_pause_nav_cmd(self, msg: Bool):
         if msg.data:
@@ -419,7 +426,11 @@ class PriestMppiAdapterNavCmd(Node):
             self._publish_nav_cmd(0.0, 0.0, 0.0)
             return
 
-        if self.localization_ready and self.latest_cmd_time is not None:
+        if (
+            self.localization_ready
+            and self._follow_path_active()
+            and self.latest_cmd_time is not None
+        ):
             age = (self.get_clock().now() - self.latest_cmd_time).nanoseconds * 1e-9
             if age <= self.cmd_timeout:
                 x_vel = clamp_abs(self.latest_cmd_vel.linear.x * self.scale_x, self.max_x_vel)

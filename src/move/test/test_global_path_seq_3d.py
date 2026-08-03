@@ -49,6 +49,7 @@ def test_apply_transform_preserves_3d_height_and_rotation():
 
 def test_reached_waypoint_advances_to_next_3d_goal():
     published = []
+    statuses = []
     harness = SimpleNamespace(
         waypoints=[Waypoint(1.0, 2.0, 0.5), Waypoint(4.0, 5.0, 2.5)],
         current_index=0,
@@ -59,7 +60,7 @@ def test_reached_waypoint_advances_to_next_3d_goal():
         _current_goal_distance=lambda: 0.2,
         _publish_current_goal=lambda: published.append("goal"),
         _publish_visualization=lambda: None,
-        _publish_status=lambda _detail=None: None,
+        _publish_status=lambda detail=None: statuses.append(detail),
         get_logger=lambda: _Logger(),
     )
     harness._mark_interactive_markers_dirty = lambda: setattr(
@@ -73,6 +74,32 @@ def test_reached_waypoint_advances_to_next_3d_goal():
     assert harness.sequence_done is False
     assert harness._interactive_markers_dirty is True
     assert published == ["goal"]
+    assert "stopped old path and requested the next plan" in statuses[-1]
+
+
+def test_final_waypoint_clears_paths_and_stops_navigation():
+    cancelled = []
+    statuses = []
+    harness = SimpleNamespace(
+        waypoints=[Waypoint(1.0, 2.0, 0.5)],
+        current_index=0,
+        goal_tolerance=0.8,
+        loop=False,
+        sequence_done=False,
+        _current_goal_distance=lambda: 0.2,
+        _cancel_goal=lambda: cancelled.append("cancel"),
+        _publish_visualization=lambda: None,
+        _publish_status=lambda detail=None: statuses.append(detail),
+        get_logger=lambda: _Logger(),
+    )
+    harness._mark_interactive_markers_dirty = lambda: None
+
+    reached = GlobalPathSequencePublisher._advance_if_reached(harness)
+
+    assert reached is True
+    assert harness.sequence_done is True
+    assert cancelled == ["cancel"]
+    assert statuses[-1] == "sequence completed; paths cleared and navigation stopped"
 
 
 def test_normal_waypoint_display_does_not_cover_interactive_sphere():

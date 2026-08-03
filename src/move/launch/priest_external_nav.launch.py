@@ -310,7 +310,7 @@ def generate_launch_description():
             DeclareLaunchArgument("navigation_mode_topic", default_value="/navigation_mode"),
             DeclareLaunchArgument("max_heading_change_deg", default_value="35.0"),
             DeclareLaunchArgument("turn_guard_min_lookahead", default_value="0.6"),
-            DeclareLaunchArgument("turn_guard_pre_distance", default_value="0.7"),
+            DeclareLaunchArgument("turn_guard_pre_distance", default_value="0.6"),
             DeclareLaunchArgument("device", default_value="cuda"),
             DeclareLaunchArgument("require_localization_confidence", default_value="false"),
             DeclareLaunchArgument("adapter_goal_send_hz", default_value="3.0"),
