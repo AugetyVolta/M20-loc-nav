@@ -136,6 +136,82 @@ ${PCT_PLANNER_ROOT}/rsc/tomogram/m20_3d_map.surface.pcd
 ros2 run pct_planner_ros2 pct_export_tomogram_surface m20_3d_map
 ```
 
+## 编辑 Tomogram 静态障碍
+
+玻璃门、玻璃墙等结构可能在建图 PCD 和 tomogram 中缺失。此时动态 scan 不一定持续可见，
+应该把它作为静态虚拟墙写入 tomogram，而不是依靠路径稳定参数掩盖反复换路。
+
+启动独立编辑器：
+
+```bash
+cd /mnt/nvme/workspace/fast_lio_ws
+source ./source_m20_nav.sh
+ros2 launch pct_planner_ros2 m20_tomogram_editor.launch.py \
+  tomogram_file:=m20_3d_map \
+  output_tomogram_name:=m20_3d_map_edited \
+  pcd_file:="/mnt/nvme/workspace/fast_lio_ws/maps/fastlio/m20_3d_map.pcd"
+```
+
+在 RViz 工具栏选择 `Publish Point`，在玻璃门两端各点一次。每两个点生成一段虚拟墙：
+
+- 红色区域是硬障碍，默认宽度 `0.30m`、代价 `50`，PCT A* 阈值 `45`，因此不可穿越。
+- 橙色区域是默认 `0.50m` 的软膨胀区，代价按 `cost_scaling_factor=5.0` 指数衰减。
+- 点击 Z 会自动吸附到附近最近的 tomogram 地面，只修改该高度附近的楼层，不会封住
+  其他楼层相同 XY 的通道。
+- 可以连续画多段，适合用折线补完整玻璃墙。编辑器不会改写输入 pickle。
+
+撤销、清空和保存：
+
+```bash
+ros2 service call /pct_tomogram_editor/undo std_srvs/srv/Trigger "{}"
+ros2 service call /pct_tomogram_editor/clear std_srvs/srv/Trigger "{}"
+ros2 service call /pct_tomogram_editor/save std_srvs/srv/Trigger "{}"
+```
+
+保存会原子写入三个新文件：
+
+```text
+m20_3d_map_edited.pickle      PCT A* 和优化器使用，包含重新计算的 X/Y 代价梯度
+m20_3d_map_edited.surface.pcd tomogram_filter_layer 使用的 XYZ + cost 表面
+m20_3d_map_edited.edits.yaml  虚拟墙端点和参数记录，便于复查
+```
+
+当前工作空间使用 `--symlink-install`，并且 `m20_3d_map_edited` 的
+`install -> build -> src` 软链接已经建立。后续继续编辑并保存这个同名地图时，重启导航
+即可读取新内容，不需要重新编译。只有改用一个从未编译安装过的全新
+`output_tomogram_name` 时，才需要执行一次：
+
+```bash
+colcon build --symlink-install --packages-select pct_planner_ros2
+```
+
+导航切换到编辑版：
+
+```bash
+ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
+  map_pcd:="${M20_MAP_PCD}" \
+  pct_tomogram_file:=m20_3d_map_edited \
+  rviz:=true
+```
+
+如果 local costmap 启用了 `tomogram_filter_layer`，还必须把
+`src/m20_fastlio_nav/config/nav2_dwb_body_plane.yaml` 中的 `tomogram_surface_file`
+同步改为 `m20_3d_map_edited.surface.pcd`。否则 PCT 使用编辑图，而 scan 过滤仍使用旧图。
+
+编辑参数可在启动时覆盖：
+
+```bash
+wall_width:=0.30
+inflation_radius:=0.50
+cost_scaling_factor:=5.0
+barrier_cost:=50.0
+layer_height_tolerance:=0.75
+surface_snap_radius:=0.50
+```
+
+`wall_width` 是玻璃实体的硬阻挡宽度，`inflation_radius` 是硬墙外侧的安全距离；
+`layer_height_tolerance` 只控制虚拟墙写入哪些高度层，不是墙的物理高度。
+
 主导航 launch 不会把 tomogram 名称和阈值自动写入 Nav2 参数。修改
 `output_tomogram_name` 或规划时的 `pct_tomogram_file` 后，还要手动修改
 `src/m20_fastlio_nav/config/nav2_dwb_body_plane.yaml`：
@@ -383,6 +459,12 @@ rviz2
 /tomogram        PCT tomogram 可视化
 /pct_path        规划路径
 ```
+
+### m20_tomogram_editor.launch.py
+
+用途：在原始 PCD 上用 RViz `Publish Point` 绘制静态虚拟墙，预览编辑后的 tomogram，
+并另存 `.pickle`、`.surface.pcd` 和 `.edits.yaml`。该 launch 不启动规划器，也不会修改
+导航运行中的动态障碍层。
 
 ### tomography.launch.py
 

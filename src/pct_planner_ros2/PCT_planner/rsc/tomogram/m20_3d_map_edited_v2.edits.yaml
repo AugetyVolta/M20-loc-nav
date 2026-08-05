@@ -1,0 +1,39 @@
+{
+  "format": "pct_tomogram_virtual_walls/v1",
+  "source_tomogram": "/mnt/nvme/workspace/fast_lio_ws/src/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map_edited.pickle",
+  "output_tomogram": "/mnt/nvme/workspace/fast_lio_ws/src/pct_planner_ros2/PCT_planner/rsc/tomogram/m20_3d_map_edited_v2.pickle",
+  "frame_id": "map",
+  "parameters": {
+    "wall_width": 0.3,
+    "inflation_radius": 0.5,
+    "cost_scaling_factor": 5.0,
+    "barrier_cost": 50.0,
+    "layer_height_tolerance": 0.75
+  },
+  "walls": [
+    {
+      "start": [
+        43.572898864746094,
+        1.1552205085754395,
+        1.3232421875
+      ],
+      "end": [
+        41.70585250854492,
+        1.1809754371643066,
+        1.30078125
+      ]
+    },
+    {
+      "start": [
+        41.429420471191406,
+        -0.276608943939209,
+        1.3486328125
+      ],
+      "end": [
+        43.609920501708984,
+        -0.3078051805496216,
+        1.35546875
+      ]
+    }
+  ]
+}

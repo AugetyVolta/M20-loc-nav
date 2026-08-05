@@ -208,6 +208,19 @@ source ./source_m20_nav.sh
 ros2 launch pct_planner_ros2 m20_tomography_rviz.launch.py
 ```
 
+玻璃门等在 PCD/tomogram 中缺失的固定障碍，使用独立 tomogram 编辑器补成虚拟墙：
+
+```bash
+ros2 launch pct_planner_ros2 m20_tomogram_editor.launch.py \
+  tomogram_file:=m20_3d_map_edited_v2 \
+  output_tomogram_name:=m20_3d_map_edited_v3
+```
+
+RViz 中每两个 `Publish Point` 生成一段墙，完成后调用
+`/pct_tomogram_editor/save`。详细操作和参数见
+`src/pct_planner_ros2/README.md` 的“编辑 Tomogram 静态障碍”。导航使用编辑版时，
+`pct_tomogram_file` 和 local costmap 的 `tomogram_surface_file` 必须同步切换。
+
 启动 PCT 全局规划，带 PCT 自己的 RViz：
 
 ```bash
@@ -265,7 +278,7 @@ source ./source_m20_nav.sh
 ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
   start_livox:=false \
   map_pcd:="${M20_MAP_PCD}" \
-  rviz:=true turn_guard_pre_distance:=0.6
+  rviz:=true pct_tomogram_file:=m20_3d_map_edited_v3
 ```
 
 上下楼梯步态切换默认开启。需要临时关闭时，加：

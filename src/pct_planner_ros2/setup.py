@@ -43,6 +43,7 @@ setup(
             "pct_planner_node = pct_planner_ros2.pct_planner_node:main",
             "pct_tomography_node = pct_planner_ros2.pct_tomography_node:main",
             "pct_map_viz_node = pct_planner_ros2.pct_map_viz_node:main",
+            "pct_tomogram_editor = pct_planner_ros2.pct_tomogram_editor_node:main",
             "pct_check_env = pct_planner_ros2.check_env:main",
             "pct_export_tomogram_surface = pct_planner_ros2.tomogram_surface:main",
         ],
