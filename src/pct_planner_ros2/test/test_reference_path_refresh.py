@@ -49,6 +49,8 @@ def test_changed_goal_clears_old_paths_before_replanning():
     synced = []
     node = PctPlannerNode.__new__(PctPlannerNode)
     node.goal_received = True
+    node.goal_cancelled = False
+    node.cancelled_goal_pos = None
     node.goal_pos = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     node._publish_empty_paths = lambda: cleared.append(True)
     node._sync_marker_pose = lambda name, position: synced.append((name, position.copy()))
@@ -68,6 +70,8 @@ def test_repeated_goal_does_not_interrupt_active_path():
     cleared = []
     node = PctPlannerNode.__new__(PctPlannerNode)
     node.goal_received = True
+    node.goal_cancelled = False
+    node.cancelled_goal_pos = None
     node.goal_pos = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     node._publish_empty_paths = lambda: cleared.append(True)
     node._sync_marker_pose = lambda _name, _position: None
@@ -79,3 +83,49 @@ def test_repeated_goal_does_not_interrupt_active_path():
     node._on_goal_pose(goal)
 
     assert cleared == []
+
+
+def test_cancelled_goal_cannot_be_reactivated_by_delayed_repeated_goal():
+    cleared = []
+    synced = []
+    node = PctPlannerNode.__new__(PctPlannerNode)
+    node.goal_received = False
+    node.goal_cancelled = True
+    node.goal_pos = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    node.cancelled_goal_pos = node.goal_pos.copy()
+    node._publish_empty_paths = lambda: cleared.append(True)
+    node._sync_marker_pose = lambda name, position: synced.append((name, position.copy()))
+    delayed_goal = PoseStamped()
+    delayed_goal.pose.position.x = 1.0
+    delayed_goal.pose.position.y = 2.0
+    delayed_goal.pose.position.z = 3.0
+
+    node._on_goal_pose(delayed_goal)
+
+    assert node.goal_cancelled is True
+    assert node.goal_received is False
+    assert cleared == []
+    assert synced == []
+
+
+def test_different_goal_releases_cancel_latch():
+    cleared = []
+    node = PctPlannerNode.__new__(PctPlannerNode)
+    node.goal_received = False
+    node.goal_cancelled = True
+    node.goal_pos = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    node.cancelled_goal_pos = node.goal_pos.copy()
+    node._publish_empty_paths = lambda: cleared.append(True)
+    node._sync_marker_pose = lambda _name, _position: None
+    next_goal = PoseStamped()
+    next_goal.pose.position.x = 4.0
+    next_goal.pose.position.y = 5.0
+    next_goal.pose.position.z = 6.0
+
+    node._on_goal_pose(next_goal)
+
+    assert node.goal_cancelled is False
+    assert node.cancelled_goal_pos is None
+    assert node.goal_received is True
+    np.testing.assert_allclose(node.goal_pos, [4.0, 5.0, 6.0])
+    assert cleared == [True]

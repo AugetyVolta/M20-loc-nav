@@ -59,6 +59,7 @@ from rclpy.time import Time as RosTime
 from nav_msgs.msg import Odometry, Path
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import LaserScan, PointCloud
+from std_msgs.msg import Empty
 from visualization_msgs.msg import MarkerArray, Marker
 
 try:
@@ -272,6 +273,8 @@ class RLLocalPlannerNodeROS2(Node):
             global_plan_use_3d=bool(declare_get("global_plan_use_3d", False).bool_value),
             device=str(declare_get("device", "cuda").string_value),
         )
+        self.declare_parameter("navigation_goal_topic", "/goal_pose")
+        self.declare_parameter("navigation_cancel_topic", "/pct/cancel_goal")
 
         self.declare_parameter("model_path", str(DEFAULT_MODEL_PATH))
         self.declare_parameter("agent_cfg_path", str(DEFAULT_AGENT_CFG_PATH))
@@ -325,6 +328,18 @@ class RLLocalPlannerNodeROS2(Node):
             self.sub_scan = None
 
         self.sub_global_plan = self.create_subscription(Path, self.cfg.global_plan_topic, self._on_global_plan, 10)
+        self.sub_navigation_goal = self.create_subscription(
+            PoseStamped,
+            str(self.get_parameter("navigation_goal_topic").value),
+            self._on_navigation_goal,
+            10,
+        )
+        self.sub_navigation_cancel = self.create_subscription(
+            Empty,
+            str(self.get_parameter("navigation_cancel_topic").value),
+            self._on_navigation_cancel,
+            10,
+        )
 
         self.latest_dynamic_raw = None
         if self.priest_cfg.enable:
@@ -373,6 +388,10 @@ class RLLocalPlannerNodeROS2(Node):
         self.latest_scan: Optional[LaserScan] = None
         self.latest_points_pc: Optional[PointCloud] = None
         self.latest_global_plan: Optional[Path] = None
+        self._global_plan_generation = 0
+        self._navigation_cancelled = False
+        self._navigation_goal_position: Optional[np.ndarray] = None
+        self._awaiting_goal_plan = False
 
         self.priest = PriestPlanner(
             num_dynamic_obstacles=self.priest_cfg.num_dynamic_obstacles,
@@ -423,6 +442,11 @@ class RLLocalPlannerNodeROS2(Node):
         self.latest_odom = msg
 
     def _on_subgoal(self, msg: PoseStamped):
+        # A queued Pure Pursuit message can arrive just after the global path
+        # has been cleared. Never let that stale subgoal restart navigation.
+        if not self._global_plan_active():
+            self.subgoal_position = None
+            return
         self.subgoal_position = (msg.pose.position.x, msg.pose.position.y)
 
     def _on_scan(self, msg: LaserScan):
@@ -432,10 +456,75 @@ class RLLocalPlannerNodeROS2(Node):
         self.latest_points_pc = msg
 
     def _on_global_plan(self, msg: Path):
-        self.latest_global_plan = msg
+        self._global_plan_generation += 1
         if len(msg.poses) == 0:
+            self.latest_global_plan = msg
             self.subgoal_position = None
             self._publish_empty_local_paths()
+            return
+        if self._navigation_cancelled:
+            return
+        if self._awaiting_goal_plan:
+            if not self._global_plan_matches_navigation_goal(msg):
+                return
+            self._awaiting_goal_plan = False
+        self.latest_global_plan = msg
+
+    def _global_plan_matches_navigation_goal(self, msg: Path) -> bool:
+        if self._navigation_goal_position is None or len(msg.poses) == 0:
+            return False
+        endpoint = msg.poses[-1].pose.position
+        goal = self._navigation_goal_position
+        xy_error = math.hypot(float(endpoint.x) - goal[0], float(endpoint.y) - goal[1])
+        z_error = abs(float(endpoint.z) - goal[2])
+        return xy_error <= 0.75 and z_error <= 1.0
+
+    def _navigation_goal_changed(self, msg: PoseStamped) -> bool:
+        position = msg.pose.position
+        goal_position = np.asarray(
+            [position.x, position.y, position.z], dtype=np.float64
+        )
+        changed = (
+            self._navigation_goal_position is None
+            or float(np.linalg.norm(goal_position - self._navigation_goal_position))
+            > 1.0e-4
+        )
+        self._navigation_goal_position = goal_position
+        return changed
+
+    def _on_navigation_goal(self, msg: PoseStamped):
+        goal_changed = self._navigation_goal_changed(msg)
+        if not goal_changed:
+            return
+        self._navigation_cancelled = False
+
+        # Stop immediately. A matching PCT path unlocks planning regardless
+        # of whether the empty-path reset arrives before or after this goal.
+        existing_plan = self.latest_global_plan
+        existing_matches = (
+            existing_plan is not None
+            and self._global_plan_matches_navigation_goal(existing_plan)
+        )
+        self._awaiting_goal_plan = not existing_matches
+        self._global_plan_generation += 1
+        self.latest_global_plan = existing_plan if existing_matches else Path()
+        self.subgoal_position = None
+        self._publish_empty_local_paths()
+
+    def _on_navigation_cancel(self, _msg: Empty):
+        self._navigation_cancelled = True
+        self._awaiting_goal_plan = False
+        self._global_plan_generation += 1
+        self.latest_global_plan = Path()
+        self.subgoal_position = None
+        self._publish_empty_local_paths()
+
+    def _global_plan_active(self) -> bool:
+        return (
+            not self._navigation_cancelled
+            and self.latest_global_plan is not None
+            and len(self.latest_global_plan.poses) > 0
+        )
 
     def _publish_empty_local_paths(self):
         empty = Path()
@@ -677,8 +766,19 @@ class RLLocalPlannerNodeROS2(Node):
             self.get_logger().debug("skip: scan is None")
             return
 
+        if not self._global_plan_active():
+            return
+
+        plan_generation = self._global_plan_generation
+
         try:
             path_rl, path_final = self._compute_local_path_and_priest()
+            if (
+                plan_generation != self._global_plan_generation
+                or not self._global_plan_active()
+            ):
+                self._publish_empty_local_paths()
+                return
             if self.pub_local_path_rl and path_rl is not None:
                 self.pub_local_path_rl.publish(path_rl)
             if path_final is not None:

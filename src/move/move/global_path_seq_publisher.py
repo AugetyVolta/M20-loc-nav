@@ -143,6 +143,7 @@ class GlobalPathSequencePublisher(Node):
         self._interactive_markers_dirty = True
         self._interactive_resync_remaining = 0
         self._interactive_drag_active = False
+        self._interactive_drag_origin: Optional[tuple[int, Waypoint]] = None
         self._pending_menu_action: Optional[tuple[str, int]] = None
         self._menu_action_timer = None
 
@@ -717,6 +718,8 @@ class GlobalPathSequencePublisher(Node):
             return
         if feedback.event_type == InteractiveMarkerFeedback.MOUSE_DOWN:
             self._interactive_drag_active = True
+            waypoint = self.waypoints[index]
+            self._interactive_drag_origin = (waypoint.marker_id, waypoint)
             return
         if feedback.event_type not in (
             InteractiveMarkerFeedback.POSE_UPDATE,
@@ -725,6 +728,11 @@ class GlobalPathSequencePublisher(Node):
             return
 
         old = self.waypoints[index]
+        if (
+            feedback.event_type == InteractiveMarkerFeedback.POSE_UPDATE
+            and self._interactive_drag_origin is None
+        ):
+            self._interactive_drag_origin = (old.marker_id, old)
         updated = Waypoint(
             float(feedback.pose.position.x),
             float(feedback.pose.position.y),
@@ -738,6 +746,18 @@ class GlobalPathSequencePublisher(Node):
             self._publish_visualization(sync_interactive=False)
             return
         self._interactive_drag_active = False
+        drag_origin = self._interactive_drag_origin
+        self._interactive_drag_origin = None
+        previous = old
+        if drag_origin is not None and drag_origin[0] == old.marker_id:
+            previous = drag_origin[1]
+        moved_distance = math.sqrt(
+            (updated.x - previous.x) ** 2
+            + (updated.y - previous.y) ** 2
+            + (updated.z - previous.z) ** 2
+        )
+        if moved_distance <= 1.0e-4:
+            return
         self.sequence_done = False
         self._mark_interactive_markers_dirty()
         if index == self.current_index:
@@ -745,7 +765,7 @@ class GlobalPathSequencePublisher(Node):
         self._publish_visualization()
         self._publish_status(
             f"dragged waypoint {index + 1}: "
-            f"({old.x:.2f}, {old.y:.2f}, {old.z:.2f}) -> "
+            f"({previous.x:.2f}, {previous.y:.2f}, {previous.z:.2f}) -> "
             f"({updated.x:.2f}, {updated.y:.2f}, {updated.z:.2f})"
         )
 

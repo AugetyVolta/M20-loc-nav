@@ -23,6 +23,11 @@ bool GPMPOptimizer::GenerateTrajectory(const std::vector<PathPoint>& input_path,
                                        const double T) {
   auto t0 = std::chrono::high_resolution_clock::now();
 
+  if (input_path.size() < 2) {
+    std::cerr << "GPMPOptimizer requires at least two path points" << std::endl;
+    return false;
+  }
+
   Vector6 s_init, s_target;
   s_init << 0.001, 0.1, 1, 0.001, 0.1, 1;
   s_target << 0.001, goal_velocity_sigma_, 1, 0.001,
@@ -202,7 +207,10 @@ void GPMPOptimizer::PathPointToNode(const PathPoint& path_point, Vector6& x) {
 
 void GPMPOptimizer::SubSamplePath(const std::vector<PathPoint>& path,
                                   std::vector<PathPoint>& sub_sampled_path) {
-  assert(path.size() > 1);
+  if (path.size() < 2) {
+    sub_sampled_path.clear();
+    return;
+  }
 
   if (!sub_sampled_path.empty()) {
     sub_sampled_path.clear();

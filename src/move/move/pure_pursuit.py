@@ -81,7 +81,7 @@ class PurePursuitNode(Node):
         self.declare_parameter('navigation_mode_topic', '/navigation_mode')
         self.declare_parameter('max_heading_change_deg', 35.0)
         self.declare_parameter('turn_guard_min_lookahead', 0.6)
-        self.declare_parameter('turn_guard_pre_distance', 0.6)
+        self.declare_parameter('turn_guard_pre_distance', 0.7)
 
         self.lookahead = float(self.get_parameter('lookahead').value)
         self.rate = float(self.get_parameter('rate').value)

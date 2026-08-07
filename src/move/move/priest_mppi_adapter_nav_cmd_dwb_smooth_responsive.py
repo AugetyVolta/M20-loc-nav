@@ -152,6 +152,7 @@ class PriestMppiAdapterNavCmd(Node):
         self._active_goal_seq = -1
         self._pending_goal = False
         self._cancel_requested = False
+        self._path_epoch = 0
         self._last_goal_send_time = None
         self.localization_confidence = 0.0
         self.localization_ready = not self.require_localization_confidence
@@ -188,19 +189,24 @@ class PriestMppiAdapterNavCmd(Node):
 
     def _on_path(self, msg: Path):
         if len(msg.poses) < self.min_path_points:
-            self.latest_path = None
-            self.latest_path_time = None
-            self.latest_path_seq += 1
-            self.last_sent_seq = -1
-            self.latest_cmd_time = None
-            self._publish_nav_cmd(0.0, 0.0, 0.0)
-            self._cancel_active_follow_path("local path cleared")
-            self._publish_empty_mppi_path()
+            self._clear_navigation_state("local path cleared")
             return
         self.latest_path = msg
         self.latest_path_time = self.get_clock().now()
         self.latest_path_seq += 1
         self._cancel_requested = False
+
+    def _clear_navigation_state(self, reason: str):
+        self._path_epoch += 1
+        self.latest_path = None
+        self.latest_path_time = None
+        self.latest_path_seq += 1
+        self.last_sent_seq = -1
+        self.latest_cmd_vel = Twist()
+        self.latest_cmd_time = None
+        self._cmd_timeout_active = False
+        self._cancel_active_follow_path(reason)
+        self._publish_empty_mppi_path()
 
     def _cancel_follow_path_goal_handle(self, goal_handle, reason: str):
         try:
@@ -488,10 +494,15 @@ class PriestMppiAdapterNavCmd(Node):
         self._pending_goal = True
         self._last_goal_send_time = self.get_clock().now()
         goal_seq = self.latest_path_seq
+        path_epoch = self._path_epoch
         future = self.follow_path_client.send_goal_async(goal_msg, feedback_callback=self._on_feedback)
-        future.add_done_callback(lambda f, goal_seq=goal_seq: self._on_goal_response(f, goal_seq))
+        future.add_done_callback(
+            lambda f, goal_seq=goal_seq, path_epoch=path_epoch: self._on_goal_response(
+                f, goal_seq, path_epoch
+            )
+        )
 
-    def _on_goal_response(self, future, goal_seq: int):
+    def _on_goal_response(self, future, goal_seq: int, path_epoch: int):
         self._pending_goal = False
         try:
             goal_handle = future.result()
@@ -501,8 +512,13 @@ class PriestMppiAdapterNavCmd(Node):
         if goal_handle is None or not goal_handle.accepted:
             self.get_logger().warn("FollowPath goal rejected")
             return
-        if self.latest_path is None:
-            self._cancel_follow_path_goal_handle(goal_handle, "local path cleared")
+        if (
+            path_epoch != self._path_epoch
+            or self.latest_path is None
+        ):
+            self._cancel_follow_path_goal_handle(
+                goal_handle, "stale FollowPath response after path reset"
+            )
             return
 
         # A newer local path may arrive while this asynchronous request is

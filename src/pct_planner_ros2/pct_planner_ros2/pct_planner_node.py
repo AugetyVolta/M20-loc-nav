@@ -101,6 +101,8 @@ class PctPlannerNode(Node):
         self.auto_plan = bool(self.get_parameter("auto_plan").value)
         self.always_replan = bool(self.get_parameter("always_replan").value)
         self.goal_received = not bool(self.get_parameter("wait_for_goal").value)
+        self.goal_cancelled = False
+        self.cancelled_goal_pos = None
         self.global_path_perception_enabled = bool(self.get_parameter("global_path_perception_enabled").value)
         self.global_path_perception_min_range = float(self.get_parameter("global_path_perception_min_range").value)
         self.global_path_perception_width = max(0.0, float(self.get_parameter("global_path_perception_width").value))
@@ -1365,6 +1367,14 @@ class PctPlannerNode(Node):
     def _on_goal_pose(self, msg):
         position = msg.pose.position
         goal_pos = np.array([position.x, position.y, position.z], dtype=np.float32)
+        if self.goal_cancelled:
+            if (
+                self.cancelled_goal_pos is not None
+                and not self._position_differs(goal_pos, self.cancelled_goal_pos)
+            ):
+                return
+            self.goal_cancelled = False
+            self.cancelled_goal_pos = None
         goal_changed = not self.goal_received or self._position_differs(goal_pos, self.goal_pos)
         if goal_changed:
             self._publish_empty_paths()
@@ -1373,6 +1383,8 @@ class PctPlannerNode(Node):
         self._sync_marker_pose("end_pos", self.goal_pos)
 
     def _on_cancel_goal(self, _msg):
+        self.goal_cancelled = True
+        self.cancelled_goal_pos = self.goal_pos.copy()
         self.goal_received = False
         self.last_planned_start = None
         self.last_planned_goal = None
@@ -1409,6 +1421,8 @@ class PctPlannerNode(Node):
         self._set_goal_point(point)
 
     def _set_goal_point(self, point):
+        self.goal_cancelled = False
+        self.cancelled_goal_pos = None
         self.goal_pos = np.array([point.x, point.y, point.z], dtype=np.float32)
         self.goal_received = True
         self._sync_marker_pose("end_pos", self.goal_pos)
@@ -1439,6 +1453,8 @@ class PctPlannerNode(Node):
         if feedback.marker_name == "start_pos" and self.start_source != "odom":
             self.start_pos = actual
         elif feedback.marker_name == "end_pos":
+            self.goal_cancelled = False
+            self.cancelled_goal_pos = None
             self.goal_pos = actual
             self.goal_received = True
 

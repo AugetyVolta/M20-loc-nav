@@ -118,6 +118,16 @@ bool OfflineElePlanner::Plan(const Eigen::Vector3i& start,
   if (optimize) {
     path_ = path_finder_.GetPathPoints();
 
+    // A* reports success when the goal is the start cell or an immediately
+    // adjacent cell, but GPMP requires at least one non-degenerate segment.
+    // Treat this as a normal short-path failure instead of reaching vector
+    // front()/back() or an optimizer assertion and aborting the process.
+    if (path_.size() < 2) {
+      std::cerr << "PCT optimization skipped: A* path has only " << path_.size()
+                << " point(s)" << std::endl;
+      return false;
+    }
+
     path_.front().ref_v = 1;
     path_.back().ref_v = 1;
     const bool constrain_goal_heading = std::isfinite(goal_heading);

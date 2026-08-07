@@ -155,6 +155,7 @@ def test_pose_update_keeps_normal_marker_in_sync_without_rebuilding_editor():
         sequence_done=False,
         _interactive_markers_dirty=False,
         _interactive_drag_active=False,
+        _interactive_drag_origin=None,
         _interactive_waypoint_index=lambda _name: 0,
         _publish_visualization=lambda **kwargs: visualization_calls.append(kwargs),
         _publish_current_goal=lambda: None,
@@ -172,6 +173,75 @@ def test_pose_update_keeps_normal_marker_in_sync_without_rebuilding_editor():
     assert visualization_calls == [{"sync_interactive": False}]
     assert harness._interactive_markers_dirty is False
     assert harness._interactive_drag_active is True
+    assert harness._interactive_drag_origin == (-1, Waypoint(1.0, 2.0, 0.5))
+
+
+def test_marker_sync_mouse_up_does_not_reactivate_completed_sequence():
+    published = []
+    statuses = []
+    harness = SimpleNamespace(
+        waypoints=[Waypoint(1.0, 2.0, 0.5, marker_id=7)],
+        marker_z_offset=0.2,
+        current_index=0,
+        sequence_done=True,
+        _interactive_markers_dirty=False,
+        _interactive_drag_active=False,
+        _interactive_drag_origin=None,
+        _interactive_waypoint_index=lambda _name: 0,
+        _mark_interactive_markers_dirty=lambda: None,
+        _publish_visualization=lambda **_kwargs: None,
+        _publish_current_goal=lambda: published.append("goal"),
+        _publish_status=lambda detail=None: statuses.append(detail),
+    )
+    feedback = SimpleNamespace(
+        marker_name="waypoint_7",
+        event_type=InteractiveMarkerFeedback.MOUSE_UP,
+        pose=SimpleNamespace(position=SimpleNamespace(x=1.0, y=2.0, z=0.7)),
+    )
+
+    GlobalPathSequencePublisher._on_interactive_feedback(harness, feedback)
+
+    assert harness.sequence_done is True
+    assert harness._interactive_drag_active is False
+    assert published == []
+    assert statuses == []
+
+
+def test_real_marker_drag_reactivates_completed_sequence():
+    published = []
+    statuses = []
+    harness = SimpleNamespace(
+        waypoints=[Waypoint(1.0, 2.0, 0.5, marker_id=7)],
+        marker_z_offset=0.2,
+        current_index=0,
+        sequence_done=True,
+        _interactive_markers_dirty=False,
+        _interactive_drag_active=True,
+        _interactive_drag_origin=(7, Waypoint(1.0, 2.0, 0.5, marker_id=7)),
+        _interactive_waypoint_index=lambda _name: 0,
+        _mark_interactive_markers_dirty=lambda: setattr(
+            harness, "_interactive_markers_dirty", True
+        ),
+        _publish_visualization=lambda **_kwargs: None,
+        _publish_current_goal=lambda: published.append("goal"),
+        _publish_status=lambda detail=None: statuses.append(detail),
+    )
+    feedback = SimpleNamespace(
+        marker_name="waypoint_7",
+        event_type=InteractiveMarkerFeedback.MOUSE_UP,
+        pose=SimpleNamespace(position=SimpleNamespace(x=1.5, y=2.0, z=0.7)),
+    )
+
+    GlobalPathSequencePublisher._on_interactive_feedback(harness, feedback)
+
+    assert harness.waypoints[0].x == pytest.approx(1.5)
+    assert harness.waypoints[0].y == pytest.approx(2.0)
+    assert harness.waypoints[0].z == pytest.approx(0.5)
+    assert harness.waypoints[0].marker_id == 7
+    assert harness.sequence_done is False
+    assert harness._interactive_markers_dirty is True
+    assert published == ["goal"]
+    assert "dragged waypoint 1" in statuses[-1]
 
 
 def test_marker_timer_republishes_interactive_state_after_structure_change():
