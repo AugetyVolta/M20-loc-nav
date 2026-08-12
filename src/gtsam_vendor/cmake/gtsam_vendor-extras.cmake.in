@@ -1,0 +1,9 @@
+get_filename_component(gtsam_vendor_PREFIX_DIR "${gtsam_vendor_DIR}/../../.." ABSOLUTE)
+set(GTSAM_DIR "${gtsam_vendor_PREFIX_DIR}/lib/cmake/GTSAM")
+
+if(NOT TARGET gtsam)
+  find_package(GTSAM 4.1.1 EXACT CONFIG REQUIRED
+    PATHS "${GTSAM_DIR}"
+    NO_DEFAULT_PATH
+  )
+endif()

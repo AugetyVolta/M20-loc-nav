@@ -299,6 +299,10 @@ Open3D:     /home/orin/drivers/Open3D/install
 工作空间:   /mnt/nvme/workspace/fast_lio_ws
 ```
 
+`slam_mapping` 使用工作区内的 `gtsam_vendor` 提供 GTSAM 4.1.1。不要再额外从
+`/home/orin/workspace/gtsam` 安装 GTSAM 到 `/usr/local`；这样可以避免建图后端和其他
+组件加载到不同的 GTSAM/METIS 动态库。
+
 Open3D 是 C++ 链接使用，不是只靠 Python venv。`open3d_loc` 的 CMake 指向：
 
 ```text
@@ -327,6 +331,16 @@ colcon build --symlink-install --executor sequential \
   -DMPI_C_COMPILER_INCLUDE_DIRS=/usr/lib/aarch64-linux-gnu/openmpi/include\;/usr/lib/aarch64-linux-gnu/openmpi/include/openmpi \
   -DMPI_CXX_COMPILER_INCLUDE_DIRS=/usr/lib/aarch64-linux-gnu/openmpi/include\;/usr/lib/aarch64-linux-gnu/openmpi/include/openmpi
 ```
+
+如果只编译建图后端，先构建统一的 GTSAM，再构建 `slam_mapping`：
+
+```bash
+colcon build --symlink-install --executor sequential \
+  --packages-up-to slam_mapping
+```
+
+`--packages-up-to slam_mapping` 会按照依赖顺序先构建 `gtsam_vendor`。首次构建 GTSAM
+耗时较长，之后会复用已有构建结果。
 
 这些 MPI 参数是为了绕过当前系统上 PCL/CMake/OpenMPI 导出的错误 include 路径问题。
 

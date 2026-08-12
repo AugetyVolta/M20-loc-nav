@@ -53,13 +53,13 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(cv_bridge REQUIRED)
+find_package(gtsam_vendor REQUIRED)
 
 find_package(PCL REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
 find_package(OpenCV REQUIRED)
 find_package(OpenMP REQUIRED)
-find_package(GTSAM REQUIRED QUIET)
 
 set(ros2_dependencies
   rclcpp
@@ -81,7 +81,6 @@ include_directories(
   include
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
-  ${GTSAM_INCLUDE_DIR}
 )
 
 # ==========================================================
