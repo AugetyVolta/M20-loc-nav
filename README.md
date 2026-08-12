@@ -357,7 +357,8 @@ gyr_cov: 0.2
 | `pct_start_source` | `tf` | PCT 起点默认来自 TF `map -> base_link`，会随机器人位置更新 |
 | `pct_waypoint_goal_tolerance` | `1.0` | `base_link` 投影到地面后与当前三维路径点的到达距离；进入该范围后切换到下一点 |
 | `pct_waypoint_replan_period` | `0.2` | 每 0.2 秒检查是否到达当前路径点；切换后立即发布下一个 `/goal_pose`，不改变 PCT 全局路径的重规划周期 |
-| `pct_waypoint_marker_z_offset` | `0.2` | 只抬高 RViz 路径点球体，发布给 PCT 的实际目标高度不变 |
+| `pct_waypoint_marker_z_offset` | `0.2` | 交互标记相对路径点的基础 Z 偏移；发布给 PCT 的实际目标高度不变 |
+| `pct_waypoint_marker_visual_z_offset` | `0.12` | 只抬高 RViz 中球体和编号文字的显示位置，减少斜视角下被地图点云遮挡；不改变交互坐标和实际目标高度 |
 | `pct_replan_interval` | `1.0` | 每 1 秒检查是否需要重规划 |
 | `pct_always_replan` | `true` | 主导航默认按 `pct_replan_interval` 定周期更新 `/pct_path`；动态感知只更新代价层，不单独触发即时重规划 |
 | `pct_global_path_perception_enabled` | `true` | PCT 动态感知总开关；实际启停由 `/navigation_mode.pct_dynamic_enabled` 控制 |
@@ -528,13 +529,6 @@ ros2 topic pub --once /waypoint_sequence/undo std_msgs/msg/Empty '{}'
 ```
 
 默认三维到达阈值是 `1.0m`。计算距离时会从 `base_link.z` 减去 `pct_robot_ground_offset=0.45m`，再与点击位置的地面高度比较，避免上下楼时只按平面距离过早切换。
-
-Building 8 已保存一组从 RViz 读取的三维初始位姿和三个有序目标点。导航启动后可直接恢复，不需要重新拖动 marker；该命令会先清空当前 waypoint 队列：
-
-```bash
-cd /mnt/nvme/workspace/fast_lio_ws
-./scripts/publish_building8_route.sh
-```
 
 关闭路径点队列进行单终点调试时，可以直接发布：
 

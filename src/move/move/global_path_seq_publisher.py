@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -17,6 +18,7 @@ from rclpy.clock import Clock, ClockType
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.qos import QoSProfile
 from rclpy.time import Time
 from std_msgs.msg import Empty, String
 from visualization_msgs.msg import (
@@ -38,14 +40,24 @@ class Waypoint:
 
 
 class SimTimeSafeInteractiveMarkerServer(InteractiveMarkerServer):
-    """Accept the first RViz feedback while simulated time is still zero."""
+    """Keep RViz feedback responsive across rosbag clock pauses and reconnects."""
+
+    def __init__(self, node, namespace):
+        super().__init__(
+            node,
+            namespace,
+            feedback_sub_qos=QoSProfile(depth=20),
+        )
 
     def processFeedback(self, feedback):
-        if self.node.get_clock().now().nanoseconds == 0:
-            with self.mutex:
-                marker_context = self.marker_contexts.get(feedback.marker_name)
-                if marker_context is not None:
-                    marker_context.last_client_id = feedback.client_id
+        # The upstream server resolves competing RViz clients with ROS time.
+        # Bag pause/seek can freeze or rewind that clock and reject a newly
+        # connected RViz client indefinitely. This editor has one authoritative
+        # RViz operator, so accept the client that produced the latest feedback.
+        with self.mutex:
+            marker_context = self.marker_contexts.get(feedback.marker_name)
+            if marker_context is not None:
+                marker_context.last_client_id = feedback.client_id
         super().processFeedback(feedback)
 
 
@@ -84,8 +96,10 @@ class GlobalPathSequencePublisher(Node):
         self.declare_parameter("marker_point_diameter", 0.4)
         self.declare_parameter("marker_label_height", 0.35)
         self.declare_parameter("marker_z_offset", 0.2)
+        self.declare_parameter("marker_visual_z_offset", 0.12)
         self.declare_parameter("enable_interactive_markers", True)
         self.declare_parameter("interactive_marker_namespace", "waypoint_editor")
+        self.declare_parameter("interactive_drag_timeout", 2.0)
 
         self.global_frame = str(self.get_parameter("global_frame").value).lstrip("/")
         self.robot_frame = str(self.get_parameter("robot_frame").value).lstrip("/")
@@ -127,23 +141,32 @@ class GlobalPathSequencePublisher(Node):
             0.1, float(self.get_parameter("marker_label_height").value)
         )
         self.marker_z_offset = float(self.get_parameter("marker_z_offset").value)
+        self.marker_visual_z_offset = float(
+            self.get_parameter("marker_visual_z_offset").value
+        )
         self.enable_interactive_markers = bool(
             self.get_parameter("enable_interactive_markers").value
         )
         self.interactive_marker_namespace = str(
             self.get_parameter("interactive_marker_namespace").value
         )
+        self.interactive_drag_timeout = max(
+            0.5, float(self.get_parameter("interactive_drag_timeout").value)
+        )
 
         self._next_marker_id = 0
         self.waypoints = self._load_static_waypoints()
         start_index = int(self.get_parameter("start_index").value)
         self.current_index = min(max(0, start_index), max(0, len(self.waypoints) - 1))
+        self.reached_marker_ids = {
+            waypoint.marker_id for waypoint in self.waypoints[: self.current_index]
+        }
         self.sequence_done = False
         self.paused = False
         self._interactive_markers_dirty = True
-        self._interactive_resync_remaining = 0
         self._interactive_drag_active = False
         self._interactive_drag_origin: Optional[tuple[int, Waypoint]] = None
+        self._interactive_drag_last_feedback_time: Optional[float] = None
         self._pending_menu_action: Optional[tuple[str, int]] = None
         self._menu_action_timer = None
 
@@ -243,15 +266,36 @@ class GlobalPathSequencePublisher(Node):
         self._publish_current_goal()
 
     def _on_marker_timer(self):
-        if self._interactive_resync_remaining > 0 and not self._interactive_drag_active:
-            self._interactive_resync_remaining -= 1
-            self._interactive_markers_dirty = True
+        if self._interactive_drag_active:
+            last_feedback = self._interactive_drag_last_feedback_time
+            if (
+                last_feedback is None
+                or time.monotonic() - last_feedback >= self.interactive_drag_timeout
+            ):
+                self._interactive_drag_active = False
+                self._interactive_drag_origin = None
+                self._interactive_drag_last_feedback_time = None
+                self.get_logger().warn(
+                    "Recovered stale RViz waypoint drag lock after feedback timeout"
+                )
         self._publish_visualization()
 
-    def _mark_interactive_markers_dirty(self, *, resync: bool = True):
+    def _mark_interactive_markers_dirty(self):
         self._interactive_markers_dirty = True
-        if resync:
-            self._interactive_resync_remaining = 3
+
+    def _waypoint_reached(self, waypoint: Waypoint) -> bool:
+        return waypoint.marker_id in self.reached_marker_ids
+
+    def _next_unreached_index(self, start_index: int = 0) -> Optional[int]:
+        for index in range(max(0, start_index), len(self.waypoints)):
+            if not self._waypoint_reached(self.waypoints[index]):
+                return index
+        return None
+
+    def _finish_after_edit(self):
+        self.current_index = min(self.current_index, max(0, len(self.waypoints) - 1))
+        self.sequence_done = True
+        self._cancel_goal()
 
     def _advance_if_reached(self) -> bool:
         distance = self._current_goal_distance()
@@ -264,9 +308,11 @@ class GlobalPathSequencePublisher(Node):
             f"({reached.x:.2f}, {reached.y:.2f}, {reached.z:.2f}), "
             f"distance={distance:.2f}m"
         )
+        self.reached_marker_ids.add(reached.marker_id)
 
-        if self.current_index + 1 < len(self.waypoints):
-            self.current_index += 1
+        next_index = self._next_unreached_index(self.current_index + 1)
+        if next_index is not None:
+            self.current_index = next_index
             self._mark_interactive_markers_dirty()
             self._publish_current_goal()
             self._publish_visualization()
@@ -277,7 +323,9 @@ class GlobalPathSequencePublisher(Node):
             return True
 
         if self.loop:
+            self.reached_marker_ids.clear()
             self.current_index = 0
+            self.sequence_done = False
             self._mark_interactive_markers_dirty()
             self._publish_current_goal()
             self._publish_visualization()
@@ -339,17 +387,25 @@ class GlobalPathSequencePublisher(Node):
             return
         removed = self.waypoints.pop(index)
         self._retire_interactive_marker(removed)
+        removed_was_current = not self.sequence_done and index == self.current_index
+        self.reached_marker_ids.discard(removed.marker_id)
         if not self.waypoints:
             self.current_index = 0
-            self.sequence_done = True
-            self._cancel_goal()
+            self._finish_after_edit()
+        elif self.sequence_done:
+            # Editing a completed queue must never turn a historical point back
+            # into an active navigation target.
+            self._finish_after_edit()
         else:
             if index < self.current_index:
                 self.current_index -= 1
-            elif index == self.current_index:
-                self.current_index = min(self.current_index, len(self.waypoints) - 1)
-            self.sequence_done = False
-            self._publish_current_goal()
+            if removed_was_current:
+                next_index = self._next_unreached_index(index)
+                if next_index is None:
+                    self._finish_after_edit()
+                else:
+                    self.current_index = next_index
+                    self._publish_current_goal()
         self._mark_interactive_markers_dirty()
         self._publish_visualization()
         self._publish_status(
@@ -377,9 +433,12 @@ class GlobalPathSequencePublisher(Node):
             old.yaw,
             old.marker_id,
         )
-        self.sequence_done = False
         self._mark_interactive_markers_dirty()
-        if index == self.current_index:
+        if (
+            not self.sequence_done
+            and index == self.current_index
+            and not self._waypoint_reached(old)
+        ):
             self._publish_current_goal()
         self._publish_visualization()
         self._publish_status(
@@ -392,6 +451,7 @@ class GlobalPathSequencePublisher(Node):
         for waypoint in self.waypoints:
             self._retire_interactive_marker(waypoint)
         self.waypoints.clear()
+        self.reached_marker_ids.clear()
         self.current_index = 0
         self.sequence_done = True
         self.paused = False
@@ -404,22 +464,7 @@ class GlobalPathSequencePublisher(Node):
         if not self.waypoints:
             return
         removed_index = len(self.waypoints) - 1
-        removed = self.waypoints.pop()
-        self._retire_interactive_marker(removed)
-        if not self.waypoints:
-            self.current_index = 0
-            self.sequence_done = True
-            self._cancel_goal()
-        else:
-            self.current_index = min(self.current_index, len(self.waypoints) - 1)
-            self.sequence_done = False
-            self._publish_current_goal()
-        self._mark_interactive_markers_dirty()
-        self._publish_visualization()
-        self._publish_status(
-            f"undid waypoint {removed_index + 1}: "
-            f"({removed.x:.2f}, {removed.y:.2f}, {removed.z:.2f})"
-        )
+        self._delete_waypoint(removed_index, f"undid waypoint {removed_index + 1}")
 
     def _on_pause(self, _msg: Empty):
         if not self.waypoints:
@@ -431,8 +476,11 @@ class GlobalPathSequencePublisher(Node):
     def _on_resume(self, _msg: Empty):
         if not self.waypoints:
             return
+        if self.sequence_done:
+            self._cancel_goal()
+            self._publish_status("resume ignored: all remaining waypoints are reached")
+            return
         self.paused = False
-        self.sequence_done = False
         self._publish_current_goal()
         self._publish_status("resumed")
 
@@ -589,6 +637,7 @@ class GlobalPathSequencePublisher(Node):
                 y=waypoint.y,
                 z=waypoint.z
                 + self.marker_z_offset
+                + self.marker_visual_z_offset
                 + self.marker_point_diameter,
             )
             label.pose.orientation.w = 1.0
@@ -603,7 +652,7 @@ class GlobalPathSequencePublisher(Node):
         return result
 
     def _set_waypoint_color(self, marker: Marker, index: int):
-        if self.sequence_done or index < self.current_index:
+        if self._waypoint_reached(self.waypoints[index]):
             marker.color.r = 0.2
             marker.color.g = 0.85
         elif index == self.current_index:
@@ -668,6 +717,7 @@ class GlobalPathSequencePublisher(Node):
 
         sphere = Marker()
         sphere.type = Marker.SPHERE
+        sphere.pose.position.z = self.marker_visual_z_offset
         sphere.pose.orientation.w = 1.0
         sphere.scale.x = self.marker_point_diameter
         sphere.scale.y = self.marker_point_diameter
@@ -714,10 +764,14 @@ class GlobalPathSequencePublisher(Node):
         if index is None or index >= len(self.waypoints):
             return
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
+            self._interactive_drag_active = False
+            self._interactive_drag_origin = None
+            self._interactive_drag_last_feedback_time = None
             self._on_interactive_menu(feedback)
             return
         if feedback.event_type == InteractiveMarkerFeedback.MOUSE_DOWN:
             self._interactive_drag_active = True
+            self._interactive_drag_last_feedback_time = time.monotonic()
             waypoint = self.waypoints[index]
             self._interactive_drag_origin = (waypoint.marker_id, waypoint)
             return
@@ -743,9 +797,11 @@ class GlobalPathSequencePublisher(Node):
         self.waypoints[index] = updated
         if feedback.event_type == InteractiveMarkerFeedback.POSE_UPDATE:
             self._interactive_drag_active = True
+            self._interactive_drag_last_feedback_time = time.monotonic()
             self._publish_visualization(sync_interactive=False)
             return
         self._interactive_drag_active = False
+        self._interactive_drag_last_feedback_time = None
         drag_origin = self._interactive_drag_origin
         self._interactive_drag_origin = None
         previous = old
@@ -758,9 +814,12 @@ class GlobalPathSequencePublisher(Node):
         )
         if moved_distance <= 1.0e-4:
             return
-        self.sequence_done = False
         self._mark_interactive_markers_dirty()
-        if index == self.current_index:
+        if (
+            not self.sequence_done
+            and index == self.current_index
+            and not self._waypoint_reached(updated)
+        ):
             self._publish_current_goal()
         self._publish_visualization()
         self._publish_status(
@@ -770,13 +829,31 @@ class GlobalPathSequencePublisher(Node):
         )
 
     def _on_interactive_menu(self, feedback):
+        # MenuHandler diverts MENU_SELECT away from the default marker callback,
+        # so release the MOUSE_DOWN latch at the actual menu callback entry.
+        self.get_logger().info(
+            f"received waypoint menu feedback: marker={feedback.marker_name}, "
+            f"entry={feedback.menu_entry_id}"
+        )
+        self._interactive_drag_active = False
+        self._interactive_drag_origin = None
+        self._interactive_drag_last_feedback_time = None
         index = self._interactive_waypoint_index(feedback.marker_name)
         if index is None:
+            self.get_logger().warn(
+                f"ignored waypoint menu feedback for unknown marker "
+                f"'{feedback.marker_name}'"
+            )
             return
         if feedback.menu_entry_id == self.delete_menu_entry:
             self._defer_menu_action("delete", index)
         elif feedback.menu_entry_id == self.clear_menu_entry:
             self._defer_menu_action("clear", index)
+        else:
+            self.get_logger().warn(
+                f"ignored waypoint menu feedback with unknown entry "
+                f"{feedback.menu_entry_id}"
+            )
 
     def _defer_menu_action(self, action: str, index: int):
         self._pending_menu_action = (action, index)
@@ -839,6 +916,7 @@ class GlobalPathSequencePublisher(Node):
         msg.data = self._format_status()
         if detail:
             msg.data += f"; {detail}"
+            self.get_logger().info(detail)
         self.status_pub.publish(msg)
 
 

@@ -61,6 +61,9 @@ def generate_launch_description():
     pct_waypoint_goal_tolerance = LaunchConfiguration("pct_waypoint_goal_tolerance")
     pct_waypoint_edit_radius = LaunchConfiguration("pct_waypoint_edit_radius")
     pct_waypoint_marker_z_offset = LaunchConfiguration("pct_waypoint_marker_z_offset")
+    pct_waypoint_marker_visual_z_offset = LaunchConfiguration(
+        "pct_waypoint_marker_visual_z_offset"
+    )
     pct_global_path_perception_enabled = LaunchConfiguration("pct_global_path_perception_enabled")
     pct_global_path_perception_scan_topic = LaunchConfiguration("pct_global_path_perception_scan_topic")
     pct_global_path_perception_min_range = LaunchConfiguration(
@@ -290,6 +293,10 @@ def generate_launch_description():
                 ),
                 "marker_z_offset": ParameterValue(
                     pct_waypoint_marker_z_offset,
+                    value_type=float,
+                ),
+                "marker_visual_z_offset": ParameterValue(
+                    pct_waypoint_marker_visual_z_offset,
                     value_type=float,
                 ),
             }
@@ -670,6 +677,9 @@ def generate_launch_description():
             DeclareLaunchArgument("pct_waypoint_goal_tolerance", default_value="1.0"),
             DeclareLaunchArgument("pct_waypoint_edit_radius", default_value="1.0"),
             DeclareLaunchArgument("pct_waypoint_marker_z_offset", default_value="0.2"),
+            DeclareLaunchArgument(
+                "pct_waypoint_marker_visual_z_offset", default_value="0.12"
+            ),
             DeclareLaunchArgument("pct_global_path_perception_enabled", default_value="true"),
             DeclareLaunchArgument("pct_global_path_perception_scan_topic", default_value="/scan"),
             DeclareLaunchArgument("pct_global_path_perception_min_range", default_value="0.15"),
