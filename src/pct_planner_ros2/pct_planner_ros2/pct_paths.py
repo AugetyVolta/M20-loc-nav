@@ -49,6 +49,24 @@ def default_venv_site_packages():
     return str(DEFAULT_VENV / "lib/python3.10/site-packages")
 
 
+def gtsam_vendor_prefix():
+    configured = os.environ.get("GTSAM_VENDOR_PREFIX")
+    if configured:
+        return expand_path(configured)
+
+    if get_package_share_directory is not None:
+        try:
+            share = Path(get_package_share_directory("gtsam_vendor"))
+            return share.parents[1]
+        except Exception:
+            pass
+
+    ws_root = os.environ.get("PCT_ROS2_WS")
+    if ws_root:
+        return expand_path(ws_root) / "install/gtsam_vendor"
+    return None
+
+
 def tomogram_stem(name):
     name = str(name)
     return name[:-7] if name.endswith(".pickle") else name
@@ -85,12 +103,15 @@ def configure_tomography_imports(pct_root):
 
 def required_library_dirs(pct_root):
     root = expand_path(pct_root)
-    return [
-        root / "planner/lib/3rdparty/gtsam-4.1.1/install/lib",
+    paths = [
         root / "planner/lib/3rdparty/osqp/install/lib",
         root / "planner/lib",
         root / "planner/lib/build/src/common/smoothing",
     ]
+    vendor_prefix = gtsam_vendor_prefix()
+    if vendor_prefix is not None:
+        paths.insert(0, vendor_prefix / "lib")
+    return paths
 
 
 def missing_ld_library_dirs(pct_root):

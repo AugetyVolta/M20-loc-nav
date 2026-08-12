@@ -5,7 +5,8 @@ and modifications as follows:
 
 - gtsam 4.1.1: Georgia Tech Smoothing and Mapping Library
     - Removed unused cmake files and example data
-    - Licenced under BSD, provided in PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/LICENSE.BSD
+    - Built once by the workspace gtsam_vendor package from src/gtsam_vendor/vendor/gtsam
+    - Licensed under BSD, provided in src/gtsam_vendor/vendor/gtsam/LICENSE.BSD
 - osqp: The Operator Splitting QP Solver
     - Modified osqp/include/constants.h, osqp/include/osqp_configure.h
     - Licenced under Apache License v 2.0, provided in PCT_planner/planner/lib/3rdparty/osqp/LICENSE

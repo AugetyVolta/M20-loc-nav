@@ -13,7 +13,7 @@ fi
 
 export PATH="${PCT_VENV}/bin:${PATH}"
 export PYTHONPATH="${PCT_VENV_SITE}:${PCT_PLANNER_ROOT}/planner/lib:${PCT_PLANNER_ROOT}/planner:${PCT_PLANNER_ROOT}/planner/scripts:${PCT_PLANNER_ROOT}/tomography:${PCT_PLANNER_ROOT}/tomography/scripts:${PYTHONPATH:-}"
-export LD_LIBRARY_PATH="${PCT_PLANNER_ROOT}/planner/lib/3rdparty/gtsam-4.1.1/install/lib:${PCT_PLANNER_ROOT}/planner/lib/3rdparty/osqp/install/lib:${PCT_PLANNER_ROOT}/planner/lib:${PCT_PLANNER_ROOT}/planner/lib/build/src/common/smoothing:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${PCT_ROS2_WS}/install/gtsam_vendor/lib:${PCT_PLANNER_ROOT}/planner/lib/3rdparty/osqp/install/lib:${PCT_PLANNER_ROOT}/planner/lib:${PCT_PLANNER_ROOT}/planner/lib/build/src/common/smoothing:${LD_LIBRARY_PATH:-}"
 
 if [ -f "${PCT_ROS2_WS}/install/setup.bash" ]; then
   source "${PCT_ROS2_WS}/install/setup.bash"

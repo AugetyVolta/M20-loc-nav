@@ -1,15 +1,27 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-ROOT_DIR=$(cd $(dirname "$0"); pwd)
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PCT_ROS2_WS="${PCT_ROS2_WS:-$(cd "${ROOT_DIR}/../../../.." && pwd)}"
+GTSAM_VENDOR_PREFIX="${GTSAM_VENDOR_PREFIX:-${PCT_ROS2_WS}/install/gtsam_vendor}"
+GTSAM_DIR="${GTSAM_DIR:-${GTSAM_VENDOR_PREFIX}/lib/cmake/GTSAM}"
+
+if [ ! -f "${GTSAM_DIR}/GTSAMConfig.cmake" ]; then
+  echo "Missing workspace GTSAM: ${GTSAM_DIR}/GTSAMConfig.cmake" >&2
+  echo "Build it first: colcon build --symlink-install --packages-select gtsam_vendor" >&2
+  exit 1
+fi
 # echo "ROOT_DIR: ${ROOT_DIR}"
 
-cd lib
+cd "${ROOT_DIR}/lib"
 
 # rm -rf build
-mkdir build
+mkdir -p build
 
 cd build
-cmake ../ -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+cmake_args=(../ -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5)
+cmake_args+=("-DGTSAM_DIR=${GTSAM_DIR}")
+cmake "${cmake_args[@]}"
 make -j6
 cp ./src/a_star/a_star*.so ../
 cp ./src/a_star/liba_star_search.so ../
@@ -23,9 +35,8 @@ cp ./src/common/smoothing/libcommon_smoothing.so ../
 cd ..
 
 # # optional
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${ROOT_DIR}/lib/3rdparty/gtsam-4.1.1/install/lib
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${ROOT_DIR}/lib/build/src/common/smoothing
-export PYTHONPATH=$PYTHONPATH:${ROOT_DIR}/lib
+export LD_LIBRARY_PATH="${GTSAM_VENDOR_PREFIX}/lib:${ROOT_DIR}/lib/build/src/common/smoothing:${LD_LIBRARY_PATH:-}"
+export PYTHONPATH="${ROOT_DIR}/lib:${PYTHONPATH:-}"
 # pybind11-stubgen -o ./ a_star
 # pybind11-stubgen -o ./ traj_opt
 # pybind11-stubgen -o ./ ele_planner

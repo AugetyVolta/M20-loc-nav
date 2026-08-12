@@ -60,7 +60,7 @@ cd /mnt/nvme/workspace/fast_lio_ws
 source ./source_m20_nav.sh
 
 colcon build --symlink-install --packages-select \
-  m20_navigation_msgs pct_planner_ros2 traversability_layer \
+  gtsam_vendor m20_navigation_msgs pct_planner_ros2 traversability_layer \
   tomogram_filter_layer move m20_fastlio_nav
 source ./source_m20_nav.sh
 ```
@@ -88,6 +88,7 @@ source ./source_m20_nav.sh
 ~/liv_ws/install/setup.bash
 当前 workspace 的 install/setup.bash
 仓库内置 PCT planner 的 Python/LD_LIBRARY_PATH
+`install/gtsam_vendor` 中由工作区统一构建的 GTSAM 4.1.1
 MID360 需要的 libusb LD_PRELOAD
 ```
 
@@ -496,6 +497,11 @@ ros2 launch m20_fastlio_nav m20_fastlio_nav.launch.py \
 ./src/pct_planner_ros2/scripts/build_pct_core.sh
 colcon build --packages-up-to pct_planner_ros2 m20_fastlio_nav
 ```
+
+`gtsam_vendor` 使用 PCT 原先携带的 GTSAM 4.1.1 源码，并为 PCT core 和
+`slam_mapping` 提供同一套头文件和动态库。不要再从
+`/home/orin/workspace/gtsam` 手工安装到 `/usr/local`。首次构建 GTSAM 耗时较长；源码和
+构建选项未变化时，后续 `colcon build` 会复用构建结果。
 
 pure pursuit 的前视距离在 `src/move/move/pure_pursuit.py` 中默认是 `1.8`，启动文件不覆盖这个值。`rl_pp_lookahead=4.0` 只作为 RL 节点在没有 `/subgoal` 时的备用全局路径取点距离。
 

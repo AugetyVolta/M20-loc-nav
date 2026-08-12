@@ -45,12 +45,11 @@ If you use PCT Planner, please cite the following paper:
 
 Inside the package, there are two modules: the point cloud tomography module for tomogram reconstruction (in **tomography/**) and the planner module for path planning and optimization (in **planner/**).
 You only need to build the planner module before use.
-In **planner/**, run **build_thirdparty.sh** first and then run **build.sh**. 
+This ROS 2 workspace builds GTSAM once through `gtsam_vendor`. Use the workspace
+wrapper to build GTSAM, OSQP, and the planner core in the correct order:
 
 ```bash
-cd planner/
-./build_thirdparty.sh
-./build.sh
+./src/pct_planner_ros2/scripts/build_pct_core.sh
 ```
 
 ## Run Examples
@@ -81,7 +80,7 @@ After the tomogram is constructed, you can run the trajectory generation example
 - In **planner/scripts/**, run **plan.py** with the **--scene** argument:
 
 ```bash
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/YOUR/DIRECTORY/TO/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib
+source install/setup.bash
 cd planner/scripts/
 python3 plan.py --scene Spiral
 ```

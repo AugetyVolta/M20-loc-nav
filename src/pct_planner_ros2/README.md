@@ -80,6 +80,11 @@ source ./source_m20_nav.sh
 ./src/pct_planner_ros2/scripts/build_pct_core.sh
 ```
 
+该脚本会先通过 `colcon` 构建工作区的 `gtsam_vendor`，再构建 OSQP 和 PCT core。
+GTSAM 4.1.1 源码统一位于 `src/gtsam_vendor/vendor/gtsam`；PCT 与
+`slam_mapping` 都链接 `install/gtsam_vendor/lib/libgtsam.so.4`，不再使用
+PCT 目录中的私有安装或 `/usr/local` 中的手工安装。
+
 检查环境：
 
 ```bash

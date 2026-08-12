@@ -9,6 +9,7 @@
   <buildtool_depend>ament_python</buildtool_depend>
 
   <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>gtsam_vendor</exec_depend>
   <exec_depend>interactive_markers</exec_depend>
   <exec_depend>m20_navigation_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>

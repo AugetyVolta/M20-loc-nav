@@ -6,7 +6,7 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
+from launch_ros.substitutions import FindPackagePrefix, FindPackageShare
 
 
 def generate_launch_description():
@@ -14,6 +14,7 @@ def generate_launch_description():
     rviz_config = PathJoinSubstitution([pkg_share, "config", "m20_pct.rviz"])
     config_file = PathJoinSubstitution([pkg_share, "config", "pct_planner.yaml"])
     default_pct_root = PathJoinSubstitution([pkg_share, "PCT_planner"])
+    gtsam_vendor_prefix = FindPackagePrefix("gtsam_vendor")
 
     pct_root = LaunchConfiguration("pct_root")
     venv_site = LaunchConfiguration("venv_site")
@@ -29,8 +30,8 @@ def generate_launch_description():
         os.environ.get("PYTHONPATH", ""),
     ]
     library_paths = [
-        pct_root,
-        "/planner/lib/3rdparty/gtsam-4.1.1/install/lib:",
+        gtsam_vendor_prefix,
+        "/lib:",
         pct_root,
         "/planner/lib/3rdparty/osqp/install/lib:",
         pct_root,

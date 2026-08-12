@@ -76,8 +76,6 @@ src/global_path_planning/rsc/tomogram/*.pickle
 # copied locally unless intentionally force-added.
 src/pct_planner_ros2/PCT_planner/planner/lib/build/
 src/pct_planner_ros2/PCT_planner/planner/lib/*.so
-src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/build/
-src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/install/
 src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/osqp/build/
 src/pct_planner_ros2/PCT_planner/planner/lib/3rdparty/osqp/install/
 src/pct_planner_ros2/PCT_planner/rsc/tomogram/*.pickle

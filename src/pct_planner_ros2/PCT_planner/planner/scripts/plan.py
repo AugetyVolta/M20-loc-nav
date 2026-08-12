@@ -216,4 +216,4 @@ if __name__ == '__main__':
     server = InteractiveMarkerServer("basic_controls")
     pct_plan()
     rospy.spin()
-#export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/cjh/3d-navi/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib
+# GTSAM is provided by the workspace gtsam_vendor package.
